@@ -111,22 +111,30 @@ describe('SessionStore', () => {
     await expect(readFile(`${filePath}.bak`, 'utf8')).resolves.toBe(backupJson)
   })
 
-  it('rejects invalid input without creating a state file', async () => {
+  it('rejects invalid input without changing valid primary or backup files', async () => {
     const invalid = { version: 2, projects: [], sessions: [] } as unknown as AppState
+    const primaryJson = `${JSON.stringify(stateWith(), null, 2)}\n`
+    const backupJson = JSON.stringify(stateWith([{ ...stoppedSession, id: 'backup' }]))
+    await writeFile(filePath, primaryJson, 'utf8')
+    await writeFile(`${filePath}.bak`, backupJson, 'utf8')
 
     await expect(new SessionStore(filePath).save(invalid)).rejects.toThrow()
-    await expect(readFile(filePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(primaryJson)
+    await expect(readFile(`${filePath}.bak`, 'utf8')).resolves.toBe(backupJson)
   })
 
   it('serializes concurrent updates without losing additions', async () => {
     const store = new SessionStore(filePath)
     const firstGate = deferred<void>()
     const secondGate = deferred<void>()
+    const invocationOrder: string[] = []
     const first = store.update(async (state) => {
+      invocationOrder.push('first')
       await firstGate.promise
       return { ...state, projects: [...state.projects, { id: 'p1', name: 'One', path: 'E:/one', createdAt: '2026-08-26T00:00:00.000Z' }] }
     })
     const second = store.update(async (state) => {
+      invocationOrder.push('second')
       await secondGate.promise
       return { ...state, projects: [...state.projects, { id: 'p2', name: 'Two', path: 'E:/two', createdAt: '2026-08-26T00:00:00.000Z' }] }
     })
@@ -136,6 +144,7 @@ describe('SessionStore', () => {
     secondGate.resolve()
     await second
 
+    expect(invocationOrder).toEqual(['first', 'second'])
     await expect(store.load()).resolves.toMatchObject({ projects: [{ id: 'p1' }, { id: 'p2' }] })
   })
 
