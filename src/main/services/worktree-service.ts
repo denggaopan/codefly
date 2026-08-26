@@ -252,6 +252,17 @@ export class WorktreeService {
       throw new Error('Invalid worktree rollback location mismatch')
     }
 
+    const commonDirectory = await this.findCommonDirectory(repoRoot)
+    if (!commonDirectory) throw new Error('Unable to resolve Git common directory for rollback')
+    return enqueue(canonicalPath(commonDirectory), () => this.rollbackTransaction(provenance, repoRoot, worktreesDirectory, expectedPath))
+  }
+
+  private async rollbackTransaction(
+    provenance: RollbackProvenance,
+    repoRoot: string,
+    worktreesDirectory: string,
+    expectedPath: string
+  ): Promise<void> {
     await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
     if (await this.pathExists(expectedPath)) {
       await this.assertSafeDirectory(expectedPath, 'Worktree path')
@@ -263,7 +274,7 @@ export class WorktreeService {
         throw new Error('Rollback worktree registration mismatch')
       }
       await this.assertUnchangedBranch(provenance)
-      await this.claimAndRemoveWorktree(repoRoot, expectedPath)
+      await this.claimAndRemoveWorktree(repoRoot, expectedPath, true)
     } else {
       const registration = ensureSuccess(
         await this.runner.run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain']),
@@ -372,31 +383,44 @@ export class WorktreeService {
     const tempPath = join(parent, `.codefly-exclude-${randomUUID()}.tmp`)
     const handle = await this.fileSystem.open(tempPath, 'wx')
     let identity: { dev: number; ino: number } | undefined
+    let closeAttempted = false
     try {
+      const info = await handle.stat()
+      identity = { dev: info.dev, ino: info.ino }
       await handle.writeFile(contents, { encoding: 'utf8' })
       await handle.chmod(mode & 0o777)
       await handle.sync()
-      const info = await handle.stat()
-      identity = { dev: info.dev, ino: info.ino }
-    } finally {
+      closeAttempted = true
       await handle.close()
-    }
-    try {
       const pathInfo = await this.fileSystem.lstat(tempPath)
-      if (!identity || pathInfo.isSymbolicLink() || pathInfo.dev !== identity.dev || pathInfo.ino !== identity.ino) {
+      if (pathInfo.isSymbolicLink() || pathInfo.dev !== identity.dev || pathInfo.ino !== identity.ino) {
         throw new Error('Git exclude temp identity changed')
       }
       const physical = await this.fileSystem.realpath(tempPath)
       if (canonicalPath(dirname(physical)) !== canonicalPath(parent)) throw new Error('Git exclude temp escaped its parent')
       await this.fileSystem.rename(tempPath, excludePath)
     } catch (error) {
+      const errors = [error]
+      if (!closeAttempted) {
+        closeAttempted = true
+        try {
+          await handle.close()
+        } catch (closeError) {
+          errors.push(closeError)
+        }
+      }
       try {
         const current = await this.fileSystem.lstat(tempPath)
-        if (identity && current.dev === identity.dev && current.ino === identity.ino) await this.fileSystem.unlink(tempPath)
+        if (identity && !current.isSymbolicLink() && current.dev === identity.dev && current.ino === identity.ino) {
+          await this.fileSystem.unlink(tempPath)
+        }
       } catch (cleanupError) {
-        if (!missingError(cleanupError)) throw new AggregateError([error, cleanupError], 'Exclude replacement cleanup failed')
+        if (!missingError(cleanupError)) errors.push(cleanupError)
       }
+      if (errors.length > 1) throw new AggregateError(errors, 'Exclude replacement cleanup failed')
       throw error
+    } finally {
+      if (!closeAttempted) await handle.close()
     }
   }
 
@@ -440,7 +464,12 @@ export class WorktreeService {
         }
         const expired = this.clock().getTime() - (owner.createdAt ?? existing.mtimeMs ?? this.clock().getTime()) > 300_000
         if ((typeof owner.pid === 'number' && !this.processExists(owner.pid)) || expired) {
-          await this.claimAndDeleteLock(lockPath, existing)
+          try {
+            await this.claimAndDeleteLock(lockPath, existing)
+          } catch (claimError) {
+            if (missingError(claimError)) continue
+            throw claimError
+          }
           continue
         }
         if (Date.now() >= deadline) throw new Error('Timed out waiting for the Git exclude lock')
@@ -685,9 +714,28 @@ export class WorktreeService {
       ensureSuccess(await this.runner.run('git', ['-C', repoRoot, 'worktree', 'repair', quarantine]), 'git worktree repair')
       ensureSuccess(await this.runner.run('git', ['-C', repoRoot, 'worktree', 'remove', quarantine]), 'git worktree remove')
     } catch (error) {
-      if (!await this.pathExists(worktreePath) && await this.pathExists(quarantine)) {
+      const recoveryErrors: unknown[] = []
+      try {
+        const current = await this.fileSystem.lstat(quarantine)
+        const physical = await this.fileSystem.realpath(quarantine)
+        if (
+          !current.isDirectory() || current.isSymbolicLink() ||
+          current.dev !== before.dev || current.ino !== before.ino ||
+          canonicalPath(physical) !== canonicalPath(quarantine)
+        ) throw new Error('Quarantine identity changed before recovery')
+        if (await this.pathExists(worktreePath)) throw new Error('Original worktree path was occupied during recovery')
         await this.fileSystem.rename(quarantine, worktreePath)
+        const restored = await this.fileSystem.lstat(worktreePath)
+        const restoredPhysical = await this.fileSystem.realpath(worktreePath)
+        if (
+          restored.isSymbolicLink() || restored.dev !== before.dev || restored.ino !== before.ino ||
+          canonicalPath(restoredPhysical) !== canonicalPath(worktreePath)
+        ) throw new Error('Restored worktree identity changed')
+        ensureSuccess(await this.runner.run('git', ['-C', repoRoot, 'worktree', 'repair', worktreePath]), 'git worktree repair original')
+      } catch (recoveryError) {
+        recoveryErrors.push(recoveryError)
       }
+      if (recoveryErrors.length > 0) throw new AggregateError([error, ...recoveryErrors], 'Worktree removal and recovery failed')
       throw error
     }
   }

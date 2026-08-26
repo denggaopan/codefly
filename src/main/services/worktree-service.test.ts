@@ -457,6 +457,29 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     await expectMissing(lockPath)
   })
 
+  it('retries when a stale lock disappears between inspection and quarantine claim', async () => {
+    const root = await makeRepo()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    await writeFile(lockPath, JSON.stringify({ nonce: 'dead', pid: 2147483647, ownerStartedAt: 0, createdAt: 0 }), 'utf8')
+    let disappeared = false
+    const fileSystem: WorktreeFileSystem = {
+      access, readdir, readFile: (path, encoding) => readFile(path, encoding), mkdir, lstat, stat, realpath, open, unlink,
+      async rename(oldPath, newPath) {
+        if (!disappeared && resolve(oldPath) === lockPath && basename(newPath).includes('.stale-')) {
+          disappeared = true
+          await unlink(lockPath)
+        }
+        return rename(oldPath, newPath)
+      }
+    }
+
+    await new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])
+
+    expect(disappeared).toBe(true)
+    await expectMissing(lockPath)
+  })
+
   it('waits for a live exclude lock instead of stealing it', async () => {
     const root = await makeRepo()
     const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
@@ -487,6 +510,39 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     const targetInfo = await stat(target)
     const excludeInfo = await stat(excludePath)
     expect([excludeInfo.dev, excludeInfo.ino]).not.toEqual([targetInfo.dev, targetInfo.ino])
+  })
+
+  it.each(['writeFile', 'chmod', 'sync', 'close'] as const)('cleans its exclude temp and lock when temp %s fails', async (failingMethod) => {
+    const root = await makeRepo()
+    const excludePath = resolve(root, (await git(root, ['rev-parse', '--git-path', 'info/exclude'])).stdout.trim())
+    const original = await readFile(excludePath, 'utf8')
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const fileSystem: WorktreeFileSystem = {
+      access, readdir, readFile: (path, encoding) => readFile(path, encoding), mkdir, lstat, stat, realpath, unlink, rename,
+      async open(path, flags) {
+        const handle = await open(path, flags)
+        if (flags !== 'wx' || !basename(path).startsWith('.codefly-exclude-') || !basename(path).endsWith('.tmp')) return handle
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === 'close' && failingMethod === 'close') {
+              return async () => {
+                await target.close()
+                throw new Error('injected close failure')
+              }
+            }
+            if (property === failingMethod) return async () => { throw new Error(`injected ${failingMethod} failure`) }
+            const value = Reflect.get(target, property, target) as unknown
+            return typeof value === 'function' ? value.bind(target) : value
+          }
+        })
+      }
+    }
+
+    await expect(new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])).rejects.toThrow(`injected ${failingMethod} failure`)
+
+    expect(await readFile(excludePath, 'utf8')).toBe(original)
+    expect((await readdir(dirname(excludePath))).filter((name) => name.startsWith('.codefly-exclude-') && name.endsWith('.tmp'))).toEqual([])
+    await expectMissing(join(commonDir, '.codefly-exclude.lock'))
   })
 
   it('uses the shared common-dir exclude from a linked worktree repository root', async () => {
@@ -793,6 +849,59 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     expect(maxActive).toBe(1)
   })
 
+  it('restores directory and registration when removal fails after quarantine repair', async () => {
+    const root = await makeRepo()
+    let failed = false
+    const runner: CommandRunner = { async run(file, args, cwd) {
+      if (!failed && file === 'git' && args[2] === 'worktree' && args[3] === 'remove') {
+        failed = true
+        return commandRunner.run('git', ['-C', root, 'worktree', 'remove', '--definitely-invalid'], cwd)
+      }
+      return commandRunner.run(file, args, cwd)
+    } }
+    const project = projectFor(root)
+    const service = new WorktreeService(runner, clock)
+    const location = await service.create(project, [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+
+    await expect(service.remove(worktreeSession(location), project)).rejects.toThrow()
+
+    await expectExists(location.worktreePath)
+    expect(await listedWorktreePaths(root)).toContain(resolve(location.worktreePath))
+    await expect(service.validate(worktreeSession(location), project)).resolves.toBe('valid')
+  })
+
+  it('never restores an unknown quarantine replacement into the trusted original path', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    const movedClaim = join(external, 'claimed-original')
+    const replacementTarget = join(external, 'replacement')
+    const sentinel = join(replacementTarget, 'secret.txt')
+    await mkdir(replacementTarget)
+    await writeFile(sentinel, 'unknown replacement\n', 'utf8')
+    let swapped = false
+    const runner: CommandRunner = { async run(file, args, cwd) {
+      if (!swapped && file === 'git' && args[2] === 'worktree' && args[3] === 'remove') {
+        swapped = true
+        const quarantine = String(args[4])
+        await rename(quarantine, movedClaim)
+        await symlink(replacementTarget, quarantine, 'junction')
+        return commandRunner.run('git', ['-C', root, 'worktree', 'remove', '--definitely-invalid'], cwd)
+      }
+      return commandRunner.run(file, args, cwd)
+    } }
+    const project = projectFor(root)
+    const service = new WorktreeService(runner, clock)
+    const location = await service.create(project, [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+
+    await expect(service.remove(worktreeSession(location), project)).rejects.toThrow()
+
+    await expectMissing(location.worktreePath)
+    expect(await readFile(sentinel, 'utf8')).toBe('unknown replacement\n')
+    await expectExists(movedClaim)
+  })
+
   it('removes ordinary metadata without touching its original files or Git state', async () => {
     const root = await makeRepo()
     const pathsBefore = await listedWorktreePaths(root)
@@ -856,6 +965,36 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     await service.rollback(location)
     await expect(service.rollback(location)).rejects.toThrow(/provenance/i)
     expect(await branchExists(root, location.branchName)).toBe(false)
+  })
+
+  it('serializes complete missing-path rollback transactions by common dir', async () => {
+    const root = await makeRepo()
+    let measure = false
+    let active = 0
+    let maxActive = 0
+    const runner: CommandRunner = { async run(file, args, cwd) {
+      if (measure && file === 'git' && args[2] === 'rev-parse' && String(args[3]).startsWith('refs/heads/worktree-')) {
+        active += 1
+        maxActive = Math.max(maxActive, active)
+        await new Promise((complete) => setTimeout(complete, 100))
+      }
+      const result = await commandRunner.run(file, args, cwd)
+      if (measure && file === 'git' && args[2] === 'update-ref' && args[3] === '-d') active -= 1
+      return result
+    } }
+    const service = new WorktreeService(runner, clock)
+    const first = await service.create(projectFor(root), [])
+    const second = await service.create(projectFor(root), [])
+    if (first.mode !== 'worktree' || second.mode !== 'worktree') throw new Error('Expected worktrees')
+    await git(root, ['worktree', 'remove', first.worktreePath])
+    await git(root, ['worktree', 'remove', second.worktreePath])
+    measure = true
+
+    await Promise.all([service.rollback(first), service.rollback(second)])
+
+    expect(maxActive).toBe(1)
+    expect(await branchExists(root, first.branchName)).toBe(false)
+    expect(await branchExists(root, second.branchName)).toBe(false)
   })
 
   it('preserves advanced or moved worktrees during rollback', async () => {
