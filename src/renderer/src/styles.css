@@ -1,0 +1,41 @@
+:root {
+  color: #e7edf5;
+  background: #11161d;
+  font-family: "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: radial-gradient(circle at top, #1e2a37, #11161d 60%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  padding: 2rem;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 2.25rem;
+}
+
+p {
+  margin-top: 0.5rem;
+  color: #9dacbf;
+}
