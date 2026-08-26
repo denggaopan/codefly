@@ -5,11 +5,17 @@ import { dirname } from 'node:path'
 import { appStateSchema } from '../../shared/contracts'
 import type { AppState } from '../../shared/contracts'
 
-const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
-
 type WriteFileAtomic = (filePath: string, contents: string, options: { encoding: 'utf8' }) => Promise<void>
 
+type DiskState =
+  | { kind: 'absent' | 'invalid' }
+  | { kind: 'valid'; contents: string; state: AppState }
+
 const writeFileAtomic = createRequire(import.meta.url)('write-file-atomic') as WriteFileAtomic
+
+const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
+
+const cloneState = (state: AppState): AppState => appStateSchema.parse(structuredClone(state))
 
 const normalizeRuntimeStatuses = (state: AppState): AppState => ({
   ...state,
@@ -19,59 +25,86 @@ const normalizeRuntimeStatuses = (state: AppState): AppState => ({
   )
 })
 
+const isEnoent = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
+
 export class SessionStore {
-  private updateQueue: Promise<void> = Promise.resolve()
+  // A store instance owns one file and serializes all operations for that file.
+  private operationTail: Promise<void> = Promise.resolve()
+  private state: AppState | undefined
 
   constructor(private readonly filePath: string) {}
 
-  async load(): Promise<AppState> {
-    const primary = await this.readState(this.filePath)
-    if (primary) return normalizeRuntimeStatuses(primary)
-
-    const backup = await this.readState(`${this.filePath}.bak`)
-    return backup ? normalizeRuntimeStatuses(backup) : emptyState()
+  load(): Promise<AppState> {
+    return this.enqueue(async () => {
+      await this.initializeState()
+      return cloneState(this.state!)
+    })
   }
 
   async save(state: AppState): Promise<void> {
     const validState = appStateSchema.parse(state)
-    await mkdir(dirname(this.filePath), { recursive: true })
-
-    const primaryContents = await this.readValidContents(this.filePath)
-    if (primaryContents !== undefined) {
-      await writeFileAtomic(`${this.filePath}.bak`, primaryContents, { encoding: 'utf8' })
-    }
-
-    await writeFileAtomic(this.filePath, `${JSON.stringify(validState, null, 2)}\n`, { encoding: 'utf8' })
+    return this.enqueue(async () => {
+      await this.commit(validState)
+      this.state = cloneState(validState)
+    })
   }
 
   update(mutator: (state: AppState) => AppState | Promise<AppState>): Promise<AppState> {
-    const operation = this.updateQueue.then(async () => {
-      const nextState = appStateSchema.parse(await mutator(await this.load()))
-      await this.save(nextState)
-      return nextState
+    return this.enqueue(async () => {
+      await this.initializeState()
+      const validState = appStateSchema.parse(await mutator(cloneState(this.state!)))
+      await this.commit(validState)
+      this.state = cloneState(validState)
+      return cloneState(this.state)
     })
+  }
 
-    this.updateQueue = operation.then(
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationTail.then(operation)
+    this.operationTail = result.then(
       () => undefined,
       () => undefined
     )
-    return operation
+    return result
   }
 
-  private async readState(filePath: string): Promise<AppState | undefined> {
-    try {
-      return appStateSchema.safeParse(JSON.parse(await readFile(filePath, 'utf8'))).data
-    } catch {
-      return undefined
+  private async initializeState(): Promise<void> {
+    if (this.state) return
+    this.state = normalizeRuntimeStatuses(await this.readRecoveredState())
+  }
+
+  private async readRecoveredState(): Promise<AppState> {
+    const primary = await this.readDiskState(this.filePath)
+    if (primary.kind === 'valid') return primary.state
+
+    const backup = await this.readDiskState(`${this.filePath}.bak`)
+    return backup.kind === 'valid' ? backup.state : emptyState()
+  }
+
+  private async commit(state: AppState): Promise<void> {
+    await mkdir(dirname(this.filePath), { recursive: true })
+    const primary = await this.readDiskState(this.filePath)
+    if (primary.kind === 'valid') {
+      await writeFileAtomic(`${this.filePath}.bak`, primary.contents, { encoding: 'utf8' })
     }
+    await writeFileAtomic(this.filePath, `${JSON.stringify(state, null, 2)}\n`, { encoding: 'utf8' })
   }
 
-  private async readValidContents(filePath: string): Promise<string | undefined> {
+  private async readDiskState(filePath: string): Promise<DiskState> {
+    let contents: string
     try {
-      const contents = await readFile(filePath, 'utf8')
-      return appStateSchema.safeParse(JSON.parse(contents)).success ? contents : undefined
+      contents = await readFile(filePath, 'utf8')
+    } catch (error) {
+      if (isEnoent(error)) return { kind: 'absent' }
+      throw error
+    }
+
+    try {
+      const parsed = appStateSchema.safeParse(JSON.parse(contents))
+      return parsed.success ? { kind: 'valid', contents, state: parsed.data } : { kind: 'invalid' }
     } catch {
-      return undefined
+      return { kind: 'invalid' }
     }
   }
 }

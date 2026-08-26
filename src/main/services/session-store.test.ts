@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
+import { appStateSchema } from '../../shared/contracts'
 import type { AppState, SessionRecord } from '../../shared/contracts'
 import { SessionStore } from './session-store'
 
@@ -59,13 +60,41 @@ describe('SessionStore', () => {
   })
 
   it('normalizes interrupted sessions to stopped while preserving other statuses', async () => {
-    const store = new SessionStore(filePath)
     const statuses = ['running', 'creating', 'error', 'missing', 'stopped'] as const
-    await store.save(stateWith(statuses.map((status, index) => ({ ...stoppedSession, id: `s${index}`, status }))))
+    const persisted = stateWith(statuses.map((status, index) => ({ ...stoppedSession, id: `s${index}`, status })))
+    await writeFile(filePath, JSON.stringify(persisted), 'utf8')
 
-    const loaded = await store.load()
+    const loaded = await new SessionStore(filePath).load()
 
     expect(loaded.sessions.map((session) => session.status)).toEqual(['stopped', 'stopped', 'error', 'missing', 'stopped'])
+  })
+
+  it('preserves live statuses across unrelated updates but normalizes recovered disk state once', async () => {
+    const running = stateWith([{ ...stoppedSession, status: 'running' }])
+    const store = new SessionStore(filePath)
+    await store.save(running)
+
+    const liveUpdate = await store.update((state) => ({
+      ...state,
+      projects: [...state.projects, { id: 'p2', name: 'Two', path: 'E:/two', createdAt: '2026-08-26T00:00:00.000Z' }]
+    }))
+    expect(liveUpdate.sessions[0]!.status).toBe('running')
+
+    await writeFile(filePath, JSON.stringify(running), 'utf8')
+    const recoveredUpdate = await new SessionStore(filePath).update((state) => ({
+      ...state,
+      projects: [...state.projects, { id: 'p2', name: 'Two', path: 'E:/two', createdAt: '2026-08-26T00:00:00.000Z' }]
+    }))
+    expect(recoveredUpdate.sessions[0]!.status).toBe('stopped')
+  })
+
+  it('surfaces operational file errors without replacing a directory', async () => {
+    await mkdir(filePath)
+    const store = new SessionStore(filePath)
+
+    await expect(store.load()).rejects.toThrow()
+    await expect(store.save(stateWith())).rejects.toThrow()
+    await expect(readFile(filePath, 'utf8')).rejects.toThrow()
   })
 
   it('uses a valid backup without modifying a malformed primary', async () => {
@@ -109,6 +138,21 @@ describe('SessionStore', () => {
     await new SessionStore(filePath).save(stateWith([{ ...stoppedSession, id: 'next' }]))
 
     await expect(readFile(`${filePath}.bak`, 'utf8')).resolves.toBe(backupJson)
+  })
+
+  it('serializes concurrent saves so the backup contains the immediately prior primary', async () => {
+    const store = new SessionStore(filePath)
+    const stateA = stateWith([{ ...stoppedSession, id: 'a' }])
+    const stateB = stateWith([{ ...stoppedSession, id: 'b' }])
+    const stateC = stateWith([{ ...stoppedSession, id: 'c' }])
+    await store.save(stateA)
+
+    const saveB = store.save(stateB)
+    const saveC = store.save(stateC)
+    await Promise.all([saveB, saveC])
+
+    await expect(readFile(filePath, 'utf8')).resolves.toBe(`${JSON.stringify(appStateSchema.parse(stateC), null, 2)}\n`)
+    await expect(readFile(`${filePath}.bak`, 'utf8')).resolves.toBe(`${JSON.stringify(appStateSchema.parse(stateB), null, 2)}\n`)
   })
 
   it('rejects invalid input without changing valid primary or backup files', async () => {
