@@ -1,4 +1,4 @@
-import { access, appendFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { access, appendFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -284,6 +284,27 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     await expectExists(join(location.launchPath, 'nested.txt'))
   })
 
+  it('returns a missing mapped launch path when the nested directory exists only in the live checkout', async () => {
+    const root = await makeRepo()
+    const liveOnlyPath = join(root, 'live-only', 'nested')
+    await mkdir(liveOnlyPath, { recursive: true })
+    await writeFile(join(liveOnlyPath, 'untracked.txt'), 'live only\n', 'utf8')
+    const project = projectFor(root, liveOnlyPath)
+    const service = new WorktreeService(undefined, clock)
+
+    const location = await service.create(project, [])
+
+    expect(location).toMatchObject({
+      mode: 'worktree',
+      launchPath: join(root, '.worktrees', 'worktree-260826-1', 'live-only', 'nested')
+    })
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+    await expectMissing(location.launchPath)
+    await expect(service.validate(worktreeSession(location), project)).resolves.toBe('valid')
+    await expectExists(location.worktreePath)
+    expect(await branchExists(root, location.branchName)).toBe(true)
+  })
+
   it('returns ordinary locations for non-Git projects and repositories without a commit', async () => {
     const plain = await makeDirectory()
     const emptyRepo = await makeRepo(false)
@@ -354,6 +375,7 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
       { ...valid, branchName: 'worktree-260826-99' },
       { ...valid, worktreeName: 'worktree-260826-99' },
       { ...valid, launchPath: root },
+      { ...valid, launchPath: join(owned.worktreePath, 'packages') },
       foreign,
       { ...valid, worktreePath: '' } as SessionRecord
     ]
@@ -367,6 +389,24 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     expect(destructiveCommands).toBe(0)
     await expectExists(owned.worktreePath)
     await expectExists(foreignPath)
+  })
+
+  it('fails closed if .worktrees becomes a junction after creation', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    const project = projectFor(root)
+    const service = new WorktreeService(undefined, clock)
+    const location = await service.create(project, [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+    const redirected = join(external, 'redirected')
+    await rename(join(root, '.worktrees'), redirected)
+    await symlink(redirected, join(root, '.worktrees'), 'junction')
+    const physicalTarget = join(redirected, location.worktreeName)
+
+    await expect(service.validate(worktreeSession(location), project)).resolves.toBe('missing')
+    await expect(service.remove(worktreeSession(location), project)).resolves.toEqual({ status: 'missing' })
+    await expectExists(physicalTarget)
+    expect(await branchExists(root, location.branchName)).toBe(true)
   })
 
   it('requires ordinary sessions to match their project without deleting files', async () => {
@@ -496,6 +536,22 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     expect(await branchExists(movedRoot, moved.branchName)).toBe(true)
   })
 
+  it('rejects rollback when a branch advances behind an ambiguous same-name tag', async () => {
+    const root = await makeRepo()
+    const service = new WorktreeService(undefined, clock)
+    const location = await service.create(projectFor(root), [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+    const initialOid = (await git(root, ['rev-parse', `refs/heads/${location.branchName}`])).stdout.trim()
+    await git(root, ['tag', location.branchName, initialOid])
+    await writeFile(join(location.worktreePath, 'advance-behind-tag.txt'), 'advance\n', 'utf8')
+    await git(location.worktreePath, ['add', 'advance-behind-tag.txt'])
+    await git(location.worktreePath, ['commit', '-m', 'advance behind tag'])
+
+    await expect(service.rollback(location)).rejects.toThrow(/changed|OID|ambiguous/i)
+    await expectExists(location.worktreePath)
+    expect(await branchExists(root, location.branchName)).toBe(true)
+  })
+
   it('preserves a same-name worktree replacement with a different OID', async () => {
     const root = await makeRepo()
     const service = new WorktreeService(undefined, clock)
@@ -592,5 +648,30 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
       worktreeName: 'worktree-260826-1'
     })
     expect(addAttempts).toBe(2)
+  })
+
+  it('cleans one successful add when exact branch OID lookup fails without retrying', async () => {
+    const root = await makeRepo()
+    let addAttempts = 0
+    let oidAttempts = 0
+    const runner: CommandRunner = {
+      async run(file, args, cwd) {
+        if (file === 'git' && args[2] === 'worktree' && args[3] === 'add') addAttempts += 1
+        if (file === 'git' && args[2] === 'rev-parse' && String(args[3]).startsWith('refs/heads/worktree-')) {
+          oidAttempts += 1
+          return commandRunner.run('git', ['-C', root, 'rev-parse', 'refs/heads/does-not-exist'], cwd)
+        }
+        return commandRunner.run(file, args, cwd)
+      }
+    }
+    const target = join(root, '.worktrees', 'worktree-260826-1')
+
+    await expect(new WorktreeService(runner, clock).create(projectFor(root), [])).rejects.toThrow()
+
+    expect(addAttempts).toBe(1)
+    expect(oidAttempts).toBe(1)
+    await expectMissing(target)
+    expect(await branchExists(root, 'worktree-260826-1')).toBe(false)
+    expect(await listedWorktreePaths(root)).not.toContain(resolve(target))
   })
 })

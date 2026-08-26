@@ -125,23 +125,35 @@ export class WorktreeService {
         try {
           const result = await this.runner.run('git', ['-C', repoRoot, 'worktree', 'add', '-b', name, worktreePath, 'HEAD'])
           ensureSuccess(result, 'git worktree add')
-          const initialOid = await this.branchOid(repoRoot, name)
-          const location: Extract<SessionLocation, { mode: 'worktree' }> = {
-            mode: 'worktree',
-            launchPath: nestedPath ? resolve(worktreePath, nestedPath) : worktreePath,
-            worktreeName: name,
-            worktreePath,
-            branchName: name,
-            repoRoot
-          }
-          this.rollbackProvenance.set(location, { repoRoot, worktreePath, name, initialOid })
-          return location
         } catch (error) {
           if (attempt !== 0) throw error
           const occupied = await this.usedNames(repoRoot, worktreesDirectory, knownSessions)
           if (!occupied.has(name.toLocaleLowerCase('en-US'))) throw error
           name = await this.nextName(repoRoot, worktreesDirectory, knownSessions)
+          continue
         }
+
+        let initialOid: string
+        try {
+          initialOid = await this.branchOid(repoRoot, name)
+        } catch (error) {
+          try {
+            await this.cleanupCreatedWorktree(repoRoot, worktreePath, name)
+          } catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], 'Branch OID lookup failed and worktree cleanup was incomplete')
+          }
+          throw error
+        }
+        const location: Extract<SessionLocation, { mode: 'worktree' }> = {
+          mode: 'worktree',
+          launchPath: nestedPath ? resolve(worktreePath, nestedPath) : worktreePath,
+          worktreeName: name,
+          worktreePath,
+          branchName: name,
+          repoRoot
+        }
+        this.rollbackProvenance.set(location, { repoRoot, worktreePath, name, initialOid })
+        return location
       }
       throw new Error('Unable to allocate worktree')
     })
@@ -155,7 +167,13 @@ export class WorktreeService {
     }
 
     const context = this.worktreeContext(session, project)
-    if (!context || !await this.pathExists(context.worktreePath)) return 'missing'
+    if (!context) return 'missing'
+    try {
+      await this.ensureSafeWorktreesDirectory(resolve(context.repoRoot, '.worktrees'))
+    } catch {
+      return 'missing'
+    }
+    if (!await this.pathExists(context.worktreePath)) return 'missing'
     try {
       const result = ensureSuccess(
         await this.runner.run('git', ['-C', context.repoRoot, 'worktree', 'list', '--porcelain']),
@@ -174,7 +192,13 @@ export class WorktreeService {
     }
 
     const context = this.worktreeContext(session, project)
-    if (!context || !await this.pathExists(context.worktreePath)) return { status: 'missing' }
+    if (!context) return { status: 'missing' }
+    try {
+      await this.ensureSafeWorktreesDirectory(resolve(context.repoRoot, '.worktrees'))
+    } catch {
+      return { status: 'missing' }
+    }
+    if (!await this.pathExists(context.worktreePath)) return { status: 'missing' }
     const registration = ensureSuccess(
       await this.runner.run('git', ['-C', context.repoRoot, 'worktree', 'list', '--porcelain']),
       'git worktree list'
@@ -391,9 +415,13 @@ export class WorktreeService {
 
     const repoRoot = resolve(project.repoRoot)
     const worktreePath = resolve(repoRoot, '.worktrees', session.worktreeName)
+    const selectedPath = resolve(project.path)
+    const nestedPath = relative(repoRoot, selectedPath)
+    if (nestedPath === '..' || nestedPath.startsWith(`..${sep}`) || isAbsolute(nestedPath)) return undefined
+    const expectedLaunchPath = nestedPath ? resolve(worktreePath, nestedPath) : worktreePath
     if (
       canonicalPath(session.worktreePath) !== canonicalPath(worktreePath) ||
-      !pathIsWithin(worktreePath, session.launchPath)
+      canonicalPath(session.launchPath) !== canonicalPath(expectedLaunchPath)
     ) return undefined
     return { repoRoot, worktreePath, name: session.worktreeName }
   }
@@ -423,12 +451,31 @@ export class WorktreeService {
 
   private async branchOid(repoRoot: string, name: string): Promise<string> {
     const result = ensureSuccess(
-      await this.runner.run('git', ['-C', repoRoot, 'rev-parse', name]),
+      await this.runner.run('git', ['-C', repoRoot, 'rev-parse', `refs/heads/${name}`]),
       'git rev-parse branch'
     )
     const oid = result.stdout.trim()
     if (!oid) throw new Error('Git returned an empty branch OID')
     return oid
+  }
+
+  private async cleanupCreatedWorktree(repoRoot: string, worktreePath: string, name: string): Promise<void> {
+    await this.ensureSafeWorktreesDirectory(resolve(repoRoot, '.worktrees'))
+    const registration = ensureSuccess(
+      await this.runner.run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain']),
+      'git worktree list'
+    )
+    if (!this.hasExactStanza(registration.stdout, { repoRoot, worktreePath, name })) {
+      throw new Error('Created worktree ownership changed before cleanup')
+    }
+    ensureSuccess(
+      await this.runner.run('git', ['-C', repoRoot, 'worktree', 'remove', worktreePath]),
+      'git worktree remove'
+    )
+    ensureSuccess(
+      await this.runner.run('git', ['-C', repoRoot, 'branch', '-D', name]),
+      'git branch -D'
+    )
   }
 
   private async assertUnchangedBranch(provenance: RollbackProvenance): Promise<void> {
