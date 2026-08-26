@@ -185,7 +185,17 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
 
   it('serializes concurrent creates into distinct sequential valid worktrees', async () => {
     const root = await makeRepo()
-    const service = new WorktreeService(undefined, clock)
+    let commonDirectoryCalls = 0
+    const delayedRunner: CommandRunner = {
+      async run(file, args, cwd) {
+        if (file === 'git' && args[2] === 'rev-parse' && args[3] === '--git-common-dir') {
+          commonDirectoryCalls += 1
+          if (commonDirectoryCalls === 1) await new Promise((complete) => setTimeout(complete, 100))
+        }
+        return commandRunner.run(file, args, cwd)
+      }
+    }
+    const service = new WorktreeService(delayedRunner, clock)
 
     const locations = await Promise.all([
       service.create(projectFor(root), []),
@@ -533,12 +543,11 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     await expectExists(heldLock)
   })
 
-  it('closes the acquired lock and retains it when release identity stat fails', async () => {
+  it('cleans the saved lock identity when release close reports an error and permits immediate reacquisition', async () => {
     const root = await makeRepo()
     const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
     const lockPath = join(commonDir, '.codefly-exclude.lock')
-    let statCalls = 0
-    let closed = false
+    let closeFailed = false
     const fileSystem: WorktreeFileSystem = {
       access, readdir, readFile: (path, encoding) => readFile(path, encoding), mkdir, lstat, stat, realpath, unlink, rename,
       async open(path, flags) {
@@ -546,17 +555,13 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
         if (resolve(path) !== lockPath || flags !== 'wx') return handle
         return new Proxy(handle, {
           get(target, property) {
-            if (property === 'stat') {
-              return async () => {
-                statCalls += 1
-                if (statCalls === 2) throw new Error('injected release stat failure')
-                return target.stat()
-              }
-            }
             if (property === 'close') {
               return async () => {
-                closed = true
-                return target.close()
+                await target.close()
+                if (!closeFailed) {
+                  closeFailed = true
+                  throw new Error('injected release close failure')
+                }
               }
             }
             const value = Reflect.get(target, property, target) as unknown
@@ -565,12 +570,64 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
         })
       }
     }
+    const service = new WorktreeService(undefined, clock, fileSystem, { timeoutMs: 50, pollMs: 5 })
 
-    await expect(new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])).rejects.toThrow(/release stat/i)
+    await expect(service.create(projectFor(root), [])).rejects.toThrow(/release close/i)
 
-    expect(statCalls).toBe(2)
-    expect(closed).toBe(true)
-    await expectExists(lockPath)
+    expect(closeFailed).toBe(true)
+    await expectMissing(lockPath)
+    await expect(service.create(projectFor(root), [])).resolves.toMatchObject({ mode: 'worktree' })
+  })
+
+  it('preserves release close and cleanup errors while released metadata permits immediate recovery', async () => {
+    const root = await makeRepo()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    let closeFailed = false
+    let cleanupFailed = false
+    const fileSystem: WorktreeFileSystem = {
+      access, readdir, readFile: (path, encoding) => readFile(path, encoding), mkdir, lstat, stat, realpath, unlink,
+      async open(path, flags) {
+        const handle = await open(path, flags)
+        if (resolve(path) !== lockPath || flags !== 'wx') return handle
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === 'close') {
+              return async () => {
+                await target.close()
+                if (!closeFailed) {
+                  closeFailed = true
+                  throw new Error('injected release close failure')
+                }
+              }
+            }
+            const value = Reflect.get(target, property, target) as unknown
+            return typeof value === 'function' ? value.bind(target) : value
+          }
+        })
+      },
+      async rename(oldPath, newPath) {
+        if (!cleanupFailed && resolve(oldPath) === lockPath && basename(newPath).includes('.stale-')) {
+          cleanupFailed = true
+          throw new Error('injected release cleanup failure')
+        }
+        return rename(oldPath, newPath)
+      }
+    }
+    const service = new WorktreeService(undefined, clock, fileSystem, { timeoutMs: 50, pollMs: 5 })
+    let releaseError: unknown
+
+    try {
+      await service.create(projectFor(root), [])
+    } catch (error) {
+      releaseError = error
+    }
+
+    expect(releaseError).toBeInstanceOf(AggregateError)
+    expect((releaseError as AggregateError).errors.map(String).join('\n')).toMatch(/release close.*release cleanup/is)
+    expect(JSON.parse(await readFile(lockPath, 'utf8'))).toMatchObject({ state: 'released' })
+    await expect(service.create(projectFor(root), [])).resolves.toMatchObject({ mode: 'worktree' })
+    await expectMissing(lockPath)
   })
 
   it('does not reclaim a fresh malformed exclude lock', async () => {
@@ -626,6 +683,42 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
 
     await new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])
 
+    expect(await readFile(lockPath, 'utf8')).toBe('replacement lock sentinel\n')
+    await expectExists(heldLock)
+  })
+
+  it('does not delete a replacement installed while release close reports an error', async () => {
+    const root = await makeRepo()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    const heldLock = `${lockPath}.held`
+    let swapped = false
+    const fileSystem: WorktreeFileSystem = {
+      access, readdir, readFile: (path, encoding) => readFile(path, encoding), mkdir, lstat, stat, realpath, unlink, rename,
+      async open(path, flags) {
+        const handle = await open(path, flags)
+        if (resolve(path) !== lockPath || flags !== 'wx') return handle
+        return new Proxy(handle, {
+          get(target, property) {
+            if (property === 'close') {
+              return async () => {
+                await target.close()
+                swapped = true
+                await rename(lockPath, heldLock)
+                await writeFile(lockPath, 'replacement lock sentinel\n', 'utf8')
+                throw new Error('injected release close failure')
+              }
+            }
+            const value = Reflect.get(target, property, target) as unknown
+            return typeof value === 'function' ? value.bind(target) : value
+          }
+        })
+      }
+    }
+
+    await expect(new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])).rejects.toThrow(/release close/i)
+
+    expect(swapped).toBe(true)
     expect(await readFile(lockPath, 'utf8')).toBe('replacement lock sentinel\n')
     await expectExists(heldLock)
   })

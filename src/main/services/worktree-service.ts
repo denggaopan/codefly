@@ -62,6 +62,7 @@ const productionFileSystem: WorktreeFileSystem = {
 }
 
 const createQueues = new Map<string, Promise<void>>()
+const repositoryAdmissionQueues = new Map<string, Promise<void>>()
 const EXCLUDE_LINE = '/.worktrees/'
 const WORKTREE_NAME_PATTERN = /^worktree-\d{6}-[1-9]\d*$/u
 const DEFAULT_LOCK_TIMEOUT_MS = 30_000
@@ -92,16 +93,33 @@ const pathIsWithin = (parent: string, candidate: string): boolean => {
 type WorktreeStanza = { path: string; branch?: string }
 type WorktreeContext = { repoRoot: string; worktreePath: string; name: string }
 type RollbackProvenance = WorktreeContext & { initialOid: string }
+type LockIdentity = { dev: number; ino: number; nlink: number }
+type ExcludeLockMetadata = {
+  nonce?: string
+  pid?: number
+  createdAt?: number
+  state?: 'held' | 'released'
+}
+type AcquiredExcludeLock = {
+  handle: FileHandle
+  identity: LockIdentity
+  nonce: string
+  path: string
+}
 
-const enqueue = async <T>(key: string, task: () => Promise<T>): Promise<T> => {
-  const previous = createQueues.get(key) ?? Promise.resolve()
+const enqueue = async <T>(
+  key: string,
+  task: () => Promise<T>,
+  queues: Map<string, Promise<void>> = createQueues
+): Promise<T> => {
+  const previous = queues.get(key) ?? Promise.resolve()
   const current = previous.catch(() => undefined).then(task)
   const tail = current.then(() => undefined, () => undefined)
-  createQueues.set(key, tail)
+  queues.set(key, tail)
   try {
     return await current
   } finally {
-    if (createQueues.get(key) === tail) createQueues.delete(key)
+    if (queues.get(key) === tail) queues.delete(key)
   }
 }
 
@@ -125,61 +143,63 @@ export class WorktreeService {
     if (nestedPath === '..' || nestedPath.startsWith(`..${sep}`) || isAbsolute(nestedPath)) {
       return ordinary
     }
-    const commonDirectory = await this.findCommonDirectory(repoRoot)
-    if (!commonDirectory) return ordinary
+    return enqueue(canonicalPath(repoRoot), async () => {
+      const commonDirectory = await this.findCommonDirectory(repoRoot)
+      if (!commonDirectory) return ordinary
 
-    return enqueue(canonicalPath(commonDirectory), async () => {
-      if (!await this.hasCommittedHead(repoRoot)) return ordinary
+      return enqueue(canonicalPath(commonDirectory), async () => {
+        if (!await this.hasCommittedHead(repoRoot)) return ordinary
 
-      const worktreesDirectory = resolve(repoRoot, '.worktrees')
-      await this.prepareSafeWorktreesDirectory(worktreesDirectory)
-      await this.ensureLocalExclude(repoRoot)
-      await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
-      let name = await this.nextName(repoRoot, worktreesDirectory, knownSessions)
-
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const worktreesDirectory = resolve(repoRoot, '.worktrees')
+        await this.prepareSafeWorktreesDirectory(worktreesDirectory)
+        await this.ensureLocalExclude(repoRoot)
         await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
-        const worktreePath = resolve(worktreesDirectory, name)
-        const expectedOid = await this.headOid(repoRoot)
-        try {
-          const result = await this.runner.run('git', ['-C', repoRoot, 'worktree', 'add', '-b', name, worktreePath, 'HEAD'])
-          ensureSuccess(result, 'git worktree add')
-        } catch (error) {
-          if (attempt !== 0) throw error
-          const occupied = await this.usedNames(repoRoot, worktreesDirectory, knownSessions)
-          if (!occupied.has(name.toLocaleLowerCase('en-US'))) throw error
-          name = await this.nextName(repoRoot, worktreesDirectory, knownSessions)
-          continue
-        }
+        let name = await this.nextName(repoRoot, worktreesDirectory, knownSessions)
 
-        let initialOid: string
-        try {
-          const beforeOid = await this.assertSafeDirectory(worktreePath, 'Worktree path')
-          initialOid = await this.branchOid(repoRoot, name)
-          if (initialOid !== expectedOid) throw new Error('Created branch OID differs from the recorded HEAD')
-          const afterOid = await this.assertSafeDirectory(worktreePath, 'Worktree path')
-          if (beforeOid.dev !== afterOid.dev || beforeOid.ino !== afterOid.ino) throw new Error('Worktree identity changed before return')
-        } catch (error) {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
+          const worktreePath = resolve(worktreesDirectory, name)
+          const expectedOid = await this.headOid(repoRoot)
           try {
-            await this.cleanupCreatedWorktree(repoRoot, worktreePath, name, expectedOid)
-          } catch (cleanupError) {
-            throw new AggregateError([error, cleanupError], 'Branch OID lookup failed and worktree cleanup was incomplete')
+            const result = await this.runner.run('git', ['-C', repoRoot, 'worktree', 'add', '-b', name, worktreePath, 'HEAD'])
+            ensureSuccess(result, 'git worktree add')
+          } catch (error) {
+            if (attempt !== 0) throw error
+            const occupied = await this.usedNames(repoRoot, worktreesDirectory, knownSessions)
+            if (!occupied.has(name.toLocaleLowerCase('en-US'))) throw error
+            name = await this.nextName(repoRoot, worktreesDirectory, knownSessions)
+            continue
           }
-          throw error
+
+          let initialOid: string
+          try {
+            const beforeOid = await this.assertSafeDirectory(worktreePath, 'Worktree path')
+            initialOid = await this.branchOid(repoRoot, name)
+            if (initialOid !== expectedOid) throw new Error('Created branch OID differs from the recorded HEAD')
+            const afterOid = await this.assertSafeDirectory(worktreePath, 'Worktree path')
+            if (beforeOid.dev !== afterOid.dev || beforeOid.ino !== afterOid.ino) throw new Error('Worktree identity changed before return')
+          } catch (error) {
+            try {
+              await this.cleanupCreatedWorktree(repoRoot, worktreePath, name, expectedOid)
+            } catch (cleanupError) {
+              throw new AggregateError([error, cleanupError], 'Branch OID lookup failed and worktree cleanup was incomplete')
+            }
+            throw error
+          }
+          const location: Extract<SessionLocation, { mode: 'worktree' }> = {
+            mode: 'worktree',
+            launchPath: nestedPath ? resolve(worktreePath, nestedPath) : worktreePath,
+            worktreeName: name,
+            worktreePath,
+            branchName: name,
+            repoRoot
+          }
+          this.rollbackProvenance.set(location, { repoRoot, worktreePath, name, initialOid })
+          return location
         }
-        const location: Extract<SessionLocation, { mode: 'worktree' }> = {
-          mode: 'worktree',
-          launchPath: nestedPath ? resolve(worktreePath, nestedPath) : worktreePath,
-          worktreeName: name,
-          worktreePath,
-          branchName: name,
-          repoRoot
-        }
-        this.rollbackProvenance.set(location, { repoRoot, worktreePath, name, initialOid })
-        return location
-      }
-      throw new Error('Unable to allocate worktree')
-    })
+        throw new Error('Unable to allocate worktree')
+      })
+    }, repositoryAdmissionQueues)
   }
 
   async validate(session: SessionRecord, project: ProjectRecord): Promise<'valid' | 'missing'> {
@@ -406,7 +426,7 @@ export class WorktreeService {
         )
       }
     } finally {
-      await this.releaseExcludeLock(lockPath, lock)
+      await this.releaseExcludeLock(lock)
     }
   }
 
@@ -476,21 +496,23 @@ export class WorktreeService {
     }
   }
 
-  private async acquireExcludeLock(lockPath: string): Promise<FileHandle> {
+  private async acquireExcludeLock(lockPath: string): Promise<AcquiredExcludeLock> {
     const deadline = Date.now() + (this.lockOptions.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS)
     const pollMs = this.lockOptions.pollMs ?? DEFAULT_LOCK_POLL_MS
     const staleMs = this.lockOptions.staleMs ?? DEFAULT_LOCK_STALE_MS
     for (;;) {
       try {
         const handle = await this.fileSystem.open(lockPath, 'wx')
-        let identity: { dev: number; ino: number } | undefined
+        let identity: LockIdentity | undefined
+        const nonce = randomUUID()
         try {
           const info = await handle.stat()
-          identity = { dev: info.dev, ino: info.ino }
+          identity = { dev: info.dev, ino: info.ino, nlink: info.nlink }
+          if (!info.isFile() || info.nlink !== 1) throw new Error('Acquired Git exclude lock identity is unsafe')
           const now = this.clock().getTime()
-          await handle.writeFile(JSON.stringify({ nonce: randomUUID(), pid: process.pid, createdAt: now }), { encoding: 'utf8' })
+          await handle.writeFile(JSON.stringify({ nonce, pid: process.pid, createdAt: now, state: 'held' }), { encoding: 'utf8' })
           await handle.sync()
-          return handle
+          return { handle, identity, nonce, path: lockPath }
         } catch (error) {
           const errors = [error]
           try {
@@ -522,13 +544,13 @@ export class WorktreeService {
         }
         if (existing.isSymbolicLink()) throw new Error('Git exclude lock is symbolic')
         if ((existing.nlink ?? 1) !== 1 || existing.isDirectory()) throw new Error('Git exclude lock identity is unsafe')
-        let owner: { pid?: number; createdAt?: number } = {}
+        let owner: ExcludeLockMetadata = {}
         try {
           const handle = await this.fileSystem.open(lockPath, 'r')
           try {
             const handleInfo = await handle.stat()
             if (handleInfo.dev !== existing.dev || handleInfo.ino !== existing.ino) continue
-            owner = JSON.parse(await handle.readFile({ encoding: 'utf8' })) as typeof owner
+            owner = JSON.parse(await handle.readFile({ encoding: 'utf8' })) as ExcludeLockMetadata
           } finally {
             await handle.close()
           }
@@ -536,11 +558,16 @@ export class WorktreeService {
           if (missingError(inspectError)) continue
         }
         const hasPid = typeof owner.pid === 'number' && Number.isSafeInteger(owner.pid) && owner.pid > 0
+        const ownerIsReleased = owner.state === 'released' && typeof owner.nonce === 'string' && owner.nonce.length > 0
         const ownerIsDead = hasPid && !this.processExists(owner.pid as number)
         const ownerIsUnknownAndStale = !hasPid && this.clock().getTime() - (owner.createdAt ?? existing.mtimeMs ?? this.clock().getTime()) > staleMs
-        if (ownerIsDead || ownerIsUnknownAndStale) {
+        if (ownerIsReleased || ownerIsDead || ownerIsUnknownAndStale) {
           try {
-            await this.claimAndDeleteLock(lockPath, existing)
+            await this.claimAndDeleteLock(
+              lockPath,
+              { dev: existing.dev, ino: existing.ino, nlink: existing.nlink ?? 1 },
+              typeof owner.nonce === 'string' ? owner.nonce : undefined
+            )
           } catch (claimError) {
             if (missingError(claimError)) continue
             throw claimError
@@ -553,32 +580,33 @@ export class WorktreeService {
     }
   }
 
-  private async releaseExcludeLock(lockPath: string, handle: FileHandle): Promise<void> {
-    let identity: { dev: number; ino: number } | undefined
+  private async releaseExcludeLock(lock: AcquiredExcludeLock): Promise<void> {
     const errors: unknown[] = []
     try {
-      const info = await handle.stat()
-      identity = { dev: info.dev, ino: info.ino }
+      const metadata = JSON.stringify({
+        nonce: lock.nonce,
+        pid: process.pid,
+        createdAt: this.clock().getTime(),
+        state: 'released'
+      } satisfies ExcludeLockMetadata)
+      await lock.handle.write(metadata, 0, 'utf8')
+      await lock.handle.truncate(Buffer.byteLength(metadata))
+      await lock.handle.sync()
     } catch (error) {
       errors.push(error)
     } finally {
       try {
-        await handle.close()
+        await lock.handle.close()
       } catch (closeError) {
         errors.push(closeError)
       }
     }
-    if (errors.length === 0 && identity) {
-      try {
-        const current = await this.fileSystem.lstat(lockPath)
-        const followed = await this.fileSystem.stat(lockPath)
-        if (
-          followed.dev === identity.dev && followed.ino === identity.ino && !current.isSymbolicLink() &&
-          !current.isDirectory() && (current.nlink ?? 1) === 1
-        ) await this.claimAndDeleteLock(lockPath, identity)
-      } catch (error) {
-        if (!missingError(error)) errors.push(error)
+    try {
+      if (await this.lockPathMatches(lock.path, lock.identity, lock.nonce)) {
+        await this.claimAndDeleteLock(lock.path, lock.identity, lock.nonce)
       }
+    } catch (error) {
+      if (!missingError(error)) errors.push(error)
     }
     if (errors.length === 1) throw errors[0]
     if (errors.length > 1) throw new AggregateError(errors, 'Exclude lock release failed')
@@ -590,21 +618,29 @@ export class WorktreeService {
     }
   }
 
-  private async claimAndDeleteLock(lockPath: string, expected: { dev: number; ino: number }): Promise<void> {
-    const claimedPath = `${lockPath}.stale-${randomUUID()}`
+  private async lockPathMatches(lockPath: string, expected: LockIdentity, expectedNonce?: string): Promise<boolean> {
     const current = await this.fileSystem.lstat(lockPath)
+    if (current.isSymbolicLink() || current.isDirectory() || (current.nlink ?? 1) !== expected.nlink) return false
     const followed = await this.fileSystem.stat(lockPath)
-    if (
-      followed.dev !== expected.dev || followed.ino !== expected.ino || current.isSymbolicLink() ||
-      current.isDirectory() || (current.nlink ?? 1) !== 1
-    ) throw new Error('Stale lock identity changed before claim')
+    if (followed.dev !== expected.dev || followed.ino !== expected.ino) return false
+    return this.lockNonceMatches(lockPath, expectedNonce)
+  }
+
+  private async lockNonceMatches(lockPath: string, expectedNonce?: string): Promise<boolean> {
+    if (!expectedNonce) return true
+    try {
+      const metadata = JSON.parse(await this.fileSystem.readFile(lockPath, 'utf8')) as ExcludeLockMetadata
+      return metadata.nonce === expectedNonce
+    } catch {
+      return true
+    }
+  }
+
+  private async claimAndDeleteLock(lockPath: string, expected: LockIdentity, expectedNonce?: string): Promise<void> {
+    const claimedPath = `${lockPath}.stale-${randomUUID()}`
+    if (!await this.lockPathMatches(lockPath, expected, expectedNonce)) throw new Error('Stale lock identity changed before claim')
     await this.fileSystem.rename(lockPath, claimedPath)
-    const claimed = await this.fileSystem.lstat(claimedPath)
-    const claimedFollowed = await this.fileSystem.stat(claimedPath)
-    if (
-      claimedFollowed.dev !== expected.dev || claimedFollowed.ino !== expected.ino || claimed.isSymbolicLink() ||
-      claimed.isDirectory() || (claimed.nlink ?? 1) !== 1
-    ) {
+    if (!await this.lockPathMatches(claimedPath, expected, expectedNonce)) {
       if (!await this.pathExists(lockPath)) await this.fileSystem.rename(claimedPath, lockPath)
       throw new Error('Stale lock identity changed during claim')
     }
