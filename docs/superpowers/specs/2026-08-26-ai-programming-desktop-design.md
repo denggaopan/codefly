@@ -1,7 +1,7 @@
 # CodeFly AI Programming Desktop Design
 
 Date: 2026-08-26
-Status: Approved in conversation; awaiting written-spec review
+Status: Approved
 
 ## Overview
 
@@ -15,6 +15,7 @@ The first release uses Electron, React, TypeScript, xterm.js, and node-pty. Clau
 - Open a registered project's original directory in Visual Studio Code from its project row.
 - Open a registered project's original directory in Windows File Explorer from its project row.
 - Create PowerShell, Command Prompt, Claude, and Codex sessions.
+- Start interactive Claude and Codex sessions with their requested permission- and sandbox-bypass flags while keeping that state visibly disclosed.
 - Give each eligible session an isolated worktree and same-named branch.
 - Restore stopped sessions in their original directory with one click.
 - Derive a concise title from the first submitted text.
@@ -31,6 +32,7 @@ The first release uses Electron, React, TypeScript, xterm.js, and node-pty. Clau
 - Launching external editors other than Visual Studio Code.
 - Guaranteed restoration of Claude or Codex conversation context.
 - Persistent terminal scrollback after the application exits.
+- A per-session setting to disable the requested Claude/Codex bypass flags in the first release.
 - Automatic commits, stashes, deletion of branches belonging to completed session creation, or forced worktree deletion.
 
 ## User Experience
@@ -43,6 +45,7 @@ The application uses a dark two-column layout:
 - The left sidebar contains Add Project, search, project groups, and their sessions.
 - The main area contains one xterm.js terminal for the active session.
 - The plus button opens a launcher for PowerShell, Command Prompt, Claude, and Codex.
+- A persistent bottom status strip warns when the active Claude or Codex session is running with permission and sandbox bypass enabled.
 
 The default window size is 1180 by 760 pixels, with a minimum size of 900 by 600 pixels. The sidebar remains fixed-width while the terminal fills the remaining space. Long titles and paths use ellipsis and expose their full value in a tooltip.
 
@@ -191,7 +194,9 @@ The same-named branch remains after deletion. Ordinary sessions only stop their 
 
 ## Terminal and Agent Lifecycle
 
-PowerShell sessions launch the installed Windows PowerShell executable selected by the application. Command Prompt sessions launch `cmd.exe`. Claude and Codex sessions launch the resolved local CLI in a PTY with the session directory as their working directory.
+PowerShell sessions launch the installed Windows PowerShell executable selected by the application. Command Prompt sessions launch `cmd.exe`. Interactive Claude sessions launch the resolved local CLI with `--dangerously-skip-permissions`. Interactive Codex sessions launch the resolved local CLI with `--dangerously-bypass-approvals-and-sandbox`. Both use the session directory as their working directory.
+
+The bypass arguments are fixed launch-adapter values and cannot be supplied or changed by the renderer. Claude and Codex terminal headers and the bottom status strip display `Permissions and sandbox bypass enabled` in the destructive-state color for the entire lifetime of the interactive session. The first release intentionally has no per-session safe-mode toggle.
 
 The application resolves executable locations without concatenating user input into shell command strings. Launch adapters own the executable, fixed arguments, environment inheritance, and display label for each session type.
 
@@ -227,7 +232,7 @@ Once captured, only one title attempt is allowed per session:
 2. Codex sessions use a separate non-interactive Codex CLI adapter.
 3. PowerShell and Command Prompt sessions skip AI generation and begin with the local rule.
 
-The background adapter runs in a neutral directory under Electron's `userData`, not in the project or worktree. It receives a fixed title instruction and the delimited first input through standard input, has a 15-second timeout, and accepts at most 4 KiB of output. It does not share the interactive PTY or modify its conversation.
+The background adapter runs in a neutral directory under Electron's `userData`, not in the project or worktree. It receives a fixed title instruction and the delimited first input through standard input, has a 15-second timeout, and accepts at most 4 KiB of output. It does not share the interactive PTY or modify its conversation. Title adapters never receive `--dangerously-skip-permissions` or `--dangerously-bypass-approvals-and-sandbox`.
 
 The requested fallback order is:
 
@@ -264,6 +269,7 @@ Errors are scoped to the affected project or session. Modal dialogs are reserved
 - Branches belonging to completed session creation, commits, stashes, and original project files are never deleted automatically. A failed creation attempt may remove only the unused branch allocated by that same attempt.
 - API keys and CLI credentials are not read, copied, or persisted by CodeFly.
 - Terminal output is treated as untrusted text and is not rendered as HTML.
+- The user-requested bypass flags apply only to interactive Claude and Codex PTYs; the UI continuously discloses that those agent protections are disabled.
 
 ## Testing Strategy
 
@@ -297,6 +303,8 @@ Tests create temporary repositories and execute the installed Git binary to veri
 - Open the original registered project in Windows File Explorer and verify the row action does not expand, collapse, or switch sessions.
 - Open the launcher and create each session type through test launch adapters.
 - Render PTY output, send input, and resize terminals.
+- Verify Claude receives only `--dangerously-skip-permissions`, Codex receives only `--dangerously-bypass-approvals-and-sandbox`, and title processes receive neither flag.
+- Keep the bypass warning visible for active Claude/Codex sessions and absent for PowerShell/CMD sessions.
 - Generate and update the first-input title.
 - Switch running sessions and restore stopped sessions by clicking their rows.
 - Verify the delete icon does not trigger restore.
@@ -328,3 +336,4 @@ Automated tests do not require real Claude/Codex authentication. Title adapters 
 - A dirty worktree cannot be deleted through CodeFly.
 - A clean session deletion removes its worktree and record while retaining its branch.
 - The packaged Windows application runs PowerShell and Command Prompt and clearly reports whether Claude and Codex are available.
+- Interactive Claude and Codex sessions use the requested bypass flags, visibly disclose that state, and never pass those flags to title-generation processes.
