@@ -9,5 +9,5 @@
     "jsx": "react-jsx",
     "types": ["vitest/globals"]
   },
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/preload/**/*.d.ts", "src/shared/**/*.ts", "tests/**/*.ts", "tests/**/*.tsx"]
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/preload/**/*.d.ts", "src/shared/**/*.ts"]
 }

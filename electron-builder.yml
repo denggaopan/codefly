@@ -1,5 +1,6 @@
 appId: com.codefly.desktop
 productName: CodeFly
+npmRebuild: false
 directories:
   output: release
 files:
