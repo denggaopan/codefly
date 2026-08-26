@@ -75,11 +75,19 @@ export class SessionStore {
   }
 
   private async readRecoveredState(): Promise<AppState> {
-    const primary = await this.readDiskState(this.filePath)
+    const primary = await this.readRecoveryDiskState(this.filePath)
     if (primary.kind === 'valid') return primary.state
 
-    const backup = await this.readDiskState(`${this.filePath}.bak`)
+    const backup = await this.readRecoveryDiskState(`${this.filePath}.bak`)
     return backup.kind === 'valid' ? backup.state : emptyState()
+  }
+
+  private async readRecoveryDiskState(filePath: string): Promise<DiskState> {
+    try {
+      return await this.readDiskState(filePath)
+    } catch {
+      return { kind: 'invalid' }
+    }
   }
 
   private async commit(state: AppState): Promise<void> {

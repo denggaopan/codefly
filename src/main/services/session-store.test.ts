@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -88,13 +88,32 @@ describe('SessionStore', () => {
     expect(recoveredUpdate.sessions[0]!.status).toBe('stopped')
   })
 
-  it('surfaces operational file errors without replacing a directory', async () => {
+  it('recovers from a primary operational read error by loading a valid backup', async () => {
+    const backup = stateWith()
     await mkdir(filePath)
-    const store = new SessionStore(filePath)
+    await writeFile(`${filePath}.bak`, JSON.stringify(backup), 'utf8')
 
-    await expect(store.load()).rejects.toThrow()
-    await expect(store.save(stateWith())).rejects.toThrow()
-    await expect(readFile(filePath, 'utf8')).rejects.toThrow()
+    await expect(new SessionStore(filePath).load()).resolves.toEqual(backup)
+    expect((await stat(filePath)).isDirectory()).toBe(true)
+  })
+
+  it('returns empty state when neither recovery file can be read and preserves both files', async () => {
+    await mkdir(filePath)
+    await mkdir(`${filePath}.bak`)
+
+    await expect(new SessionStore(filePath).load()).resolves.toEqual({ version: 1, projects: [], sessions: [] })
+    expect((await stat(filePath)).isDirectory()).toBe(true)
+    expect((await stat(`${filePath}.bak`)).isDirectory()).toBe(true)
+  })
+
+  it('rejects saving when primary read fails operationally and preserves files', async () => {
+    const backupJson = JSON.stringify(stateWith())
+    await mkdir(filePath)
+    await writeFile(`${filePath}.bak`, backupJson, 'utf8')
+
+    await expect(new SessionStore(filePath).save(stateWith())).rejects.toThrow()
+    expect((await stat(filePath)).isDirectory()).toBe(true)
+    await expect(readFile(`${filePath}.bak`, 'utf8')).resolves.toBe(backupJson)
   })
 
   it('uses a valid backup without modifying a malformed primary', async () => {
