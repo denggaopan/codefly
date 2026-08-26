@@ -141,6 +141,7 @@ export class WorktreeService {
 
         let initialOid: string
         try {
+          await this.assertSafeDirectory(worktreePath, 'Worktree path')
           initialOid = await this.branchOid(repoRoot, name)
           if (initialOid !== expectedOid) throw new Error('Created branch OID differs from the recorded HEAD')
         } catch (error) {
@@ -332,7 +333,10 @@ export class WorktreeService {
     if (!pathIsWithin(physicalCommonDirectory, physicalParent)) {
       throw new Error('Git local exclude parent escapes the physical common directory')
     }
-    const lockPath = join(physicalCommonDirectory, 'info', 'codefly-exclude.lock')
+    const lockPath = join(physicalCommonDirectory, '.codefly-exclude.lock')
+    if (canonicalPath(dirname(lockPath)) !== canonicalPath(physicalCommonDirectory)) {
+      throw new Error('Git exclude lock parent is not the physical common directory')
+    }
     const lock = await this.acquireExcludeLock(lockPath)
     try {
       const excludeHandle = await this.fileSystem.open(excludePath, 'a+')
@@ -378,6 +382,8 @@ export class WorktreeService {
         return await this.fileSystem.open(lockPath, 'wx')
       } catch (error) {
         if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST')) throw error
+        const existing = await this.fileSystem.lstat(lockPath)
+        if (existing.isSymbolicLink()) throw new Error('Git exclude lock is symbolic')
         if (Date.now() >= deadline) throw new Error('Timed out waiting for the Git exclude lock')
         await new Promise((complete) => setTimeout(complete, 10))
       }

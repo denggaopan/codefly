@@ -269,7 +269,7 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     await new WorktreeService(undefined, clock).create(projectFor(root), [])
 
     expect(await readFile(excludePath, 'utf8')).toBe('first\r\nsecond\r\n/.worktrees/\r\n')
-    await expectMissing(join(dirname(excludePath), 'codefly-exclude.lock'))
+    await expectMissing(join(root, '.git', '.codefly-exclude.lock'))
   })
 
   it('rejects a .worktrees junction without writing through it', async () => {
@@ -337,7 +337,84 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     await expect(new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])).rejects.toThrow(/symbolic|changed/i)
     expect(await readFile(replacement, 'utf8')).toBe('external sentinel\n')
     expect(await readFile(heldPath, 'utf8')).not.toContain('/.worktrees/')
-    await expectMissing(join(dirname(excludePath), 'codefly-exclude.lock'))
+    await expectMissing(join(root, '.git', '.codefly-exclude.lock'))
+  })
+
+  it('places the exclude lock directly under the physical common dir when info is a junction', async () => {
+    const root = await makeRepo()
+    const commonDir = resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim())
+    const infoPath = join(commonDir, 'info')
+    const safeInfo = join(commonDir, 'safe-info')
+    await rename(infoPath, safeInfo)
+    await symlink(safeInfo, infoPath, 'junction')
+    const lockPaths: string[] = []
+    const fileSystem: WorktreeFileSystem = {
+      access,
+      readdir,
+      readFile: (path, encoding) => readFile(path, encoding),
+      mkdir,
+      lstat,
+      stat,
+      realpath,
+      async open(path, flags) {
+        if (flags === 'wx') lockPaths.push(resolve(path))
+        return open(path, flags)
+      },
+      unlink
+    }
+
+    await new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])
+
+    expect(lockPaths).toEqual([join(await realpath(commonDir), '.codefly-exclude.lock')])
+    await expectMissing(join(safeInfo, 'codefly-exclude.lock'))
+    await expectMissing(join(commonDir, '.codefly-exclude.lock'))
+  })
+
+  it('rejects an existing symbolic exclude lock without touching its target', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    const target = join(external, 'lock-target')
+    await writeFile(target, 'external lock sentinel\n', 'utf8')
+    await symlink(target, lockPath, 'file')
+
+    await expect(new WorktreeService(undefined, clock).create(projectFor(root), [])).rejects.toThrow(/lock is symbolic/i)
+
+    expect(await readFile(target, 'utf8')).toBe('external lock sentinel\n')
+    expect((await lstat(lockPath)).isSymbolicLink()).toBe(true)
+  })
+
+  it('does not unlink a replacement of the acquired exclude lock', async () => {
+    const root = await makeRepo()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    const heldLock = join(commonDir, '.codefly-exclude.lock.held')
+    let replaced = false
+    const fileSystem: WorktreeFileSystem = {
+      access,
+      readdir,
+      readFile: (path, encoding) => readFile(path, encoding),
+      mkdir,
+      lstat,
+      stat,
+      realpath,
+      async open(path, flags) {
+        const handle = await open(path, flags)
+        if (!replaced && resolve(path) === lockPath && flags === 'wx') {
+          replaced = true
+          await rename(lockPath, heldLock)
+          await writeFile(lockPath, 'replacement lock sentinel\n', 'utf8')
+        }
+        return handle
+      },
+      unlink
+    }
+
+    await new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])
+
+    expect(await readFile(lockPath, 'utf8')).toBe('replacement lock sentinel\n')
+    await expectExists(heldLock)
   })
 
   it('uses the shared common-dir exclude from a linked worktree repository root', async () => {
@@ -829,6 +906,35 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     await expectMissing(target)
     expect(await branchExists(root, 'worktree-260826-1')).toBe(false)
     expect(await listedWorktreePaths(root)).not.toContain(resolve(target))
+  })
+
+  it('rejects a worktree child swapped for a junction immediately after add', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    const original = join(external, 'original-worktree')
+    const redirect = join(external, 'redirect-target')
+    const sentinel = join(redirect, 'secret.txt')
+    await mkdir(redirect)
+    await writeFile(sentinel, 'must survive post-add swap\n', 'utf8')
+    let addedPath = ''
+    const runner: CommandRunner = {
+      async run(file, args, cwd) {
+        const result = await commandRunner.run(file, args, cwd)
+        if (file === 'git' && args[2] === 'worktree' && args[3] === 'add') {
+          addedPath = String(args[6])
+          await rename(addedPath, original)
+          await symlink(redirect, addedPath, 'junction')
+        }
+        return result
+      }
+    }
+
+    await expect(new WorktreeService(runner, clock).create(projectFor(root), [])).rejects.toThrow(/physical|symbolic|junction|cleanup/i)
+
+    expect(await readFile(sentinel, 'utf8')).toBe('must survive post-add swap\n')
+    expect(await branchExists(root, 'worktree-260826-1')).toBe(true)
+    expect(await listedWorktreePaths(root)).toContain(resolve(addedPath))
+    await expectExists(original)
   })
 
   it('preserves a cleanup branch advanced between failed OID capture and removal', async () => {
