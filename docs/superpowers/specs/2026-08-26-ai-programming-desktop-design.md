@@ -12,6 +12,7 @@ The first release uses Electron, React, TypeScript, xterm.js, and node-pty. Clau
 ## Goals
 
 - Add and switch among local projects.
+- Open a registered project's original directory in Visual Studio Code from its project row.
 - Create PowerShell, Command Prompt, Claude, and Codex sessions.
 - Give each eligible session an isolated worktree and same-named branch.
 - Restore stopped sessions in their original directory with one click.
@@ -26,6 +27,7 @@ The first release uses Electron, React, TypeScript, xterm.js, and node-pty. Clau
 - Git worktree creation and branch management outside session lifecycle needs.
 - Direct OpenAI or Anthropic API integration.
 - Cross-platform support in the first release.
+- Launching external editors other than Visual Studio Code.
 - Guaranteed restoration of Claude or Codex conversation context.
 - Persistent terminal scrollback after the application exits.
 - Automatic commits, stashes, deletion of branches belonging to completed session creation, or forced worktree deletion.
@@ -45,7 +47,9 @@ The default window size is 1180 by 760 pixels, with a minimum size of 900 by 600
 
 ### Project and Session Rows
 
-A project row shows the selected directory name and path. Its child session rows show:
+A project row shows the selected directory name and path. Its right-side actions contain a bundled blue Visual Studio Code SVG icon followed by the expand/collapse control. Clicking the Visual Studio Code icon opens the project's original user-selected directory, never an active session worktree. The icon has an accessible `Open project in VS Code` label and does not toggle the project row.
+
+Its child session rows show:
 
 - The terminal or agent icon.
 - The concise session title.
@@ -84,6 +88,7 @@ The main process owns all privileged operations:
 The main process is divided into focused services:
 
 - `ProjectService`: project registration, removal, lookup, and repository-root discovery.
+- `ExternalEditorService`: Visual Studio Code discovery and safe project opening.
 - `WorktreeService`: sequence allocation, worktree creation, status checks, and removal.
 - `TerminalService`: PTY lifecycle and terminal event routing.
 - `TitleService`: first-input tracking result handling, AI title adapters, and fallback rules.
@@ -91,7 +96,7 @@ The main process is divided into focused services:
 
 ### Preload Bridge
 
-The preload script exposes a typed, narrow API through `contextBridge`. It supports project selection, project/session queries, session lifecycle commands, terminal input and resize events, and subscriptions to terminal/state updates.
+The preload script exposes a typed, narrow API through `contextBridge`. It supports project selection, opening a registered project in Visual Studio Code, project/session queries, session lifecycle commands, terminal input and resize events, and subscriptions to terminal/state updates.
 
 `nodeIntegration` is disabled and `contextIsolation` is enabled. The renderer cannot access Node.js, spawn processes, or construct arbitrary shell commands. Every IPC request is schema-validated in the main process.
 
@@ -193,6 +198,18 @@ PTY output streams from the main process to only the owning renderer terminal. R
 
 Application shutdown terminates child PTYs and title processes. On the next launch, sessions appear stopped and restore on click.
 
+## Visual Studio Code Integration
+
+The project-row Visual Studio Code action always targets the original registered project path. It does not depend on the active session and does not open a worktree.
+
+`ExternalEditorService` discovers Visual Studio Code in this order:
+
+1. A `code` command resolvable from the inherited process environment.
+2. The current user's standard Visual Studio Code installation path.
+3. The machine-wide standard Visual Studio Code installation path.
+
+The service launches the resolved executable directly with the registered project path as a single argument. It never concatenates the path into a shell command. The action is disabled while no executable is available, and its tooltip explains that Visual Studio Code or the `code` command must be installed. A launch failure produces a project-scoped error without affecting sessions.
+
 ## First-Input Title Generation
 
 Before forwarding terminal input, the renderer observes the first submitted textual line. It tracks printable characters, pasted text, backspace, and the first Enter key, while filtering control sequences. Input forwarding is never delayed. If no usable text can be reconstructed, the temporary title remains until a later non-empty submitted line is observed.
@@ -216,6 +233,8 @@ Every result is converted to one line, stripped of terminal control characters a
 ## Error Handling
 
 - Missing Claude or Codex: disable that launcher entry and show the executable lookup result plus an installation hint.
+- Missing Visual Studio Code: disable the project-row action and show a tooltip explaining how to install VS Code or enable its `code` command.
+- Visual Studio Code launch failure: keep the application state unchanged and show a project-scoped error with the resolved executable path.
 - Worktree creation failure: show copyable Git stderr, remove artifacts created by that attempt, and do not create a session record.
 - Lost worktree path: mark the session `Path missing`; allow metadata removal without recreating or overwriting files.
 - PTY failure or unexpected exit: preserve the session, show the exit state, and allow click-to-restart.
@@ -231,6 +250,7 @@ Errors are scoped to the affected project or session. Modal dialogs are reserved
 - Renderer process isolation remains enabled.
 - IPC payloads use explicit schemas and reject unknown fields.
 - Git and executable invocation uses argument arrays rather than user-built shell strings.
+- The VS Code action accepts only a persisted project ID and resolves its path in the main process; renderer-provided paths are rejected.
 - Project, worktree, and repository paths are resolved and validated before mutation.
 - Worktree removal never uses `--force` in the first release.
 - Branches belonging to completed session creation, commits, stashes, and original project files are never deleted automatically. A failed creation attempt may remove only the unused branch allocated by that same attempt.
@@ -246,6 +266,7 @@ Errors are scoped to the affected project or session. Modal dialogs are reserved
 - Session state transitions for create, run, stop, restore, failure, and delete.
 - Persistence parsing, migration, atomic replacement, and backup recovery.
 - IPC schema validation and rejection of arbitrary executable arguments.
+- Visual Studio Code executable discovery order and registered-project path validation.
 
 ### Git Integration Tests
 
@@ -263,6 +284,7 @@ Tests create temporary repositories and execute the installed Git binary to veri
 ### Electron End-to-End Tests
 
 - Add and switch projects.
+- Open the original registered project in Visual Studio Code and verify the row action does not expand, collapse, or switch sessions.
 - Open the launcher and create each session type through test launch adapters.
 - Render PTY output, send input, and resize terminals.
 - Generate and update the first-input title.
@@ -276,6 +298,7 @@ Tests create temporary repositories and execute the installed Git binary to veri
 - Install and launch the packaged application.
 - Start real PowerShell and Command Prompt PTYs.
 - Detect present and absent Claude/Codex installations.
+- Detect present and absent Visual Studio Code installations and open a project path containing spaces.
 - Verify paths containing spaces and non-ASCII characters.
 
 Automated tests do not require real Claude/Codex authentication. Title adapters and agent PTYs use controllable test executables in CI; authenticated manual smoke tests cover the real CLIs.
@@ -283,6 +306,7 @@ Automated tests do not require real Claude/Codex authentication. Title adapters 
 ## Acceptance Criteria
 
 - A user can add a local project and create any of the four session types.
+- A user can click the Visual Studio Code icon on a project row to open that project's original directory without changing the active session.
 - An eligible Git session creates `.worktrees/worktree-YYMMDD-N` and a same-named branch from the current `HEAD`.
 - Non-Git and no-commit projects create ordinary sessions without mutating Git history.
 - The first submitted text updates the title without delaying terminal input and follows the agreed AI/local/truncation fallback order.
