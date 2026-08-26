@@ -34,7 +34,10 @@ export const sessionRecordSchema = z.discriminatedUnion('mode', [
   }),
   z.strictObject({
     ...commonSessionRecordShape,
-    mode: z.literal('ordinary')
+    mode: z.literal('ordinary'),
+    worktreeName: z.string().min(1).optional(),
+    worktreePath: z.string().min(1).optional(),
+    branchName: z.string().min(1).optional()
   })
 ])
 

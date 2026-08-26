@@ -62,7 +62,7 @@ describe('shared contracts', () => {
 
     expect(appStateSchema.safeParse({ version: 1, projects: [], sessions: [], unexpected: true }).success).toBe(false)
     expect(appStateSchema.safeParse({ version: 1, projects: [{ ...project, unexpected: true }], sessions: [] }).success).toBe(false)
-    expect(appStateSchema.safeParse({ version: 1, projects: [], sessions: [{ ...ordinarySession, worktreeName: 'not-allowed' }] }).success).toBe(false)
+    expect(appStateSchema.safeParse({ version: 1, projects: [], sessions: [{ ...ordinarySession, unexpected: true }] }).success).toBe(false)
     expect(capabilityStateSchema.safeParse({ ...capabilities, unexpected: true }).success).toBe(false)
     expect(capabilityStateSchema.safeParse({ ...capabilities, claude: { ...capabilities.claude, unexpected: true } }).success).toBe(false)
   })
@@ -91,20 +91,46 @@ describe('shared contracts', () => {
     }
   })
 
-  it('accepts ordinary sessions without worktree metadata', () => {
+  it('accepts ordinary sessions with omitted or valid optional worktree metadata', () => {
+    const ordinarySession = {
+      id: 's1',
+      projectId: 'p1',
+      kind: 'powershell',
+      title: 'Terminal',
+      titleState: 'pending',
+      createdAt: '2026-08-26T00:00:00.000Z',
+      mode: 'ordinary',
+      launchPath: 'E:/project',
+      status: 'creating'
+    }
+
+    expect(sessionRecordSchema.safeParse(ordinarySession).success).toBe(true)
     expect(
       sessionRecordSchema.safeParse({
-        id: 's1',
-        projectId: 'p1',
-        kind: 'powershell',
-        title: 'Terminal',
-        titleState: 'pending',
-        createdAt: '2026-08-26T00:00:00.000Z',
-        mode: 'ordinary',
-        launchPath: 'E:/project',
-        status: 'creating'
+        ...ordinarySession,
+        worktreeName: 'feature-branch',
+        worktreePath: 'E:/project/.worktrees/feature-branch',
+        branchName: 'feature/branch'
       }).success
     ).toBe(true)
+  })
+
+  it('rejects empty optional worktree metadata on ordinary sessions', () => {
+    const ordinarySession = {
+      id: 's1',
+      projectId: 'p1',
+      kind: 'powershell',
+      title: 'Terminal',
+      titleState: 'pending',
+      createdAt: '2026-08-26T00:00:00.000Z',
+      mode: 'ordinary',
+      launchPath: 'E:/project',
+      status: 'creating'
+    }
+
+    for (const field of ['worktreeName', 'worktreePath', 'branchName'] as const) {
+      expect(sessionRecordSchema.safeParse({ ...ordinarySession, [field]: '' }).success).toBe(false)
+    }
   })
 
   it('validates terminal write and first-input length boundaries', () => {
@@ -164,11 +190,19 @@ const validWorktreeSession: SessionRecord = {
   status: 'creating'
 }
 
+// @ts-expect-error Worktree sessions must include all worktree metadata.
 const incompleteWorktreeSession: SessionRecord = {
-  ...validWorktreeSession,
+  id: 's1',
+  projectId: 'p1',
+  kind: 'powershell',
+  title: 'Terminal',
+  titleState: 'pending',
+  createdAt: '2026-08-26T00:00:00.000Z',
   mode: 'worktree',
-  // @ts-expect-error Worktree sessions must include all worktree metadata.
-  worktreeName: undefined
+  worktreeName: 'feature-branch',
+  worktreePath: 'E:/project/.worktrees/feature-branch',
+  launchPath: 'E:/project',
+  status: 'creating'
 }
 
 void incompleteWorktreeSession
