@@ -26,9 +26,10 @@ describe('ProjectService', () => {
   })
 
   it('converts missing and file paths into InvalidProjectPathError', async () => {
-    const missingFs = { realpath: vi.fn(async () => { throw new Error('missing') }), stat: vi.fn() }
+    const missingCause = new Error('missing')
+    const missingFs = { realpath: vi.fn(async () => { throw missingCause }), stat: vi.fn() }
     const missing = new ProjectService({} as SessionStore, undefined, missingFs)
-    await expect(missing.register('C:\\missing')).rejects.toMatchObject({ selectedPath: 'C:\\missing' })
+    await expect(missing.register('C:\\missing')).rejects.toMatchObject({ selectedPath: 'C:\\missing', cause: missingCause })
 
     const file = new ProjectService({} as SessionStore, undefined, fsFor('C:\\file.txt', false))
     await expect(file.register('C:\\file.txt')).rejects.toBeInstanceOf(InvalidProjectPathError)
@@ -68,11 +69,15 @@ describe('ProjectService', () => {
     const directory = await mkdtemp(join(tmpdir(), 'codefly-project-service-'))
     const store = new SessionStore(join(directory, 'state.json'))
     const run = vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 })
-    const service = new ProjectService(store, runnerWith(run), fsFor('C:\\Projects\\Concurrent'), clock, () => 'same-id')
+    const ids = ['first-id', 'second-id']
+    const createId = vi.fn(() => ids.shift()!)
+    const service = new ProjectService(store, runnerWith(run), fsFor('C:\\Projects\\Concurrent'), clock, createId)
     try {
       const [first, second] = await Promise.all([service.register('C:\\one'), service.register('C:\\two')])
-      expect(first).toEqual(second)
-      await expect(store.load()).resolves.toMatchObject({ projects: [first] })
+      expect(first.id).toBe('first-id')
+      expect(second.id).toBe('first-id')
+      expect(createId).toHaveBeenCalledTimes(2)
+      await expect(store.load()).resolves.toMatchObject({ projects: [{ id: 'first-id' }] })
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
@@ -86,5 +91,20 @@ describe('ProjectService', () => {
     await expect(service.get('p1')).resolves.toBe(project)
     await expect(service.get('')).rejects.toMatchObject({ projectId: '' })
     await expect(service.get('missing')).rejects.toBeInstanceOf(ProjectNotFoundError)
+  })
+
+  it.each([
+    ['drive roots with trailing separators', 'C:\\', 'c:/'],
+    ['UNC paths with case and separator differences', '\\\\Server\\Share\\Project\\', '//server/share/project'],
+    ['non-ASCII paths with case and separator differences', 'C:\\Projects\\\u6f22\u5b57\\', 'c:/projects/\u6f22\u5b57']
+  ])('deduplicates %s using Windows-safe normalization', async (_label, storedPath, realPath) => {
+    const existing: ProjectRecord = { id: 'existing', name: 'Existing', path: storedPath, createdAt: '2026-08-26T00:00:00.000Z' }
+    const store = { load: vi.fn(async () => ({ ...emptyState(), projects: [existing] })), update: vi.fn() } as unknown as SessionStore
+    const run = vi.fn()
+    const service = new ProjectService(store, runnerWith(run), fsFor(realPath), clock, () => 'new')
+
+    await expect(service.register('C:\\selected')).resolves.toBe(existing)
+    expect(run).not.toHaveBeenCalled()
+    expect(store.update).not.toHaveBeenCalled()
   })
 })

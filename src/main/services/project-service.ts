@@ -26,7 +26,7 @@ export class InvalidProjectPathError extends Error {
   readonly selectedPath: string
 
   constructor(selectedPath: string, cause?: unknown) {
-    super(`Invalid project path: ${selectedPath}${cause instanceof Error ? ` (${cause.message})` : ''}`)
+    super(`Invalid project path: ${selectedPath}${cause instanceof Error ? ` (${cause.message})` : ''}`, { cause })
     this.name = 'InvalidProjectPathError'
     this.selectedPath = selectedPath
   }
@@ -60,10 +60,16 @@ export class ProjectService {
     let realPath: string
     try {
       realPath = await this.fileSystem.realpath(selectedPath)
-      if (!(await this.fileSystem.stat(realPath)).isDirectory()) throw new Error('Path is not a directory')
     } catch (error) {
       throw new InvalidProjectPathError(selectedPath, error)
     }
+    let directory: { isDirectory(): boolean }
+    try {
+      directory = await this.fileSystem.stat(realPath)
+    } catch (error) {
+      throw new InvalidProjectPathError(selectedPath, error)
+    }
+    if (!directory.isDirectory()) throw new InvalidProjectPathError(selectedPath)
 
     const current = await this.store.load()
     const existing = projectWithPath(current.projects, realPath)
