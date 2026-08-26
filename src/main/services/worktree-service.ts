@@ -1,4 +1,4 @@
-import { access, lstat, mkdir, open, readFile, readdir, realpath, stat, unlink } from 'node:fs/promises'
+import { access, lstat, mkdir, open, readFile, readdir, realpath, rename, stat, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -36,6 +36,12 @@ export interface WorktreeFileSystem {
   rename(oldPath: string, newPath: string): Promise<void>
 }
 
+export interface WorktreeLockOptions {
+  timeoutMs?: number
+  pollMs?: number
+  staleMs?: number
+}
+
 const productionFileSystem: WorktreeFileSystem = {
   access,
   async readdir(path) {
@@ -52,12 +58,15 @@ const productionFileSystem: WorktreeFileSystem = {
   realpath,
   open,
   unlink,
-  rename: async (oldPath, newPath) => import('node:fs/promises').then((fs) => fs.rename(oldPath, newPath))
+  rename
 }
 
 const createQueues = new Map<string, Promise<void>>()
 const EXCLUDE_LINE = '/.worktrees/'
 const WORKTREE_NAME_PATTERN = /^worktree-\d{6}-[1-9]\d*$/u
+const DEFAULT_LOCK_TIMEOUT_MS = 30_000
+const DEFAULT_LOCK_POLL_MS = 10
+const DEFAULT_LOCK_STALE_MS = 300_000
 
 const canonicalPath = (path: string): string =>
   resolve(path).replace(/\\/gu, '/').replace(/\/+$/u, '').toLocaleLowerCase('en-US')
@@ -102,7 +111,8 @@ export class WorktreeService {
   constructor(
     private readonly runner: CommandRunner = commandRunner,
     private readonly clock: () => Date = () => new Date(),
-    private readonly fileSystem: WorktreeFileSystem = productionFileSystem
+    private readonly fileSystem: WorktreeFileSystem = productionFileSystem,
+    private readonly lockOptions: WorktreeLockOptions = {}
   ) {}
 
   async create(project: ProjectRecord, knownSessions: readonly SessionRecord[]): Promise<SessionLocation> {
@@ -335,6 +345,10 @@ export class WorktreeService {
     if (!pathIsWithin(physicalCommonDirectory, physicalParent)) {
       throw new Error('Git local exclude parent escapes the physical common directory')
     }
+    const physicalParentInfo = await this.fileSystem.lstat(physicalParent)
+    if (!physicalParentInfo.isDirectory() || physicalParentInfo.isSymbolicLink()) {
+      throw new Error('Git local exclude physical parent is unsafe')
+    }
     const lockPath = join(physicalCommonDirectory, '.codefly-exclude.lock')
     if (canonicalPath(dirname(lockPath)) !== canonicalPath(physicalCommonDirectory)) {
       throw new Error('Git exclude lock parent is not the physical common directory')
@@ -342,7 +356,12 @@ export class WorktreeService {
     const lock = await this.acquireExcludeLock(lockPath)
     try {
       const excludeHandle = await this.fileSystem.open(excludePath, 'a+')
-      let replacement: { contents: string; mode: number } | undefined
+      let replacement: {
+        contents: string
+        mode: number
+        physicalExclude: string
+        excludeIdentity: { dev: number; ino: number }
+      } | undefined
       try {
         const handleInfo = await excludeHandle.stat()
         const pathInfo = await this.fileSystem.lstat(excludePath)
@@ -355,31 +374,50 @@ export class WorktreeService {
         if (!pathIsWithin(physicalCommonDirectory, physicalExclude)) {
           throw new Error('Git local exclude escapes the physical common directory')
         }
+        if (canonicalPath(dirname(physicalExclude)) !== canonicalPath(physicalParent)) {
+          throw new Error('Git local exclude changed physical parent')
+        }
+        const physicalInfo = await this.fileSystem.lstat(physicalExclude)
+        if (physicalInfo.isSymbolicLink() || physicalInfo.dev !== handleInfo.dev || physicalInfo.ino !== handleInfo.ino) {
+          throw new Error('Git local exclude physical identity changed')
+        }
         const contents = await excludeHandle.readFile({ encoding: 'utf8' })
         if (contents.split(/\r?\n/u).some((line) => line.trim() === EXCLUDE_LINE)) return
 
         const newline = contents.includes('\r\n') ? '\r\n' : '\n'
         const separator = contents.length > 0 && !/[\r\n]$/u.test(contents) ? newline : ''
-        replacement = { contents: `${contents}${separator}${EXCLUDE_LINE}${newline}`, mode: handleInfo.mode }
+        replacement = {
+          contents: `${contents}${separator}${EXCLUDE_LINE}${newline}`,
+          mode: handleInfo.mode,
+          physicalExclude,
+          excludeIdentity: { dev: handleInfo.dev, ino: handleInfo.ino }
+        }
       } finally {
         await excludeHandle.close()
       }
-      if (replacement) await this.replaceExclude(excludePath, physicalParent, replacement.contents, replacement.mode)
-    } finally {
-      const lockInfo = await lock.stat()
-      await lock.close()
-      try {
-        const currentLockInfo = await this.fileSystem.stat(lockPath)
-        if (lockInfo.dev === currentLockInfo.dev && lockInfo.ino === currentLockInfo.ino) {
-          await this.fileSystem.unlink(lockPath)
-        }
-      } catch (error) {
-        if (!missingError(error)) throw error
+      if (replacement) {
+        await this.replaceExclude(
+          replacement.physicalExclude,
+          physicalParent,
+          replacement.contents,
+          replacement.mode,
+          replacement.excludeIdentity,
+          { dev: physicalParentInfo.dev, ino: physicalParentInfo.ino }
+        )
       }
+    } finally {
+      await this.releaseExcludeLock(lockPath, lock)
     }
   }
 
-  private async replaceExclude(excludePath: string, parent: string, contents: string, mode: number): Promise<void> {
+  private async replaceExclude(
+    excludePath: string,
+    parent: string,
+    contents: string,
+    mode: number,
+    excludeIdentity: { dev: number; ino: number },
+    parentIdentity: { dev: number; ino: number }
+  ): Promise<void> {
     const tempPath = join(parent, `.codefly-exclude-${randomUUID()}.tmp`)
     const handle = await this.fileSystem.open(tempPath, 'wx')
     let identity: { dev: number; ino: number } | undefined
@@ -398,6 +436,20 @@ export class WorktreeService {
       }
       const physical = await this.fileSystem.realpath(tempPath)
       if (canonicalPath(dirname(physical)) !== canonicalPath(parent)) throw new Error('Git exclude temp escaped its parent')
+      const currentParent = await this.fileSystem.lstat(parent)
+      const currentPhysicalParent = await this.fileSystem.realpath(parent)
+      if (
+        !currentParent.isDirectory() || currentParent.isSymbolicLink() ||
+        currentParent.dev !== parentIdentity.dev || currentParent.ino !== parentIdentity.ino ||
+        canonicalPath(currentPhysicalParent) !== canonicalPath(parent)
+      ) throw new Error('Git exclude physical parent identity changed before replacement')
+      const currentExclude = await this.fileSystem.lstat(excludePath)
+      const currentPhysicalExclude = await this.fileSystem.realpath(excludePath)
+      if (
+        currentExclude.isSymbolicLink() ||
+        currentExclude.dev !== excludeIdentity.dev || currentExclude.ino !== excludeIdentity.ino ||
+        canonicalPath(currentPhysicalExclude) !== canonicalPath(excludePath)
+      ) throw new Error('Git local exclude identity changed before replacement')
       await this.fileSystem.rename(tempPath, excludePath)
     } catch (error) {
       const errors = [error]
@@ -425,17 +477,38 @@ export class WorktreeService {
   }
 
   private async acquireExcludeLock(lockPath: string): Promise<FileHandle> {
-    const deadline = Date.now() + 30_000
+    const deadline = Date.now() + (this.lockOptions.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS)
+    const pollMs = this.lockOptions.pollMs ?? DEFAULT_LOCK_POLL_MS
+    const staleMs = this.lockOptions.staleMs ?? DEFAULT_LOCK_STALE_MS
     for (;;) {
       try {
         const handle = await this.fileSystem.open(lockPath, 'wx')
+        let identity: { dev: number; ino: number } | undefined
         try {
+          const info = await handle.stat()
+          identity = { dev: info.dev, ino: info.ino }
           const now = this.clock().getTime()
-          await handle.writeFile(JSON.stringify({ nonce: randomUUID(), pid: process.pid, ownerStartedAt: now - process.uptime() * 1000, createdAt: now }), { encoding: 'utf8' })
+          await handle.writeFile(JSON.stringify({ nonce: randomUUID(), pid: process.pid, createdAt: now }), { encoding: 'utf8' })
           await handle.sync()
           return handle
         } catch (error) {
-          await handle.close()
+          const errors = [error]
+          try {
+            try {
+              await handle.close()
+            } catch (closeError) {
+              errors.push(closeError)
+            }
+          } finally {
+            if (identity) {
+              try {
+                await this.claimAndDeleteLock(lockPath, identity)
+              } catch (cleanupError) {
+                errors.push(cleanupError)
+              }
+            }
+          }
+          if (errors.length > 1) throw new AggregateError(errors, 'Exclude lock initialization cleanup failed')
           throw error
         }
       } catch (error) {
@@ -462,8 +535,10 @@ export class WorktreeService {
         } catch (inspectError) {
           if (missingError(inspectError)) continue
         }
-        const expired = this.clock().getTime() - (owner.createdAt ?? existing.mtimeMs ?? this.clock().getTime()) > 300_000
-        if ((typeof owner.pid === 'number' && !this.processExists(owner.pid)) || expired) {
+        const hasPid = typeof owner.pid === 'number' && Number.isSafeInteger(owner.pid) && owner.pid > 0
+        const ownerIsDead = hasPid && !this.processExists(owner.pid as number)
+        const ownerIsUnknownAndStale = !hasPid && this.clock().getTime() - (owner.createdAt ?? existing.mtimeMs ?? this.clock().getTime()) > staleMs
+        if (ownerIsDead || ownerIsUnknownAndStale) {
           try {
             await this.claimAndDeleteLock(lockPath, existing)
           } catch (claimError) {
@@ -473,9 +548,40 @@ export class WorktreeService {
           continue
         }
         if (Date.now() >= deadline) throw new Error('Timed out waiting for the Git exclude lock')
-        await new Promise((complete) => setTimeout(complete, 10))
+        await new Promise((complete) => setTimeout(complete, pollMs))
       }
     }
+  }
+
+  private async releaseExcludeLock(lockPath: string, handle: FileHandle): Promise<void> {
+    let identity: { dev: number; ino: number } | undefined
+    const errors: unknown[] = []
+    try {
+      const info = await handle.stat()
+      identity = { dev: info.dev, ino: info.ino }
+    } catch (error) {
+      errors.push(error)
+    } finally {
+      try {
+        await handle.close()
+      } catch (closeError) {
+        errors.push(closeError)
+      }
+    }
+    if (errors.length === 0 && identity) {
+      try {
+        const current = await this.fileSystem.lstat(lockPath)
+        const followed = await this.fileSystem.stat(lockPath)
+        if (
+          followed.dev === identity.dev && followed.ino === identity.ino && !current.isSymbolicLink() &&
+          !current.isDirectory() && (current.nlink ?? 1) === 1
+        ) await this.claimAndDeleteLock(lockPath, identity)
+      } catch (error) {
+        if (!missingError(error)) errors.push(error)
+      }
+    }
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) throw new AggregateError(errors, 'Exclude lock release failed')
   }
 
   private processExists(pid: number): boolean {
@@ -486,9 +592,19 @@ export class WorktreeService {
 
   private async claimAndDeleteLock(lockPath: string, expected: { dev: number; ino: number }): Promise<void> {
     const claimedPath = `${lockPath}.stale-${randomUUID()}`
+    const current = await this.fileSystem.lstat(lockPath)
+    const followed = await this.fileSystem.stat(lockPath)
+    if (
+      followed.dev !== expected.dev || followed.ino !== expected.ino || current.isSymbolicLink() ||
+      current.isDirectory() || (current.nlink ?? 1) !== 1
+    ) throw new Error('Stale lock identity changed before claim')
     await this.fileSystem.rename(lockPath, claimedPath)
     const claimed = await this.fileSystem.lstat(claimedPath)
-    if (claimed.dev !== expected.dev || claimed.ino !== expected.ino || claimed.isSymbolicLink()) {
+    const claimedFollowed = await this.fileSystem.stat(claimedPath)
+    if (
+      claimedFollowed.dev !== expected.dev || claimedFollowed.ino !== expected.ino || claimed.isSymbolicLink() ||
+      claimed.isDirectory() || (claimed.nlink ?? 1) !== 1
+    ) {
       if (!await this.pathExists(lockPath)) await this.fileSystem.rename(claimedPath, lockPath)
       throw new Error('Stale lock identity changed during claim')
     }
