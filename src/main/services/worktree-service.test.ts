@@ -1,4 +1,4 @@
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { access, appendFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -8,7 +8,7 @@ import type { ProjectRecord, SessionRecord } from '../../shared/contracts'
 import { commandRunner } from '../infrastructure/command-runner'
 import type { CommandRunner, CommandResult } from '../infrastructure/command-runner'
 import { WorktreeService } from './worktree-service'
-import type { SessionLocation } from './worktree-service'
+import type { SessionLocation, WorktreeFileSystem } from './worktree-service'
 
 const TEMP_PREFIX = 'codefly-worktree-service-'
 const roots = new Set<string>()
@@ -118,9 +118,9 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
   }
   roots.clear()
-})
+}, 30_000)
 
-describe.sequential('WorktreeService real Git lifecycle', () => {
+describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, () => {
   it('creates sequential dated worktrees and same-named branches from HEAD', async () => {
     const root = await makeRepo()
     const originalHead = (await git(root, ['rev-parse', 'HEAD'])).stdout.trim()
@@ -185,7 +185,7 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     ])
     for (const location of locations) {
       if (location.mode !== 'worktree') throw new Error('Expected worktree')
-      await expect(service.validate(worktreeSession(location))).resolves.toBe('valid')
+      await expect(service.validate(worktreeSession(location), projectFor(root))).resolves.toBe('valid')
     }
   })
 
@@ -199,7 +199,7 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     const location = await service.create(projectFor(root), [])
 
     if (location.mode !== 'worktree') throw new Error('Expected worktree')
-    await expect(service.validate(worktreeSession(location))).resolves.toBe('valid')
+    await expect(service.validate(worktreeSession(location), projectFor(root))).resolves.toBe('valid')
   })
 
   it('appends the local exclude once without changing tracked .gitignore', async () => {
@@ -216,6 +216,57 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     expect(exclude).toBe('keep-this\n/.worktrees/\n')
     expect(exclude.split(/\r?\n/u).filter((line) => line.trim() === '/.worktrees/')).toHaveLength(1)
     expect(await readFile(join(root, '.gitignore'), 'utf8')).toBe(gitignoreBefore)
+  })
+
+  it('rejects a .worktrees junction without writing through it', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    await symlink(external, join(root, '.worktrees'), 'junction')
+
+    await expect(new WorktreeService(undefined, clock).create(projectFor(root), [])).rejects.toThrow(/symbolic|junction|physical/i)
+
+    expect(await readdir(external)).toEqual([])
+  })
+
+  it('rejects a symbolic local exclude before append through an injected filesystem', async () => {
+    const root = await makeRepo()
+    const excludePath = resolve(root, (await git(root, ['rev-parse', '--git-path', 'info/exclude'])).stdout.trim())
+    let appendCalls = 0
+    const fileSystem: WorktreeFileSystem = {
+      access,
+      readdir,
+      readFile: (path, encoding) => readFile(path, encoding),
+      async appendFile(path, contents, encoding) {
+        appendCalls += 1
+        await appendFile(path, contents, encoding)
+      },
+      mkdir,
+      async lstat(path) {
+        if (resolve(path) === excludePath) return { isDirectory: () => false, isSymbolicLink: () => true }
+        const result = await lstat(path)
+        return { isDirectory: () => result.isDirectory(), isSymbolicLink: () => result.isSymbolicLink() }
+      },
+      realpath
+    }
+
+    await expect(new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])).rejects.toThrow(/symbolic/i)
+    expect(appendCalls).toBe(0)
+  })
+
+  it('uses the shared common-dir exclude from a linked worktree repository root', async () => {
+    const root = await makeRepo()
+    const linkedRoot = join(root, '.linked', 'source')
+    await git(root, ['worktree', 'add', '-b', 'linked-source', linkedRoot, 'HEAD'])
+    const project = projectFor(linkedRoot)
+    const service = new WorktreeService(undefined, clock)
+
+    const location = await service.create(project, [])
+
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+    await expect(service.validate(worktreeSession(location), project)).resolves.toBe('valid')
+    const commonDir = resolve(linkedRoot, (await git(linkedRoot, ['rev-parse', '--git-common-dir'])).stdout.trim())
+    const exclude = await readFile(join(commonDir, 'info', 'exclude'), 'utf8')
+    expect(exclude.split(/\r?\n/u).filter((line) => line.trim() === '/.worktrees/')).toHaveLength(1)
   })
 
   it('maps a nested selected project path underneath the new worktree', async () => {
@@ -261,11 +312,73 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     if (location.mode !== 'worktree') throw new Error('Expected worktree')
     const session = worktreeSession(location)
 
-    await expect(service.validate(session)).resolves.toBe('valid')
+    await expect(service.validate(session, projectFor(root))).resolves.toBe('valid')
     await rm(location.worktreePath, { recursive: true, force: true })
-    await expect(service.validate(session)).resolves.toBe('missing')
-    await expect(service.validate(ordinarySession(root))).resolves.toBe('valid')
-    await expect(service.validate(ordinarySession(join(root, 'absent')))).resolves.toBe('missing')
+    await expect(service.validate(session, projectFor(root))).resolves.toBe('missing')
+    await expect(service.validate(ordinarySession(root), projectFor(root))).resolves.toBe('valid')
+    await expect(service.validate(ordinarySession(join(root, 'absent')), projectFor(root))).resolves.toBe('missing')
+  })
+
+  it('rejects forged session ownership tuples without status or removal mutations', async () => {
+    const root = await makeRepo()
+    const foreignRoot = await makeRepo()
+    const project = projectFor(root)
+    const creator = new WorktreeService(undefined, clock)
+    const owned = await creator.create(project, [])
+    if (owned.mode !== 'worktree') throw new Error('Expected worktree')
+    const foreignName = 'worktree-260826-9'
+    const foreignPath = join(foreignRoot, '.worktrees', foreignName)
+    await git(foreignRoot, ['worktree', 'add', '-b', foreignName, foreignPath, 'HEAD'])
+
+    let destructiveCommands = 0
+    const guardedRunner: CommandRunner = {
+      async run(file, args, cwd) {
+        if (file === 'git' && (args[2] === 'status' || (args[2] === 'worktree' && args[3] === 'remove'))) {
+          destructiveCommands += 1
+        }
+        return commandRunner.run(file, args, cwd)
+      }
+    }
+    const service = new WorktreeService(guardedRunner, clock)
+    const valid = worktreeSession(owned)
+    const foreign = worktreeSession({
+      mode: 'worktree',
+      launchPath: foreignPath,
+      worktreeName: foreignName,
+      worktreePath: foreignPath,
+      branchName: foreignName,
+      repoRoot: foreignRoot
+    }, 'foreign-session')
+    const adversarial: SessionRecord[] = [
+      { ...valid, projectId: 'wrong-project' },
+      { ...valid, branchName: 'worktree-260826-99' },
+      { ...valid, worktreeName: 'worktree-260826-99' },
+      { ...valid, launchPath: root },
+      foreign,
+      { ...valid, worktreePath: '' } as SessionRecord
+    ]
+
+    for (const session of adversarial) {
+      await expect(service.validate(session, project)).resolves.toBe('missing')
+      await expect(service.remove(session, project)).resolves.toEqual({ status: 'missing' })
+    }
+    await expect(service.validate(valid, { ...project, id: 'different' })).resolves.toBe('missing')
+    await expect(service.remove(valid, { ...project, id: 'different' })).resolves.toEqual({ status: 'missing' })
+    expect(destructiveCommands).toBe(0)
+    await expectExists(owned.worktreePath)
+    await expectExists(foreignPath)
+  })
+
+  it('requires ordinary sessions to match their project without deleting files', async () => {
+    const root = await makeRepo()
+    const service = new WorktreeService(undefined, clock)
+    const project = projectFor(root)
+
+    await expect(service.validate({ ...ordinarySession(root), projectId: 'wrong' }, project)).resolves.toBe('missing')
+    await expect(service.validate(ordinarySession(join(root, 'packages')), project)).resolves.toBe('missing')
+    await expect(service.remove({ ...ordinarySession(root), projectId: 'wrong' }, project)).resolves.toEqual({ status: 'missing' })
+    await expect(service.remove(ordinarySession(root), project)).resolves.toEqual({ status: 'removed' })
+    await expectExists(join(root, 'tracked.txt'))
   })
 
   it('refuses dirty worktree removal and counts modified and untracked files', async () => {
@@ -273,10 +386,12 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     const service = new WorktreeService(undefined, clock)
     const location = await service.create(projectFor(root), [])
     if (location.mode !== 'worktree') throw new Error('Expected worktree')
-    await writeFile(join(location.worktreePath, 'tracked.txt'), 'modified\n', 'utf8')
-    await writeFile(join(location.worktreePath, 'untracked.txt'), 'new\n', 'utf8')
+    await git(location.worktreePath, ['mv', 'tracked.txt', 'renamed.txt'])
+    await mkdir(join(location.worktreePath, 'untracked'))
+    await writeFile(join(location.worktreePath, 'untracked', 'one.txt'), 'one\n', 'utf8')
+    await writeFile(join(location.worktreePath, 'untracked', 'two.txt'), 'two\n', 'utf8')
 
-    await expect(service.remove(worktreeSession(location))).resolves.toEqual({ status: 'dirty', changedFiles: 2 })
+    await expect(service.remove(worktreeSession(location), projectFor(root))).resolves.toEqual({ status: 'dirty', changedFiles: 3 })
     await expectExists(location.worktreePath)
     expect(await listedWorktreePaths(root)).toContain(resolve(location.worktreePath))
   })
@@ -287,7 +402,7 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     const location = await service.create(projectFor(root), [])
     if (location.mode !== 'worktree') throw new Error('Expected worktree')
 
-    await expect(service.remove(worktreeSession(location))).resolves.toEqual({ status: 'removed' })
+    await expect(service.remove(worktreeSession(location), projectFor(root))).resolves.toEqual({ status: 'removed' })
 
     await expectMissing(location.worktreePath)
     expect(await listedWorktreePaths(root)).not.toContain(resolve(location.worktreePath))
@@ -299,7 +414,7 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     const pathsBefore = await listedWorktreePaths(root)
     const contentsBefore = await readFile(join(root, 'tracked.txt'), 'utf8')
 
-    await expect(new WorktreeService(undefined, clock).remove(ordinarySession(root))).resolves.toEqual({ status: 'removed' })
+    await expect(new WorktreeService(undefined, clock).remove(ordinarySession(root), projectFor(root))).resolves.toEqual({ status: 'removed' })
 
     expect(await readFile(join(root, 'tracked.txt'), 'utf8')).toBe(contentsBefore)
     expect(await listedWorktreePaths(root)).toEqual(pathsBefore)
@@ -318,7 +433,7 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     const second = await service.create(projectFor(root), [])
     if (second.mode !== 'worktree') throw new Error('Expected worktree')
     const mismatch = { ...second, branchName: 'main' }
-    await expect(service.rollback(mismatch)).rejects.toThrow(/mismatch|invalid/i)
+    await expect(service.rollback(mismatch)).rejects.toThrow(/provenance|mismatch|invalid/i)
     await expectExists(second.worktreePath)
     expect(await branchExists(root, second.branchName)).toBe(true)
 
@@ -332,18 +447,70 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
       branchName: 'foreign',
       repoRoot: root
     }
-    await expect(service.rollback(foreign)).rejects.toThrow('Invalid worktree rollback location mismatch')
+    await expect(service.rollback(foreign)).rejects.toThrow(/provenance|mismatch/i)
     await expectExists(foreignPath)
     expect(await branchExists(root, 'foreign')).toBe(true)
 
     const traversal = { ...second, worktreeName: '..', branchName: '..', worktreePath: root }
-    await expect(service.rollback(traversal)).rejects.toThrow('Invalid worktree rollback location mismatch')
+    await expect(service.rollback(traversal)).rejects.toThrow(/provenance|mismatch/i)
     await expectExists(second.worktreePath)
     expect(await branchExists(root, second.branchName)).toBe(true)
 
     await git(root, ['worktree', 'remove', second.worktreePath])
     await service.rollback(second)
     expect(await branchExists(root, second.branchName)).toBe(false)
+  })
+
+  it('requires exact rollback provenance and consumes it once', async () => {
+    const root = await makeRepo()
+    const service = new WorktreeService(undefined, clock)
+    const location = await service.create(projectFor(root), [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+
+    await expect(service.rollback({ ...location })).rejects.toThrow(/provenance/i)
+    await expectExists(location.worktreePath)
+    await service.rollback(location)
+    await expect(service.rollback(location)).rejects.toThrow(/provenance/i)
+    expect(await branchExists(root, location.branchName)).toBe(false)
+  })
+
+  it('preserves advanced or moved worktrees during rollback', async () => {
+    const advancedRoot = await makeRepo()
+    const movedRoot = await makeRepo()
+    const service = new WorktreeService(undefined, clock)
+    const advanced = await service.create(projectFor(advancedRoot), [])
+    const moved = await service.create(projectFor(movedRoot), [])
+    if (advanced.mode !== 'worktree' || moved.mode !== 'worktree') throw new Error('Expected worktrees')
+
+    await writeFile(join(advanced.worktreePath, 'advance.txt'), 'advance\n', 'utf8')
+    await git(advanced.worktreePath, ['add', 'advance.txt'])
+    await git(advanced.worktreePath, ['commit', '-m', 'advance branch'])
+    await expect(service.rollback(advanced)).rejects.toThrow(/changed|OID/i)
+    await expectExists(advanced.worktreePath)
+    expect(await branchExists(advancedRoot, advanced.branchName)).toBe(true)
+
+    const movedPath = join(movedRoot, '.worktrees', 'moved-elsewhere')
+    await git(movedRoot, ['worktree', 'move', moved.worktreePath, movedPath])
+    await expect(service.rollback(moved)).rejects.toThrow(/moved|registered|mismatch/i)
+    await expectExists(movedPath)
+    expect(await branchExists(movedRoot, moved.branchName)).toBe(true)
+  })
+
+  it('preserves a same-name worktree replacement with a different OID', async () => {
+    const root = await makeRepo()
+    const service = new WorktreeService(undefined, clock)
+    const location = await service.create(projectFor(root), [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+    await git(root, ['worktree', 'remove', location.worktreePath])
+    await git(root, ['branch', '-D', location.branchName])
+    await writeFile(join(root, 'replacement.txt'), 'replacement\n', 'utf8')
+    await git(root, ['add', 'replacement.txt'])
+    await git(root, ['commit', '-m', 'replacement base'])
+    await git(root, ['worktree', 'add', '-b', location.branchName, location.worktreePath, 'HEAD'])
+
+    await expect(service.rollback(location)).rejects.toThrow(/changed|OID/i)
+    await expectExists(location.worktreePath)
+    expect(await branchExists(root, location.branchName)).toBe(true)
   })
 
   it('honors the exclude path returned by git rev-parse --git-path', async () => {
@@ -379,6 +546,23 @@ describe.sequential('WorktreeService real Git lifecycle', () => {
     const location = await new WorktreeService(runner, clock).create(projectFor(root), [])
 
     expect(location).toMatchObject({ mode: 'worktree', worktreeName: 'worktree-260826-2' })
+    expect(addAttempts).toBe(2)
+  })
+
+  it('surfaces a second real collision without a third add attempt', async () => {
+    const root = await makeRepo()
+    let addAttempts = 0
+    const runner: CommandRunner = {
+      async run(file, args, cwd) {
+        if (file === 'git' && args[2] === 'worktree' && args[3] === 'add') {
+          addAttempts += 1
+          await git(root, ['branch', String(args[5]), 'HEAD'])
+        }
+        return commandRunner.run(file, args, cwd)
+      }
+    }
+
+    await expect(new WorktreeService(runner, clock).create(projectFor(root), [])).rejects.toThrow()
     expect(addAttempts).toBe(2)
   })
 
