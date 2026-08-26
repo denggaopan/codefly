@@ -1,4 +1,5 @@
-import { access, appendFile, lstat, mkdir, readFile, readdir, realpath } from 'node:fs/promises'
+import { access, lstat, mkdir, open, readFile, readdir, realpath, stat, unlink } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { ProjectRecord, SessionRecord } from '../../shared/contracts'
@@ -25,10 +26,12 @@ export interface WorktreeFileSystem {
   access(path: string): Promise<void>
   readdir(path: string): Promise<string[]>
   readFile(path: string, encoding: 'utf8'): Promise<string>
-  appendFile(path: string, contents: string, encoding: 'utf8'): Promise<void>
   mkdir(path: string, options: { recursive: true }): Promise<unknown>
-  lstat(path: string): Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean }>
+  lstat(path: string): Promise<{ dev: number; ino: number; isDirectory(): boolean; isSymbolicLink(): boolean }>
+  stat(path: string): Promise<{ dev: number; ino: number }>
   realpath(path: string): Promise<string>
+  open(path: string, flags: 'wx' | 'a+'): Promise<FileHandle>
+  unlink(path: string): Promise<void>
 }
 
 const productionFileSystem: WorktreeFileSystem = {
@@ -39,14 +42,14 @@ const productionFileSystem: WorktreeFileSystem = {
   async readFile(path, encoding) {
     return readFile(path, encoding)
   },
-  async appendFile(path, contents, encoding) {
-    await appendFile(path, contents, encoding)
-  },
   async mkdir(path, options) {
     return mkdir(path, options)
   },
   lstat,
-  realpath
+  stat,
+  realpath,
+  open,
+  unlink
 }
 
 const createQueues = new Map<string, Promise<void>>()
@@ -109,19 +112,22 @@ export class WorktreeService {
     if (nestedPath === '..' || nestedPath.startsWith(`..${sep}`) || isAbsolute(nestedPath)) {
       return ordinary
     }
+    const commonDirectory = await this.findCommonDirectory(repoRoot)
+    if (!commonDirectory) return ordinary
 
-    return enqueue(canonicalPath(repoRoot), async () => {
+    return enqueue(canonicalPath(commonDirectory), async () => {
       if (!await this.hasCommittedHead(repoRoot)) return ordinary
 
       const worktreesDirectory = resolve(repoRoot, '.worktrees')
-      await this.ensureSafeWorktreesDirectory(worktreesDirectory)
+      await this.prepareSafeWorktreesDirectory(worktreesDirectory)
       await this.ensureLocalExclude(repoRoot)
-      await this.ensureSafeWorktreesDirectory(worktreesDirectory)
+      await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
       let name = await this.nextName(repoRoot, worktreesDirectory, knownSessions)
 
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        await this.ensureSafeWorktreesDirectory(worktreesDirectory)
+        await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
         const worktreePath = resolve(worktreesDirectory, name)
+        const expectedOid = await this.headOid(repoRoot)
         try {
           const result = await this.runner.run('git', ['-C', repoRoot, 'worktree', 'add', '-b', name, worktreePath, 'HEAD'])
           ensureSuccess(result, 'git worktree add')
@@ -136,9 +142,10 @@ export class WorktreeService {
         let initialOid: string
         try {
           initialOid = await this.branchOid(repoRoot, name)
+          if (initialOid !== expectedOid) throw new Error('Created branch OID differs from the recorded HEAD')
         } catch (error) {
           try {
-            await this.cleanupCreatedWorktree(repoRoot, worktreePath, name)
+            await this.cleanupCreatedWorktree(repoRoot, worktreePath, name, expectedOid)
           } catch (cleanupError) {
             throw new AggregateError([error, cleanupError], 'Branch OID lookup failed and worktree cleanup was incomplete')
           }
@@ -169,7 +176,8 @@ export class WorktreeService {
     const context = this.worktreeContext(session, project)
     if (!context) return 'missing'
     try {
-      await this.ensureSafeWorktreesDirectory(resolve(context.repoRoot, '.worktrees'))
+      await this.assertSafeDirectory(resolve(context.repoRoot, '.worktrees'), 'Worktrees directory')
+      await this.assertSafeDirectory(context.worktreePath, 'Worktree path')
     } catch {
       return 'missing'
     }
@@ -194,7 +202,8 @@ export class WorktreeService {
     const context = this.worktreeContext(session, project)
     if (!context) return { status: 'missing' }
     try {
-      await this.ensureSafeWorktreesDirectory(resolve(context.repoRoot, '.worktrees'))
+      await this.assertSafeDirectory(resolve(context.repoRoot, '.worktrees'), 'Worktrees directory')
+      await this.assertSafeDirectory(context.worktreePath, 'Worktree path')
     } catch {
       return { status: 'missing' }
     }
@@ -212,6 +221,12 @@ export class WorktreeService {
     const changedFiles = this.changedFileCount(status.stdout)
     if (changedFiles > 0) return { status: 'dirty', changedFiles }
 
+    try {
+      await this.assertSafeDirectory(resolve(context.repoRoot, '.worktrees'), 'Worktrees directory')
+      await this.assertSafeDirectory(context.worktreePath, 'Worktree path')
+    } catch {
+      return { status: 'missing' }
+    }
     ensureSuccess(
       await this.runner.run('git', ['-C', context.repoRoot, 'worktree', 'remove', context.worktreePath]),
       'git worktree remove'
@@ -240,8 +255,9 @@ export class WorktreeService {
       throw new Error('Invalid worktree rollback location mismatch')
     }
 
-    await this.ensureSafeWorktreesDirectory(worktreesDirectory)
+    await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
     if (await this.pathExists(expectedPath)) {
+      await this.assertSafeDirectory(expectedPath, 'Worktree path')
       const registration = ensureSuccess(
         await this.runner.run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain']),
         'git worktree list'
@@ -250,6 +266,8 @@ export class WorktreeService {
         throw new Error('Rollback worktree registration mismatch')
       }
       await this.assertUnchangedBranch(provenance)
+      await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
+      await this.assertSafeDirectory(expectedPath, 'Worktree path')
       ensureSuccess(
         await this.runner.run('git', ['-C', repoRoot, 'worktree', 'remove', expectedPath]),
         'git worktree remove'
@@ -265,10 +283,7 @@ export class WorktreeService {
       await this.assertUnchangedBranch(provenance)
     }
 
-    ensureSuccess(
-      await this.runner.run('git', ['-C', repoRoot, 'branch', '-D', provenance.name]),
-      'git branch -D'
-    )
+    await this.deleteBranchIfUnchanged(repoRoot, provenance.name, provenance.initialOid)
   }
 
   private async hasCommittedHead(repoRoot: string): Promise<boolean> {
@@ -278,6 +293,19 @@ export class WorktreeService {
     } catch {
       return false
     }
+  }
+
+  private async findCommonDirectory(repoRoot: string): Promise<string | undefined> {
+    let result: CommandResult
+    try {
+      result = await this.runner.run('git', ['-C', repoRoot, 'rev-parse', '--git-common-dir'])
+    } catch {
+      return undefined
+    }
+    const output = result.stdout.trim()
+    if (result.exitCode !== 0 || !output) return undefined
+    const lexicalPath = resolve(isAbsolute(output) ? output : join(repoRoot, output))
+    return this.fileSystem.realpath(lexicalPath)
   }
 
   private async ensureLocalExclude(repoRoot: string): Promise<void> {
@@ -304,23 +332,56 @@ export class WorktreeService {
     if (!pathIsWithin(physicalCommonDirectory, physicalParent)) {
       throw new Error('Git local exclude parent escapes the physical common directory')
     }
-
-    let contents = ''
+    const lockPath = join(physicalCommonDirectory, 'info', 'codefly-exclude.lock')
+    const lock = await this.acquireExcludeLock(lockPath)
     try {
-      const excludeInfo = await this.fileSystem.lstat(excludePath)
-      if (excludeInfo.isSymbolicLink()) throw new Error('Git local exclude is symbolic')
-      const physicalExclude = await this.fileSystem.realpath(excludePath)
-      if (!pathIsWithin(physicalCommonDirectory, physicalExclude)) {
-        throw new Error('Git local exclude escapes the physical common directory')
-      }
-      contents = await this.fileSystem.readFile(excludePath, 'utf8')
-    } catch (error) {
-      if (!missingError(error)) throw error
-    }
-    if (contents.split(/\r?\n/u).some((line) => line.trim() === EXCLUDE_LINE)) return
+      const excludeHandle = await this.fileSystem.open(excludePath, 'a+')
+      try {
+        const handleInfo = await excludeHandle.stat()
+        const pathInfo = await this.fileSystem.lstat(excludePath)
+        if (pathInfo.isSymbolicLink()) throw new Error('Git local exclude is symbolic')
+        const followedInfo = await this.fileSystem.stat(excludePath)
+        if (handleInfo.dev !== followedInfo.dev || handleInfo.ino !== followedInfo.ino) {
+          throw new Error('Git local exclude changed after open')
+        }
+        const physicalExclude = await this.fileSystem.realpath(excludePath)
+        if (!pathIsWithin(physicalCommonDirectory, physicalExclude)) {
+          throw new Error('Git local exclude escapes the physical common directory')
+        }
+        const contents = await excludeHandle.readFile({ encoding: 'utf8' })
+        if (contents.split(/\r?\n/u).some((line) => line.trim() === EXCLUDE_LINE)) return
 
-    const separator = contents.length > 0 && !/[\r\n]$/u.test(contents) ? '\n' : ''
-    await this.fileSystem.appendFile(excludePath, `${separator}${EXCLUDE_LINE}\n`, 'utf8')
+        const newline = contents.includes('\r\n') ? '\r\n' : '\n'
+        const separator = contents.length > 0 && !/[\r\n]$/u.test(contents) ? newline : ''
+        await excludeHandle.appendFile(`${separator}${EXCLUDE_LINE}${newline}`, { encoding: 'utf8' })
+      } finally {
+        await excludeHandle.close()
+      }
+    } finally {
+      const lockInfo = await lock.stat()
+      await lock.close()
+      try {
+        const currentLockInfo = await this.fileSystem.stat(lockPath)
+        if (lockInfo.dev === currentLockInfo.dev && lockInfo.ino === currentLockInfo.ino) {
+          await this.fileSystem.unlink(lockPath)
+        }
+      } catch (error) {
+        if (!missingError(error)) throw error
+      }
+    }
+  }
+
+  private async acquireExcludeLock(lockPath: string): Promise<FileHandle> {
+    const deadline = Date.now() + 30_000
+    for (;;) {
+      try {
+        return await this.fileSystem.open(lockPath, 'wx')
+      } catch (error) {
+        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST')) throw error
+        if (Date.now() >= deadline) throw new Error('Timed out waiting for the Git exclude lock')
+        await new Promise((complete) => setTimeout(complete, 10))
+      }
+    }
   }
 
   private async nextName(
@@ -426,15 +487,19 @@ export class WorktreeService {
     return { repoRoot, worktreePath, name: session.worktreeName }
   }
 
-  private async ensureSafeWorktreesDirectory(worktreesDirectory: string): Promise<void> {
+  private async prepareSafeWorktreesDirectory(worktreesDirectory: string): Promise<void> {
     await this.fileSystem.mkdir(worktreesDirectory, { recursive: true })
-    const info = await this.fileSystem.lstat(worktreesDirectory)
+    await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
+  }
+
+  private async assertSafeDirectory(path: string, label: string): Promise<void> {
+    const info = await this.fileSystem.lstat(path)
     if (!info.isDirectory() || info.isSymbolicLink()) {
-      throw new Error('Worktrees directory is symbolic, a junction, or not a directory')
+      throw new Error(`${label} is symbolic, a junction, or not a directory`)
     }
-    const physicalPath = await this.fileSystem.realpath(worktreesDirectory)
-    if (canonicalPath(physicalPath) !== canonicalPath(worktreesDirectory)) {
-      throw new Error('Worktrees directory physical path does not match its lexical path')
+    const physicalPath = await this.fileSystem.realpath(path)
+    if (canonicalPath(physicalPath) !== canonicalPath(path)) {
+      throw new Error(`${label} physical path does not match its lexical path`)
     }
   }
 
@@ -459,8 +524,19 @@ export class WorktreeService {
     return oid
   }
 
-  private async cleanupCreatedWorktree(repoRoot: string, worktreePath: string, name: string): Promise<void> {
-    await this.ensureSafeWorktreesDirectory(resolve(repoRoot, '.worktrees'))
+  private async headOid(repoRoot: string): Promise<string> {
+    const result = ensureSuccess(
+      await this.runner.run('git', ['-C', repoRoot, 'rev-parse', '--verify', 'HEAD']),
+      'git rev-parse --verify HEAD'
+    )
+    const oid = result.stdout.trim()
+    if (!oid) throw new Error('Git returned an empty HEAD OID')
+    return oid
+  }
+
+  private async cleanupCreatedWorktree(repoRoot: string, worktreePath: string, name: string, expectedOid: string): Promise<void> {
+    await this.assertSafeDirectory(resolve(repoRoot, '.worktrees'), 'Worktrees directory')
+    await this.assertSafeDirectory(worktreePath, 'Worktree path')
     const registration = ensureSuccess(
       await this.runner.run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain']),
       'git worktree list'
@@ -468,13 +544,26 @@ export class WorktreeService {
     if (!this.hasExactStanza(registration.stdout, { repoRoot, worktreePath, name })) {
       throw new Error('Created worktree ownership changed before cleanup')
     }
+    await this.assertSafeDirectory(resolve(repoRoot, '.worktrees'), 'Worktrees directory')
+    await this.assertSafeDirectory(worktreePath, 'Worktree path')
     ensureSuccess(
       await this.runner.run('git', ['-C', repoRoot, 'worktree', 'remove', worktreePath]),
       'git worktree remove'
     )
+    await this.deleteBranchIfUnchanged(repoRoot, name, expectedOid)
+  }
+
+  private async deleteBranchIfUnchanged(repoRoot: string, name: string, expectedOid: string): Promise<void> {
+    const registration = ensureSuccess(
+      await this.runner.run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain']),
+      'git worktree list'
+    )
+    if (this.worktreeStanzas(registration.stdout).some((stanza) => stanza.branch === `refs/heads/${name}`)) {
+      throw new Error('Worktree branch is still registered before reference deletion')
+    }
     ensureSuccess(
-      await this.runner.run('git', ['-C', repoRoot, 'branch', '-D', name]),
-      'git branch -D'
+      await this.runner.run('git', ['-C', repoRoot, 'update-ref', '-d', `refs/heads/${name}`, expectedOid]),
+      'git update-ref -d'
     )
   }
 
