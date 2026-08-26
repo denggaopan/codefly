@@ -1,4 +1,4 @@
-import { access, appendFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
+import { access, appendFile, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
@@ -299,7 +299,8 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
       stat,
       realpath,
       open,
-      unlink
+      unlink,
+      rename
     }
 
     await expect(new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])).rejects.toThrow(/symbolic/i)
@@ -331,7 +332,8 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
         }
         return handle
       },
-      unlink
+      unlink,
+      rename
     }
 
     await expect(new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])).rejects.toThrow(/symbolic|changed/i)
@@ -357,10 +359,11 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
       stat,
       realpath,
       async open(path, flags) {
-        if (flags === 'wx') lockPaths.push(resolve(path))
+        if (flags === 'wx' && basename(path) === '.codefly-exclude.lock') lockPaths.push(resolve(path))
         return open(path, flags)
       },
-      unlink
+      unlink,
+      rename
     }
 
     await new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])
@@ -408,13 +411,82 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
         }
         return handle
       },
-      unlink
+      unlink,
+      rename
     }
 
     await new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])
 
     expect(await readFile(lockPath, 'utf8')).toBe('replacement lock sentinel\n')
     await expectExists(heldLock)
+  })
+
+  it('recovers an ordinary exclude lock left by a dead process', async () => {
+    const root = await makeRepo()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    await writeFile(lockPath, JSON.stringify({ nonce: 'dead', pid: 2147483647, ownerStartedAt: 0, createdAt: 0 }), 'utf8')
+
+    await new WorktreeService(undefined, clock).create(projectFor(root), [])
+
+    await expectMissing(lockPath)
+  })
+
+  it('retries lock competition when an EEXIST lock disappears before lstat', async () => {
+    const root = await makeRepo()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    await writeFile(lockPath, 'transient', 'utf8')
+    let released = false
+    const fileSystem: WorktreeFileSystem = {
+      access, readdir, readFile: (path, encoding) => readFile(path, encoding), mkdir,
+      async lstat(path) {
+        if (!released && resolve(path) === lockPath) {
+          released = true
+          await unlink(lockPath)
+          const error = new Error('released') as NodeJS.ErrnoException
+          error.code = 'ENOENT'
+          throw error
+        }
+        return lstat(path)
+      },
+      stat, realpath, open, unlink, rename
+    }
+
+    await new WorktreeService(undefined, clock, fileSystem).create(projectFor(root), [])
+    await expectMissing(lockPath)
+  })
+
+  it('waits for a live exclude lock instead of stealing it', async () => {
+    const root = await makeRepo()
+    const commonDir = await realpath(resolve(root, (await git(root, ['rev-parse', '--git-common-dir'])).stdout.trim()))
+    const lockPath = join(commonDir, '.codefly-exclude.lock')
+    await writeFile(lockPath, JSON.stringify({ nonce: 'live', pid: process.pid, ownerStartedAt: clock().getTime() - 1000, createdAt: clock().getTime() }), 'utf8')
+    const release = setTimeout(() => void unlink(lockPath), 50)
+    try {
+      await new WorktreeService(undefined, clock).create(projectFor(root), [])
+    } finally {
+      clearTimeout(release)
+    }
+    await expectMissing(lockPath)
+  })
+
+  it('atomically replaces a hardlinked exclude without mutating the external inode', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    const excludePath = resolve(root, (await git(root, ['rev-parse', '--git-path', 'info/exclude'])).stdout.trim())
+    const target = join(external, 'shared-exclude')
+    await writeFile(target, 'external sentinel', 'utf8')
+    await unlink(excludePath)
+    await link(target, excludePath)
+
+    await new WorktreeService(undefined, clock).create(projectFor(root), [])
+
+    expect(await readFile(target, 'utf8')).toBe('external sentinel')
+    expect(await readFile(excludePath, 'utf8')).toBe('external sentinel\n/.worktrees/\n')
+    const targetInfo = await stat(target)
+    const excludeInfo = await stat(excludePath)
+    expect([excludeInfo.dev, excludeInfo.ino]).not.toEqual([targetInfo.dev, targetInfo.ino])
   })
 
   it('uses the shared common-dir exclude from a linked worktree repository root', async () => {
@@ -658,6 +730,69 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     expect(await branchExists(root, location.branchName)).toBe(true)
   })
 
+  it('claims a worktree before remove so a final-boundary junction swap cannot delete external files', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    const redirect = join(external, 'redirect')
+    const moved = join(external, 'original')
+    const sentinel = join(redirect, 'secret.txt')
+    await mkdir(redirect)
+    await writeFile(sentinel, 'survive final boundary\n', 'utf8')
+    let originalPath = ''
+    const runner: CommandRunner = {
+      async run(file, args, cwd) {
+        if (file === 'git' && args[2] === 'worktree' && args[3] === 'remove' && String(args[4]) === originalPath) {
+          await rename(originalPath, moved)
+          await symlink(redirect, originalPath, 'junction')
+        }
+        return commandRunner.run(file, args, cwd)
+      }
+    }
+    const project = projectFor(root)
+    const service = new WorktreeService(runner, clock)
+    const location = await service.create(project, [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+    originalPath = location.worktreePath
+    const excludePath = resolve(root, (await git(root, ['rev-parse', '--git-path', 'info/exclude'])).stdout.trim())
+    await appendFile(excludePath, 'secret.txt\n', 'utf8')
+
+    await service.remove(worktreeSession(location), project)
+
+    expect(await readFile(sentinel, 'utf8')).toBe('survive final boundary\n')
+    expect(await branchExists(root, location.branchName)).toBe(true)
+  })
+
+  it('serializes claim-repair-remove transactions across linked roots sharing a common dir', async () => {
+    const root = await makeRepo()
+    const linked = join(root, '.linked', 'remove-source')
+    await git(root, ['worktree', 'add', '-b', 'remove-source', linked, 'HEAD'])
+    let active = 0
+    let maxActive = 0
+    const runner: CommandRunner = { async run(file, args, cwd) {
+      if (file === 'git' && args[2] === 'worktree' && args[3] === 'repair') {
+        active += 1
+        maxActive = Math.max(maxActive, active)
+        await new Promise((complete) => setTimeout(complete, 100))
+      }
+      const result = await commandRunner.run(file, args, cwd)
+      if (file === 'git' && args[2] === 'worktree' && args[3] === 'remove') active -= 1
+      return result
+    } }
+    const service = new WorktreeService(runner, clock)
+    const mainProject = projectFor(root)
+    const linkedProject = { ...projectFor(linked), id: 'linked-project' }
+    const first = await service.create(mainProject, [])
+    const second = await service.create(linkedProject, [])
+    if (first.mode !== 'worktree' || second.mode !== 'worktree') throw new Error('Expected worktrees')
+
+    await Promise.all([
+      service.remove(worktreeSession(first), mainProject),
+      service.remove({ ...worktreeSession(second), projectId: linkedProject.id }, linkedProject)
+    ])
+
+    expect(maxActive).toBe(1)
+  })
+
   it('removes ordinary metadata without touching its original files or Git state', async () => {
     const root = await makeRepo()
     const pathsBefore = await listedWorktreePaths(root)
@@ -802,6 +937,28 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     expect((await git(root, ['show', `refs/heads/${location.branchName}:race-commit.txt`])).stdout.trim()).toBe('survive')
   })
 
+  it('restores an expected ref when its branch is checked out during compare-delete', async () => {
+    const root = await makeRepo()
+    const linkedPath = join(root, '.linked-race')
+    let injected = false
+    const runner: CommandRunner = { async run(file, args, cwd) {
+      if (!injected && file === 'git' && args[2] === 'update-ref' && args[3] === '-d') {
+        injected = true
+        await git(root, ['worktree', 'add', linkedPath, String(args[4]).replace('refs/heads/', '')])
+      }
+      return commandRunner.run(file, args, cwd)
+    } }
+    const service = new WorktreeService(runner, clock)
+    const location = await service.create(projectFor(root), [])
+    if (location.mode !== 'worktree') throw new Error('Expected worktree')
+    const expectedOid = (await git(root, ['rev-parse', `refs/heads/${location.branchName}`])).stdout.trim()
+
+    await service.rollback(location)
+
+    expect((await git(root, ['rev-parse', `refs/heads/${location.branchName}`])).stdout.trim()).toBe(expectedOid)
+    expect((await git(linkedPath, ['rev-parse', 'HEAD'])).stdout.trim()).toBe(expectedOid)
+  })
+
   it('honors the exclude path returned by git rev-parse --git-path', async () => {
     const root = await makeRepo()
     const alternateExclude = join(root, '.git', 'codefly-info', 'exclude')
@@ -935,6 +1092,30 @@ describe.sequential('WorktreeService real Git lifecycle', { timeout: 30_000 }, (
     expect(await branchExists(root, 'worktree-260826-1')).toBe(true)
     expect(await listedWorktreePaths(root)).toContain(resolve(addedPath))
     await expectExists(original)
+  })
+
+  it('rejects a child swapped after branch OID lookup before provenance return', async () => {
+    const root = await makeRepo()
+    const external = await makeDirectory()
+    const original = join(external, 'original')
+    const redirect = join(external, 'redirect')
+    const sentinel = join(redirect, 'secret.txt')
+    await mkdir(redirect)
+    await writeFile(sentinel, 'survive oid swap\n', 'utf8')
+    let child = ''
+    const runner: CommandRunner = { async run(file, args, cwd) {
+      const result = await commandRunner.run(file, args, cwd)
+      if (file === 'git' && args[2] === 'worktree' && args[3] === 'add') child = String(args[6])
+      if (file === 'git' && args[2] === 'rev-parse' && String(args[3]).startsWith('refs/heads/worktree-')) {
+        await rename(child, original)
+        await symlink(redirect, child, 'junction')
+      }
+      return result
+    } }
+
+    await expect(new WorktreeService(runner, clock).create(projectFor(root), [])).rejects.toThrow()
+    expect(await readFile(sentinel, 'utf8')).toBe('survive oid swap\n')
+    expect(await branchExists(root, 'worktree-260826-1')).toBe(true)
   })
 
   it('preserves a cleanup branch advanced between failed OID capture and removal', async () => {

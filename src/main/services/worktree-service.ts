@@ -1,5 +1,6 @@
 import { access, lstat, mkdir, open, readFile, readdir, realpath, stat, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { ProjectRecord, SessionRecord } from '../../shared/contracts'
@@ -27,11 +28,12 @@ export interface WorktreeFileSystem {
   readdir(path: string): Promise<string[]>
   readFile(path: string, encoding: 'utf8'): Promise<string>
   mkdir(path: string, options: { recursive: true }): Promise<unknown>
-  lstat(path: string): Promise<{ dev: number; ino: number; isDirectory(): boolean; isSymbolicLink(): boolean }>
+  lstat(path: string): Promise<{ dev: number; ino: number; nlink?: number; mtimeMs?: number; isDirectory(): boolean; isSymbolicLink(): boolean }>
   stat(path: string): Promise<{ dev: number; ino: number }>
   realpath(path: string): Promise<string>
-  open(path: string, flags: 'wx' | 'a+'): Promise<FileHandle>
+  open(path: string, flags: 'wx' | 'a+' | 'r'): Promise<FileHandle>
   unlink(path: string): Promise<void>
+  rename(oldPath: string, newPath: string): Promise<void>
 }
 
 const productionFileSystem: WorktreeFileSystem = {
@@ -49,7 +51,8 @@ const productionFileSystem: WorktreeFileSystem = {
   stat,
   realpath,
   open,
-  unlink
+  unlink,
+  rename: async (oldPath, newPath) => import('node:fs/promises').then((fs) => fs.rename(oldPath, newPath))
 }
 
 const createQueues = new Map<string, Promise<void>>()
@@ -141,9 +144,11 @@ export class WorktreeService {
 
         let initialOid: string
         try {
-          await this.assertSafeDirectory(worktreePath, 'Worktree path')
+          const beforeOid = await this.assertSafeDirectory(worktreePath, 'Worktree path')
           initialOid = await this.branchOid(repoRoot, name)
           if (initialOid !== expectedOid) throw new Error('Created branch OID differs from the recorded HEAD')
+          const afterOid = await this.assertSafeDirectory(worktreePath, 'Worktree path')
+          if (beforeOid.dev !== afterOid.dev || beforeOid.ino !== afterOid.ino) throw new Error('Worktree identity changed before return')
         } catch (error) {
           try {
             await this.cleanupCreatedWorktree(repoRoot, worktreePath, name, expectedOid)
@@ -222,16 +227,7 @@ export class WorktreeService {
     const changedFiles = this.changedFileCount(status.stdout)
     if (changedFiles > 0) return { status: 'dirty', changedFiles }
 
-    try {
-      await this.assertSafeDirectory(resolve(context.repoRoot, '.worktrees'), 'Worktrees directory')
-      await this.assertSafeDirectory(context.worktreePath, 'Worktree path')
-    } catch {
-      return { status: 'missing' }
-    }
-    ensureSuccess(
-      await this.runner.run('git', ['-C', context.repoRoot, 'worktree', 'remove', context.worktreePath]),
-      'git worktree remove'
-    )
+    await this.claimAndRemoveWorktree(context.repoRoot, context.worktreePath)
     return { status: 'removed' }
   }
 
@@ -267,12 +263,7 @@ export class WorktreeService {
         throw new Error('Rollback worktree registration mismatch')
       }
       await this.assertUnchangedBranch(provenance)
-      await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
-      await this.assertSafeDirectory(expectedPath, 'Worktree path')
-      ensureSuccess(
-        await this.runner.run('git', ['-C', repoRoot, 'worktree', 'remove', expectedPath]),
-        'git worktree remove'
-      )
+      await this.claimAndRemoveWorktree(repoRoot, expectedPath)
     } else {
       const registration = ensureSuccess(
         await this.runner.run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain']),
@@ -340,6 +331,7 @@ export class WorktreeService {
     const lock = await this.acquireExcludeLock(lockPath)
     try {
       const excludeHandle = await this.fileSystem.open(excludePath, 'a+')
+      let replacement: { contents: string; mode: number } | undefined
       try {
         const handleInfo = await excludeHandle.stat()
         const pathInfo = await this.fileSystem.lstat(excludePath)
@@ -357,10 +349,11 @@ export class WorktreeService {
 
         const newline = contents.includes('\r\n') ? '\r\n' : '\n'
         const separator = contents.length > 0 && !/[\r\n]$/u.test(contents) ? newline : ''
-        await excludeHandle.appendFile(`${separator}${EXCLUDE_LINE}${newline}`, { encoding: 'utf8' })
+        replacement = { contents: `${contents}${separator}${EXCLUDE_LINE}${newline}`, mode: handleInfo.mode }
       } finally {
         await excludeHandle.close()
       }
+      if (replacement) await this.replaceExclude(excludePath, physicalParent, replacement.contents, replacement.mode)
     } finally {
       const lockInfo = await lock.stat()
       await lock.close()
@@ -375,19 +368,102 @@ export class WorktreeService {
     }
   }
 
+  private async replaceExclude(excludePath: string, parent: string, contents: string, mode: number): Promise<void> {
+    const tempPath = join(parent, `.codefly-exclude-${randomUUID()}.tmp`)
+    const handle = await this.fileSystem.open(tempPath, 'wx')
+    let identity: { dev: number; ino: number } | undefined
+    try {
+      await handle.writeFile(contents, { encoding: 'utf8' })
+      await handle.chmod(mode & 0o777)
+      await handle.sync()
+      const info = await handle.stat()
+      identity = { dev: info.dev, ino: info.ino }
+    } finally {
+      await handle.close()
+    }
+    try {
+      const pathInfo = await this.fileSystem.lstat(tempPath)
+      if (!identity || pathInfo.isSymbolicLink() || pathInfo.dev !== identity.dev || pathInfo.ino !== identity.ino) {
+        throw new Error('Git exclude temp identity changed')
+      }
+      const physical = await this.fileSystem.realpath(tempPath)
+      if (canonicalPath(dirname(physical)) !== canonicalPath(parent)) throw new Error('Git exclude temp escaped its parent')
+      await this.fileSystem.rename(tempPath, excludePath)
+    } catch (error) {
+      try {
+        const current = await this.fileSystem.lstat(tempPath)
+        if (identity && current.dev === identity.dev && current.ino === identity.ino) await this.fileSystem.unlink(tempPath)
+      } catch (cleanupError) {
+        if (!missingError(cleanupError)) throw new AggregateError([error, cleanupError], 'Exclude replacement cleanup failed')
+      }
+      throw error
+    }
+  }
+
   private async acquireExcludeLock(lockPath: string): Promise<FileHandle> {
     const deadline = Date.now() + 30_000
     for (;;) {
       try {
-        return await this.fileSystem.open(lockPath, 'wx')
+        const handle = await this.fileSystem.open(lockPath, 'wx')
+        try {
+          const now = this.clock().getTime()
+          await handle.writeFile(JSON.stringify({ nonce: randomUUID(), pid: process.pid, ownerStartedAt: now - process.uptime() * 1000, createdAt: now }), { encoding: 'utf8' })
+          await handle.sync()
+          return handle
+        } catch (error) {
+          await handle.close()
+          throw error
+        }
       } catch (error) {
         if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST')) throw error
-        const existing = await this.fileSystem.lstat(lockPath)
+        let existing: Awaited<ReturnType<WorktreeFileSystem['lstat']>>
+        try {
+          existing = await this.fileSystem.lstat(lockPath)
+        } catch (inspectError) {
+          if (missingError(inspectError)) continue
+          throw inspectError
+        }
         if (existing.isSymbolicLink()) throw new Error('Git exclude lock is symbolic')
+        if ((existing.nlink ?? 1) !== 1 || existing.isDirectory()) throw new Error('Git exclude lock identity is unsafe')
+        let owner: { pid?: number; createdAt?: number } = {}
+        try {
+          const handle = await this.fileSystem.open(lockPath, 'r')
+          try {
+            const handleInfo = await handle.stat()
+            if (handleInfo.dev !== existing.dev || handleInfo.ino !== existing.ino) continue
+            owner = JSON.parse(await handle.readFile({ encoding: 'utf8' })) as typeof owner
+          } finally {
+            await handle.close()
+          }
+        } catch (inspectError) {
+          if (missingError(inspectError)) continue
+        }
+        const expired = this.clock().getTime() - (owner.createdAt ?? existing.mtimeMs ?? this.clock().getTime()) > 300_000
+        if ((typeof owner.pid === 'number' && !this.processExists(owner.pid)) || expired) {
+          await this.claimAndDeleteLock(lockPath, existing)
+          continue
+        }
         if (Date.now() >= deadline) throw new Error('Timed out waiting for the Git exclude lock')
         await new Promise((complete) => setTimeout(complete, 10))
       }
     }
+  }
+
+  private processExists(pid: number): boolean {
+    try { process.kill(pid, 0); return true } catch (error) {
+      return !(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH')
+    }
+  }
+
+  private async claimAndDeleteLock(lockPath: string, expected: { dev: number; ino: number }): Promise<void> {
+    const claimedPath = `${lockPath}.stale-${randomUUID()}`
+    await this.fileSystem.rename(lockPath, claimedPath)
+    const claimed = await this.fileSystem.lstat(claimedPath)
+    if (claimed.dev !== expected.dev || claimed.ino !== expected.ino || claimed.isSymbolicLink()) {
+      if (!await this.pathExists(lockPath)) await this.fileSystem.rename(claimedPath, lockPath)
+      throw new Error('Stale lock identity changed during claim')
+    }
+    await this.fileSystem.unlink(claimedPath)
   }
 
   private async nextName(
@@ -498,7 +574,7 @@ export class WorktreeService {
     await this.assertSafeDirectory(worktreesDirectory, 'Worktrees directory')
   }
 
-  private async assertSafeDirectory(path: string, label: string): Promise<void> {
+  private async assertSafeDirectory(path: string, label: string): Promise<{ dev: number; ino: number }> {
     const info = await this.fileSystem.lstat(path)
     if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error(`${label} is symbolic, a junction, or not a directory`)
@@ -507,6 +583,7 @@ export class WorktreeService {
     if (canonicalPath(physicalPath) !== canonicalPath(path)) {
       throw new Error(`${label} physical path does not match its lexical path`)
     }
+    return { dev: info.dev, ino: info.ino }
   }
 
   private changedFileCount(output: string): number {
@@ -550,12 +627,7 @@ export class WorktreeService {
     if (!this.hasExactStanza(registration.stdout, { repoRoot, worktreePath, name })) {
       throw new Error('Created worktree ownership changed before cleanup')
     }
-    await this.assertSafeDirectory(resolve(repoRoot, '.worktrees'), 'Worktrees directory')
-    await this.assertSafeDirectory(worktreePath, 'Worktree path')
-    ensureSuccess(
-      await this.runner.run('git', ['-C', repoRoot, 'worktree', 'remove', worktreePath]),
-      'git worktree remove'
-    )
+    await this.claimAndRemoveWorktree(repoRoot, worktreePath, true)
     await this.deleteBranchIfUnchanged(repoRoot, name, expectedOid)
   }
 
@@ -571,6 +643,53 @@ export class WorktreeService {
       await this.runner.run('git', ['-C', repoRoot, 'update-ref', '-d', `refs/heads/${name}`, expectedOid]),
       'git update-ref -d'
     )
+    const afterDelete = ensureSuccess(
+      await this.runner.run('git', ['-C', repoRoot, 'worktree', 'list', '--porcelain']),
+      'git worktree list'
+    )
+    if (this.worktreeStanzas(afterDelete.stdout).some((stanza) => stanza.branch === `refs/heads/${name}`)) {
+      try {
+        ensureSuccess(
+          await this.runner.run('git', ['-C', repoRoot, 'update-ref', `refs/heads/${name}`, expectedOid, '0'.repeat(expectedOid.length)]),
+          'git update-ref restore'
+        )
+      } catch (error) {
+        try {
+          await this.branchOid(repoRoot, name)
+        } catch {
+          throw error
+        }
+      }
+    }
+  }
+
+  private async claimAndRemoveWorktree(repoRoot: string, worktreePath: string, alreadyQueued = false): Promise<void> {
+    if (!alreadyQueued) {
+      const commonDirectory = await this.findCommonDirectory(repoRoot)
+      if (!commonDirectory) throw new Error('Unable to resolve Git common directory for worktree removal')
+      return enqueue(canonicalPath(commonDirectory), () => this.claimAndRemoveWorktree(repoRoot, worktreePath, true))
+    }
+    const parent = resolve(repoRoot, '.worktrees')
+    await this.assertSafeDirectory(parent, 'Worktrees directory')
+    const before = await this.fileSystem.lstat(worktreePath)
+    if (!before.isDirectory() || before.isSymbolicLink()) throw new Error('Worktree path is unsafe before claim')
+    const quarantine = join(parent, `.codefly-quarantine-${randomUUID()}`)
+    await this.fileSystem.rename(worktreePath, quarantine)
+    try {
+      const claimed = await this.fileSystem.lstat(quarantine)
+      if (!claimed.isDirectory() || claimed.isSymbolicLink() || claimed.dev !== before.dev || claimed.ino !== before.ino) {
+        throw new Error('Claimed worktree identity changed')
+      }
+      const physical = await this.fileSystem.realpath(quarantine)
+      if (canonicalPath(physical) !== canonicalPath(quarantine)) throw new Error('Claimed worktree escaped its trusted parent')
+      ensureSuccess(await this.runner.run('git', ['-C', repoRoot, 'worktree', 'repair', quarantine]), 'git worktree repair')
+      ensureSuccess(await this.runner.run('git', ['-C', repoRoot, 'worktree', 'remove', quarantine]), 'git worktree remove')
+    } catch (error) {
+      if (!await this.pathExists(worktreePath) && await this.pathExists(quarantine)) {
+        await this.fileSystem.rename(quarantine, worktreePath)
+      }
+      throw error
+    }
   }
 
   private async assertUnchangedBranch(provenance: RollbackProvenance): Promise<void> {
