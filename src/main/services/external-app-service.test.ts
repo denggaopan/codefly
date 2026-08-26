@@ -22,16 +22,19 @@ const project = (path: string): ProjectRecord => ({
 const locatorFor = (resolved: string | undefined): CliLocator =>
   new CliLocator({ run: vi.fn().mockResolvedValue({ stdout: resolved ? `${resolved}\r\n` : '', stderr: '', exitCode: 0 }) }, async () => Boolean(resolved))
 
+const locatorWith = (resolved: string | undefined): CliLocator => ({ resolve: vi.fn(async () => resolved) }) as unknown as CliLocator
+
 describe('ExternalAppService', () => {
   it('prefers the code command and does not check standard locations after it resolves', async () => {
-    const pathExists = vi.fn(async () => true)
-    const service = new ExternalAppService(locatorFor('C:\\bin\\code.cmd'), pathExists, vi.fn(), vi.fn(), {
+    const command = 'C:\\bin\\Code.exe'
+    const pathExists = vi.fn(async (candidate: string) => candidate === command)
+    const service = new ExternalAppService(locatorFor(command), pathExists, vi.fn(), vi.fn(), {
       LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
       ProgramFiles: 'C:\\Program Files'
     })
 
-    await expect(service.capabilities()).resolves.toEqual({ vscode: { available: true, detail: 'C:\\bin\\code.cmd' } })
-    expect(pathExists).not.toHaveBeenCalled()
+    await expect(service.capabilities()).resolves.toEqual({ vscode: { available: true, detail: command } })
+    expect(pathExists.mock.calls).toEqual([[command]])
   })
 
   it('checks the user install before the machine install, then uses the machine fallback', async () => {
@@ -53,6 +56,60 @@ describe('ExternalAppService', () => {
     await expect(service.capabilities()).resolves.toEqual({
       vscode: { available: false, detail: 'Install Visual Studio Code or enable the code command.' }
     })
+  })
+
+  it('derives and launches Code.exe from a bin\\code locator result', async () => {
+    const shim = 'C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code'
+    const nativeExecutable = 'C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe'
+    const pathExists = vi.fn(async (candidate: string) => candidate === nativeExecutable || candidate === 'C:\\Projects\\One')
+    const spawnDetached = vi.fn(async () => undefined)
+    const service = new ExternalAppService(locatorWith(shim), pathExists, spawnDetached, vi.fn(), {})
+
+    await expect(service.capabilities()).resolves.toEqual({ vscode: { available: true, detail: nativeExecutable } })
+    await service.openInVSCode(project('C:\\Projects\\One'))
+    expect(spawnDetached).toHaveBeenCalledWith(nativeExecutable, ['C:\\Projects\\One'])
+    expect(spawnDetached).not.toHaveBeenCalledWith(shim, expect.anything())
+  })
+
+  it.each([
+    'C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd',
+    '"C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd"'
+  ])('derives Code.exe rather than launching a %s shim', async (shim) => {
+    const nativeExecutable = 'C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe'
+    const spawnDetached = vi.fn(async () => undefined)
+    const service = new ExternalAppService(locatorWith(shim), vi.fn(async (candidate: string) => candidate === nativeExecutable || candidate === 'C:\\Projects\\One'), spawnDetached, vi.fn(), {})
+
+    await expect(service.capabilities()).resolves.toEqual({ vscode: { available: true, detail: nativeExecutable } })
+    await service.openInVSCode(project('C:\\Projects\\One'))
+    expect(spawnDetached).toHaveBeenCalledWith(nativeExecutable, ['C:\\Projects\\One'])
+  })
+
+  it('falls through from a missing derived executable to standard install paths', async () => {
+    const derived = 'C:\\Tools\\VS Code\\Code.exe'
+    const localInstall = 'C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe'
+    const machineInstall = 'C:\\Program Files\\Microsoft VS Code\\Code.exe'
+    const pathExists = vi.fn(async (candidate: string) => candidate === machineInstall)
+    const service = new ExternalAppService(locatorWith('C:\\Tools\\VS Code\\bin\\code.cmd'), pathExists, vi.fn(), vi.fn(), {
+      LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local',
+      ProgramFiles: 'C:\\Program Files'
+    })
+
+    await expect(service.capabilities()).resolves.toEqual({ vscode: { available: true, detail: machineInstall } })
+    expect(pathExists.mock.calls).toEqual([[derived], [localInstall], [machineInstall]])
+  })
+
+  it('accepts an existing direct .exe locator result but ignores unrelated non-executable candidates', async () => {
+    const executable = 'C:\\Tools\\Code.exe'
+    const directExists = vi.fn(async (candidate: string) => candidate === executable)
+    const directService = new ExternalAppService(locatorWith(executable), directExists, vi.fn(), vi.fn(), {})
+    await expect(directService.capabilities()).resolves.toEqual({ vscode: { available: true, detail: executable } })
+    expect(directExists).toHaveBeenCalledWith(executable)
+
+    const localInstall = 'C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe'
+    const unrelatedService = new ExternalAppService(locatorWith('C:\\Tools\\editor'), vi.fn(async (candidate: string) => candidate === localInstall), vi.fn(), vi.fn(), {
+      LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local'
+    })
+    await expect(unrelatedService.capabilities()).resolves.toEqual({ vscode: { available: true, detail: localInstall } })
   })
 
   it('opens the original spaced and Chinese project path as one VS Code argument', async () => {
@@ -151,5 +208,34 @@ describe('createSpawnDetached', () => {
     child.emit('error', failure)
     await expect(pending).rejects.toBe(failure)
     expect(unref).not.toHaveBeenCalled()
+  })
+
+  it('cleans up the opposite listener so duplicate process events cannot settle twice', async () => {
+    const child = new EventEmitter()
+    const unref = vi.fn()
+    ;(child as EventEmitter & { unref: () => void }).unref = unref
+    child.on('error', () => undefined)
+    const launch = createSpawnDetached(vi.fn(() => child as unknown as SpawnedProcess))
+
+    const pending = launch('Code.exe', ['C:\\Projects\\One'])
+    child.emit('spawn')
+    child.emit('error', new Error('late error'))
+    await expect(pending).resolves.toBeUndefined()
+    expect(child.listenerCount('error')).toBe(1)
+    expect(unref).toHaveBeenCalledOnce()
+  })
+
+  it('rejects if unref or the synchronous spawner throws', async () => {
+    const child = new EventEmitter()
+    const unrefFailure = new Error('unref failed')
+    ;(child as EventEmitter & { unref: () => void }).unref = () => { throw unrefFailure }
+    const unrefLaunch = createSpawnDetached(vi.fn(() => child as unknown as SpawnedProcess))
+    const unrefPending = unrefLaunch('Code.exe', ['C:\\Projects\\One'])
+    child.emit('spawn')
+    await expect(unrefPending).rejects.toBe(unrefFailure)
+
+    const spawnFailure = new Error('spawn threw')
+    const throwingLaunch = createSpawnDetached(vi.fn(() => { throw spawnFailure }))
+    await expect(throwingLaunch('Code.exe', ['C:\\Projects\\One'])).rejects.toBe(spawnFailure)
   })
 })

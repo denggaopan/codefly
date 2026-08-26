@@ -38,7 +38,10 @@ export type OpenPath = (path: string) => Promise<string>
 export type PathExists = (path: string) => Promise<boolean>
 
 export type SpawnedProcess = {
-  once(event: 'spawn' | 'error', listener: (error?: Error) => void): unknown
+  once(event: 'spawn', listener: () => void): unknown
+  once(event: 'error', listener: (error: Error) => void): unknown
+  removeListener(event: 'spawn', listener: () => void): unknown
+  removeListener(event: 'error', listener: (error: Error) => void): unknown
   unref(): void
 }
 
@@ -61,17 +64,40 @@ const defaultOpenPath: OpenPath = (candidate) => shell.openPath(candidate)
 
 export const createSpawnDetached = (processSpawner: ProcessSpawner = spawn): SpawnDetached =>
   (file, args) => new Promise<void>((resolve, reject) => {
-    const child = processSpawner(file, args, {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      shell: false
-    })
-    child.once('error', (error) => reject(error))
-    child.once('spawn', () => {
-      child.unref()
-      resolve()
-    })
+    try {
+      const child = processSpawner(file, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false
+      })
+      let settled = false
+      const cleanup = (): void => {
+        child.removeListener('spawn', onSpawn)
+        child.removeListener('error', onError)
+      }
+      const onSpawn = (): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        try {
+          child.unref()
+          resolve()
+        } catch (error) {
+          reject(error)
+        }
+      }
+      const onError = (error: Error): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
+      child.once('spawn', onSpawn)
+      child.once('error', onError)
+    } catch (error) {
+      reject(error)
+    }
   })
 
 const defaultSpawnDetached = createSpawnDetached()
@@ -116,7 +142,8 @@ export class ExternalAppService {
 
   private async findVSCode(): Promise<string | undefined> {
     const command = await this.locator.resolve('code')
-    if (command) return command
+    const commandExecutable = command ? await this.nativeVSCodeExecutable(command) : undefined
+    if (commandExecutable) return commandExecutable
 
     const localAppData = this.environment.LOCALAPPDATA
     if (localAppData) {
@@ -130,6 +157,22 @@ export class ExternalAppService {
       if (await this.pathExists(machineInstall)) return machineInstall
     }
     return undefined
+  }
+
+  private async nativeVSCodeExecutable(candidate: string): Promise<string | undefined> {
+    const unquoted = candidate.length >= 2 && candidate.startsWith('"') && candidate.endsWith('"')
+      ? candidate.slice(1, -1)
+      : candidate
+    if (unquoted.toLowerCase().endsWith('.exe')) {
+      return (await this.pathExists(unquoted)) ? unquoted : undefined
+    }
+
+    const fileName = path.basename(unquoted).toLowerCase()
+    const parentName = path.basename(path.dirname(unquoted)).toLowerCase()
+    if (parentName !== 'bin' || (fileName !== 'code' && fileName !== 'code.cmd')) return undefined
+
+    const executable = path.resolve(path.dirname(unquoted), '..', 'Code.exe')
+    return (await this.pathExists(executable)) ? executable : undefined
   }
 
   private async ensureProjectPath(project: ProjectRecord, app: ExternalApp): Promise<void> {
