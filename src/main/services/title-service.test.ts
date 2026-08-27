@@ -201,8 +201,9 @@ describe('createCliTitleAdapter', () => {
 
   it.each([
     ['claude' as const, 'C:\\Tools & SDK\\npm shims\\claude.cmd', ['--print']],
-    ['codex' as const, 'C:\\Program Files\\npm\\codex.cmd', ['exec', '--skip-git-repo-check', '-']]
-  ])('hosts a resolved %s .cmd shim while retaining exact logical argv', async (kind, shim, logicalArgs) => {
+    ['codex' as const, 'C:\\Program Files\\npm\\codex.cmd', ['exec', '--skip-git-repo-check', '-']],
+    ['claude' as const, 'C:\\Program Files\\npm\\claude.bat', ['--print']]
+  ])('hosts a resolved %s command shim while retaining exact logical argv', async (kind, shim, logicalArgs) => {
     const child = new FakeTitleProcess()
     const spawn = vi.fn(() => child)
     const comspec = 'C:\\Windows\\System32\\cmd.exe'
@@ -259,6 +260,42 @@ describe('createCliTitleAdapter', () => {
     await expect(pending).resolves.toBe('')
     expect(candidateExists.mock.calls).toEqual([ [`${resolved}.exe`], [commandShim] ])
     expect(spawn).toHaveBeenCalledWith('cmd.exe', ['/d', '/s', '/c', `"${commandShim}" --print`], expect.objectContaining({ shell: false }))
+  })
+
+  it('selects an existing sibling .bat after .exe and .cmd for an extensionless result', async () => {
+    const child = new FakeTitleProcess()
+    const spawn = vi.fn(() => child)
+    const resolved = 'C:\\path with spaces\\claude'
+    const batchShim = `${resolved}.bat`
+    const candidateExists = vi.fn(async (candidate: string) => candidate === batchShim)
+    const adapter = createCliTitleAdapter(
+      'claude',
+      { resolveAgent: vi.fn(async () => resolved) },
+      spawn,
+      { platform: 'win32', environment: { ComSpec: 'C:\\Windows\\cmd.exe' }, candidateExists }
+    )
+    const prompt = 'prompt & never command text'
+
+    const pending = adapter.generate(prompt, {
+      cwd: 'C:\\Data\\title-generator',
+      signal: new AbortController().signal,
+      maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+    })
+    await vi.waitFor(() => expect(candidateExists).toHaveBeenCalledTimes(3))
+    child.emit('close', 0, null)
+
+    await expect(pending).resolves.toBe('')
+    expect(candidateExists.mock.calls).toEqual([
+      [`${resolved}.exe`],
+      [`${resolved}.cmd`],
+      [batchShim]
+    ])
+    expect(spawn).toHaveBeenCalledWith(
+      'C:\\Windows\\cmd.exe',
+      ['/d', '/s', '/c', `"${batchShim}" --print`],
+      expect.objectContaining({ shell: false })
+    )
+    expect(child.stdin.end).toHaveBeenCalledWith(prompt)
   })
 
   it('prefers an executable sibling over a command shim for an extensionless result', async () => {

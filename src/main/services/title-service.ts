@@ -108,9 +108,13 @@ const windowsLaunchSpec = async (
     if (await candidateExists(executable)) return { file: executable, args: logicalArgs }
     const siblingShim = `${resolved}.cmd`
     if (await candidateExists(siblingShim)) commandShim = siblingShim
+    else {
+      const siblingBatchShim = `${resolved}.bat`
+      if (await candidateExists(siblingBatchShim)) commandShim = siblingBatchShim
+    }
   }
 
-  if (!commandShim) throw new Error('Resolved Windows agent command is not directly executable and has no .cmd shim.')
+  if (!commandShim) throw new Error('Resolved Windows agent command is not directly executable and has no command shim.')
   return {
     file: environment.ComSpec ?? environment.COMSPEC ?? 'cmd.exe',
     args: ['/d', '/s', '/c', commandForShim(commandShim, logicalArgs)]
