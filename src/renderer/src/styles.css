@@ -50,11 +50,10 @@ body {
   min-width: 320px;
   min-height: 100vh;
   color: var(--color-text);
-  /* Dark layered background: a flat canvas fill with a subtle radial blue highlight behind
-     the title bar/top-left, rather than a single flat color. */
-  background:
-    radial-gradient(ellipse 900px 500px at 20% -10%, rgba(59, 158, 255, 0.16), transparent 60%),
-    var(--color-canvas);
+  /* Flat fallback fill only: the title bar and sidebar are opaque panels on top of this
+     regardless, so a gradient here would never actually be visible — the layered
+     canvas + radial highlight lives on .app-main instead, where it isn't painted over. */
+  background: var(--color-canvas);
 }
 
 #root {
@@ -100,9 +99,19 @@ input {
   }
 }
 
+/* fill-mode is `backwards` (NOT `both`/`forwards`): `backwards` only holds the FROM keyframe
+   during each element's animation-delay (avoiding a flash of the un-animated state before a
+   staggered entry starts) and lets the element revert to its normal, non-animated computed
+   style once the animation ends. `forwards`/`both` would instead retain the TO keyframe's
+   `transform: translateY(0)` on the element forever — and any computed `transform` other than
+   `none` establishes a containing block for `position: fixed` descendants, which silently
+   breaks ConfirmDialog's full-viewport backdrop (rendered inside .project-sidebar). If a
+   future change puts a `transform`/`filter`/`contain` on .project-sidebar (or any ancestor of
+   ConfirmDialog) for another reason, this backdrop breaks again — portal ConfirmDialog to
+   document.body instead of reaching for `both` here if that's ever needed. */
 .project-sidebar,
 .terminal-workspace {
-  animation: codefly-reveal 180ms ease-out both;
+  animation: codefly-reveal 180ms ease-out backwards;
 }
 
 .project-sidebar {
@@ -146,7 +155,16 @@ input {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--color-canvas);
+  /* Dark layered background: a flat canvas fill with a subtle radial blue highlight, rather
+     than a single flat color. This lives here (not on body) because .title-bar and
+     .project-sidebar are opaque panels that would otherwise paint over a shell-level
+     gradient with no visible seam — .app-main is the one viewport-covering region nothing
+     else draws an opaque layer on top of (.terminal-workspace/.terminal-pane/
+     .terminal-empty-state are all transparent), so the highlight is actually visible in the
+     main workspace area, most obviously in the empty state before any session is opened. */
+  background:
+    radial-gradient(ellipse 900px 500px at 20% -10%, rgba(59, 158, 255, 0.16), transparent 60%),
+    var(--color-canvas);
 }
 
 /* ==========================================================================
