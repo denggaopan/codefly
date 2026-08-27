@@ -465,14 +465,14 @@ describe('App', () => {
     expect(document.querySelector('.agent-bypass-status')).toBeNull()
   })
 
-  it('renders no session tabs in the title bar', async () => {
+  it('renders no title bar at all — the sidebar and workspace fill the window', async () => {
     api = createFakeApi(stateWith(runningClaudeSession), allAvailableCapabilities)
     window.codefly = api
     render(<App />)
 
     await screen.findByText(runningClaudeSession.title, { selector: 'span.session-title' })
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
-    expect(document.querySelector('.title-bar-tabs')).toBeNull()
+    expect(document.querySelector('.title-bar')).toBeNull()
   })
 
   it('creates a session in the project whose row-level New session button was clicked', async () => {

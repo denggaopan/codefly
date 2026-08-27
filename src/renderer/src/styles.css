@@ -26,7 +26,6 @@
   --font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
 
   /* Layout constants (approved structure) */
-  --title-bar-height: 46px;
   --sidebar-width: 300px;
   --sidebar-width-narrow: 250px;
 
@@ -135,7 +134,7 @@ input {
 
 .app-shell {
   display: grid;
-  grid-template-rows: var(--title-bar-height) 1fr;
+  grid-template-rows: 1fr;
   height: 100vh;
   overflow: hidden;
 }
@@ -154,36 +153,15 @@ input {
   min-height: 0;
   overflow: hidden;
   /* Dark layered background: a flat canvas fill with a subtle radial blue highlight, rather
-     than a single flat color. This lives here (not on body) because .title-bar and
-     .project-sidebar are opaque panels that would otherwise paint over a shell-level
-     gradient with no visible seam — .app-main is the one viewport-covering region nothing
-     else draws an opaque layer on top of (.terminal-workspace/.terminal-pane/
-     .terminal-empty-state are all transparent), so the highlight is actually visible in the
-     main workspace area, most obviously in the empty state before any session is opened. */
+     than a single flat color. This lives here (not on body) because .project-sidebar is an
+     opaque panel that would otherwise paint over a shell-level gradient with no visible
+     seam — .app-main is the one viewport-covering region nothing else draws an opaque layer
+     on top of (.terminal-workspace/.terminal-pane/.terminal-empty-state are all
+     transparent), so the highlight is actually visible in the main workspace area, most
+     obviously in the empty state before any session is opened. */
   background:
     radial-gradient(ellipse 900px 500px at 20% -10%, rgba(59, 158, 255, 0.16), transparent 60%),
     var(--color-canvas);
-}
-
-/* ==========================================================================
-   Title bar
-   ========================================================================== */
-
-.title-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: var(--title-bar-height);
-  padding: 0 12px;
-  background: var(--color-panel);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.title-bar-brand {
-  flex: 0 0 auto;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--color-text);
 }
 
 /* ==========================================================================
