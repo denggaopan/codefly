@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
 import { useAppStore } from '../store/use-app-store'
@@ -76,23 +76,14 @@ type SessionRowProps = {
 function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRowProps) {
   const secondary = session.mode === 'worktree' ? session.worktreeName : 'Ordinary session'
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault()
-      onActivate()
-    }
-  }
-
+  // The row is a plain <li>: its label and delete action are SIBLING <button> elements
+  // rather than a delete button nested inside a role="button" container. An element with
+  // role="button" must not have focusable descendants (screen readers flatten/misreport
+  // that), and native <button> elements get keyboard (Enter/Space) activation for free, so
+  // no manual onKeyDown is needed here either.
   return (
     <li className="session-row">
-      <div
-        className="session-row-content"
-        role="button"
-        tabIndex={0}
-        aria-current={active ? 'true' : undefined}
-        onClick={onActivate}
-        onKeyDown={handleKeyDown}
-      >
+      <button type="button" className="session-row-content" aria-current={active ? 'true' : undefined} onClick={onActivate}>
         <span aria-hidden="true" className="session-kind-icon">
           {sessionKindGlyph(session.kind)}
         </span>
@@ -101,27 +92,29 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
         </span>
         <span className="session-secondary">{secondary}</span>
         <span className="session-status">{sessionStatusLabel(session)}</span>
-        <button
-          type="button"
-          className="session-delete"
-          aria-label={`Delete ${session.title}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            onRequestDelete()
-          }}
-        >
-          ×
-        </button>
-      </div>
+      </button>
+      <button
+        type="button"
+        className="session-delete"
+        aria-label={`Delete ${session.title}`}
+        onClick={(event) => {
+          event.stopPropagation()
+          onRequestDelete()
+        }}
+      >
+        ×
+      </button>
     </li>
   )
 }
 
 /**
  * Left navigation: Add Project, session search, and project groups with their sessions.
- * Project-row actions (VS Code, folder, expand) and the session delete action all
- * stopPropagation() because they sit inside a clickable row that otherwise selects the
- * project or activates the session.
+ * Each row's label and its trailing action button(s) are SIBLING <button> elements (never
+ * one button nested inside another interactively-roled element), so every stopPropagation()
+ * call below is defensive rather than load-bearing: it keeps a click on VS Code/folder/
+ * expand/delete from ever being interpreted as also activating the row, even if the DOM
+ * nesting changes later.
  */
 export default function ProjectSidebar() {
   const appState = useAppStore((state) => state.appState)
@@ -204,27 +197,24 @@ export default function ProjectSidebar() {
 
           return (
             <section key={project.id} className="project-group">
-              <div
-                className="project-row"
-                data-project-row
-                role="button"
-                tabIndex={0}
-                aria-current={project.id === activeProjectId ? 'true' : undefined}
-                onClick={() => setActiveProject(project.id)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    setActiveProject(project.id)
-                  }
-                }}
-              >
-                <span className="project-name" title={project.name}>
-                  {project.name}
-                </span>
-                <span className="project-path" title={project.path}>
-                  {project.path}
-                </span>
-                <div className="project-actions">
+              {/*
+                Plain container: the selectable label and the action buttons are SIBLING
+                <button> elements rather than three real buttons nested inside a
+                role="button" div. A role="button" element must not have focusable
+                descendants (screen readers flatten/misreport that, and it produces four tab
+                stops where the accessible tree advertises one), so the label itself is a
+                native <button> here and gets keyboard (Enter/Space) activation for free.
+              */}
+              <div className="project-row" data-project-row aria-current={project.id === activeProjectId ? 'true' : undefined}>
+                <button type="button" className="project-row-label" onClick={() => setActiveProject(project.id)}>
+                  <span className="project-name" title={project.name}>
+                    {project.name}
+                  </span>
+                  <span className="project-path" title={project.path}>
+                    {project.path}
+                  </span>
+                </button>
+                <div className="project-actions" data-project-actions>
                   <button
                     type="button"
                     aria-label="Open project in VS Code"

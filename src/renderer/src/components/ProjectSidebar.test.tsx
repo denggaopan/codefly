@@ -119,10 +119,49 @@ describe('ProjectSidebar', () => {
     render(<ProjectSidebar />)
 
     const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
-    const buttons = within(row).getAllByRole('button')
+    const actions = row.querySelector('[data-project-actions]') as HTMLElement
+    const buttons = within(actions).getAllByRole('button')
     const names = buttons.map((button) => button.getAttribute('aria-label'))
 
     expect(names).toEqual(['Open project in VS Code', 'Open project folder', expect.stringMatching(/sessions/i)])
+  })
+
+  it('does not put the project-row label or session-row label inside a role="button" ancestor', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    render(<ProjectSidebar />)
+
+    const projectLabel = screen.getByText(project1.name).closest('button') as HTMLElement
+    expect(projectLabel.closest('[role="button"]')).toBeNull()
+
+    const sessionLabel = screen.getByText(stoppedSession.title).closest('button') as HTMLElement
+    expect(sessionLabel.closest('[role="button"]')).toBeNull()
+  })
+
+  it('activates the project row label with the keyboard (native button, no role="button")', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const label = screen.getByText(project1.name).closest('button') as HTMLButtonElement
+    label.focus()
+    await user.keyboard('{Enter}')
+
+    expect(useAppStore.getState().activeProjectId).toBe('project-1')
+  })
+
+  it('restores a stopped session when its row label is activated with the keyboard', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    const restarted: SessionRecord = { ...stoppedSession, status: 'running' }
+    api.restoreSession = vi.fn(async () => restarted)
+    window.codefly = api
+    render(<ProjectSidebar />)
+
+    const label = screen.getByText(stoppedSession.title).closest('button') as HTMLButtonElement
+    label.focus()
+    await user.keyboard('{Enter}')
+
+    expect(api.restoreSession).toHaveBeenCalledWith(stoppedSession.id)
   })
 
   it('does not toggle the project row or restore a session when opening VS Code', async () => {
@@ -217,6 +256,40 @@ describe('ProjectSidebar', () => {
     expect(api.restoreSession).not.toHaveBeenCalled()
     expect(useAppStore.getState().activeSessionId).toBeNull()
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  it('focuses Cancel by default when the delete confirmation opens', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    render(<ProjectSidebar />)
+
+    await user.click(screen.getByRole('button', { name: `Delete ${stoppedSession.title}` }))
+
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+  })
+
+  it('cancels the delete confirmation on Escape without deleting', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    render(<ProjectSidebar />)
+
+    await user.click(screen.getByRole('button', { name: `Delete ${stoppedSession.title}` }))
+    await user.keyboard('{Escape}')
+
+    expect(api.deleteSession).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+  })
+
+  it('does not delete a session when Enter is pressed immediately after the confirmation opens', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    render(<ProjectSidebar />)
+
+    await user.click(screen.getByRole('button', { name: `Delete ${stoppedSession.title}` }))
+    await user.keyboard('{Enter}')
+
+    expect(api.deleteSession).not.toHaveBeenCalled()
   })
 
   it('never deletes when the confirmation is canceled', async () => {
