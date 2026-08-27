@@ -156,9 +156,13 @@ describe('TitleService', () => {
   })
 })
 
+class FakeTitleStdin extends EventEmitter {
+  readonly end = vi.fn()
+}
+
 class FakeTitleProcess extends EventEmitter implements SpawnedTitleProcess {
   readonly stdout = new EventEmitter()
-  readonly stdin = { end: vi.fn() }
+  readonly stdin = new FakeTitleStdin()
   readonly kill = vi.fn(() => true)
 }
 
@@ -193,6 +197,139 @@ describe('createCliTitleAdapter', () => {
     expect(expectedArgs).not.toContain('--dangerously-skip-permissions')
     expect(expectedArgs).not.toContain('--dangerously-bypass-approvals-and-sandbox')
     expect(child.stdin.end).toHaveBeenCalledWith('exact stdin prompt')
+  })
+
+  it.each([
+    ['claude' as const, 'C:\\Tools & SDK\\npm shims\\claude.cmd', ['--print']],
+    ['codex' as const, 'C:\\Program Files\\npm\\codex.cmd', ['exec', '--skip-git-repo-check', '-']]
+  ])('hosts a resolved %s .cmd shim while retaining exact logical argv', async (kind, shim, logicalArgs) => {
+    const child = new FakeTitleProcess()
+    const spawn = vi.fn(() => child)
+    const comspec = 'C:\\Windows\\System32\\cmd.exe'
+    const adapter = createCliTitleAdapter(
+      kind,
+      { resolveAgent: vi.fn(async () => shim) },
+      spawn,
+      { platform: 'win32', environment: { ComSpec: comspec }, candidateExists: vi.fn(async () => false) }
+    )
+    const prompt = 'secret prompt & echo must-not-enter-command-line'
+
+    const pending = adapter.generate(prompt, {
+      cwd: 'C:\\Data\\title-generator',
+      signal: new AbortController().signal,
+      maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+    })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    child.stdout.emit('data', 'Hosted title')
+    child.emit('close', 0, null)
+
+    await expect(pending).resolves.toBe('Hosted title')
+    expect(spawn).toHaveBeenCalledWith(comspec, ['/d', '/s', '/c', `"${shim}" ${logicalArgs.join(' ')}`], {
+      cwd: 'C:\\Data\\title-generator',
+      windowsHide: true,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'ignore']
+    })
+    expect(logicalArgs).not.toContain('--dangerously-skip-permissions')
+    expect(logicalArgs).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+    expect(child.stdin.end).toHaveBeenCalledWith(prompt)
+  })
+
+  it('selects and hosts a sibling .cmd for an extensionless npm shim result', async () => {
+    const child = new FakeTitleProcess()
+    const spawn = vi.fn(() => child)
+    const resolved = 'C:\\Users\\Dev Name\\AppData\\Roaming\\npm\\claude'
+    const commandShim = `${resolved}.cmd`
+    const candidateExists = vi.fn(async (candidate: string) => candidate === commandShim)
+    const adapter = createCliTitleAdapter(
+      'claude',
+      { resolveAgent: vi.fn(async () => resolved) },
+      spawn,
+      { platform: 'win32', environment: {}, candidateExists }
+    )
+
+    const pending = adapter.generate('prompt', {
+      cwd: 'C:\\Data\\title-generator',
+      signal: new AbortController().signal,
+      maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+    })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    child.emit('close', 0, null)
+
+    await expect(pending).resolves.toBe('')
+    expect(candidateExists.mock.calls).toEqual([ [`${resolved}.exe`], [commandShim] ])
+    expect(spawn).toHaveBeenCalledWith('cmd.exe', ['/d', '/s', '/c', `"${commandShim}" --print`], expect.objectContaining({ shell: false }))
+  })
+
+  it('prefers an executable sibling over a command shim for an extensionless result', async () => {
+    const child = new FakeTitleProcess()
+    const spawn = vi.fn(() => child)
+    const resolved = 'C:\\Program Files\\agents\\codex'
+    const executable = `${resolved}.exe`
+    const candidateExists = vi.fn(async (candidate: string) => candidate === executable || candidate === `${resolved}.cmd`)
+    const adapter = createCliTitleAdapter(
+      'codex',
+      { resolveAgent: vi.fn(async () => resolved) },
+      spawn,
+      { platform: 'win32', environment: { ComSpec: 'ignored.exe' }, candidateExists }
+    )
+
+    const pending = adapter.generate('prompt', {
+      cwd: 'C:\\Data\\title-generator',
+      signal: new AbortController().signal,
+      maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+    })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    child.emit('close', 0, null)
+
+    await expect(pending).resolves.toBe('')
+    expect(candidateExists.mock.calls).toEqual([[executable]])
+    expect(spawn).toHaveBeenCalledWith(executable, ['exec', '--skip-git-repo-check', '-'], expect.objectContaining({ shell: false }))
+  })
+
+  it('rejects unsafe quotes in a resolved command shim without spawning', async () => {
+    const spawn = vi.fn()
+    const adapter = createCliTitleAdapter(
+      'claude',
+      { resolveAgent: vi.fn(async () => 'C:\\bad"name\\claude.cmd') },
+      spawn,
+      { platform: 'win32', environment: {}, candidateExists: vi.fn(async () => true) }
+    )
+
+    await expect(adapter.generate('prompt', {
+      cwd: 'C:\\Data\\title-generator',
+      signal: new AbortController().signal,
+      maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+    })).rejects.toThrow(/unsafe/i)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('handles asynchronous stdin errors once through later process error and close events', async () => {
+    const child = new FakeTitleProcess()
+    const adapter = createCliTitleAdapter(
+      'claude',
+      { resolveAgent: vi.fn(async () => 'C:\\bin\\claude.exe') },
+      vi.fn(() => child)
+    )
+    const failure = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    const pending = adapter.generate('prompt', {
+      cwd: 'C:\\Data\\title-generator',
+      signal: new AbortController().signal,
+      maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+    })
+    const rejected = vi.fn()
+    void pending.catch(rejected)
+    await vi.waitFor(() => expect(child.stdin.end).toHaveBeenCalled())
+
+    expect(() => child.stdin.emit('error', failure)).not.toThrow()
+    expect(() => child.emit('error', new Error('later process error'))).not.toThrow()
+    child.emit('close', 1, null)
+
+    await expect(pending).rejects.toBe(failure)
+    expect(rejected).toHaveBeenCalledOnce()
+    expect(child.kill).toHaveBeenCalledOnce()
+    expect(child.stdin.listenerCount('error')).toBe(0)
+    expect(child.listenerCount('error')).toBe(0)
   })
 
   it('kills and rejects a child whose output exceeds 4 KiB', async () => {

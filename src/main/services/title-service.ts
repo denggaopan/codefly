@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { constants } from 'node:fs'
+import { access, mkdir } from 'node:fs/promises'
+import { join, win32 as windowsPath } from 'node:path'
 
 import { app } from 'electron'
 
@@ -28,9 +29,16 @@ type TitleReadable = {
   removeListener(event: 'data', listener: (chunk: Buffer | string) => void): unknown
 }
 
+type TitleWritable = {
+  end(input: string): unknown
+  on(event: 'error', listener: (error: Error) => void): unknown
+  removeListener(event: 'error', listener: (error: Error) => void): unknown
+}
+
 export type SpawnedTitleProcess = {
   readonly stdout: TitleReadable
-  readonly stdin: { end(input: string): unknown }
+  readonly stdin: TitleWritable
+  on(event: 'error', listener: (error: Error) => void): unknown
   once(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
   once(event: 'error', listener: (error: Error) => void): unknown
   removeListener(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
@@ -55,21 +63,85 @@ const defaultProcessSpawner: TitleProcessSpawner = (file, args, options) =>
 const argvFor = (kind: AgentKind): readonly string[] =>
   kind === 'claude' ? ['--print'] : ['exec', '--skip-git-repo-check', '-']
 
+type CandidateExists = (candidate: string) => Promise<boolean>
+
+export type TitleAdapterHostOptions = {
+  platform?: NodeJS.Platform
+  environment?: NodeJS.ProcessEnv
+  candidateExists?: CandidateExists
+}
+
+type TitleLaunchSpec = { file: string; args: readonly string[] }
+
+const defaultCandidateExists: CandidateExists = async (candidate) => {
+  try {
+    await access(candidate, constants.F_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const commandForShim = (shim: string, logicalArgs: readonly string[]): string => {
+  if (/["\u0000-\u001F\u007F]/u.test(shim)) throw new Error('Resolved command shim contains unsafe characters.')
+  const quotedShim = `"${shim.replace(/%/g, '^%')}"`
+  return [quotedShim, ...logicalArgs].join(' ')
+}
+
+const windowsLaunchSpec = async (
+  resolved: string,
+  logicalArgs: readonly string[],
+  environment: NodeJS.ProcessEnv,
+  candidateExists: CandidateExists
+): Promise<TitleLaunchSpec> => {
+  if (/["\u0000-\u001F\u007F]/u.test(resolved)) throw new Error('Resolved agent path contains unsafe characters.')
+  const extension = windowsPath.extname(resolved).toLowerCase()
+  if (extension === '.exe' || extension === '.com') return { file: resolved, args: logicalArgs }
+
+  let commandShim: string | undefined
+  if (extension === '.cmd' || extension === '.bat') {
+    const executable = `${resolved.slice(0, -extension.length)}.exe`
+    if (await candidateExists(executable)) return { file: executable, args: logicalArgs }
+    commandShim = resolved
+  } else if (extension.length === 0) {
+    const executable = `${resolved}.exe`
+    if (await candidateExists(executable)) return { file: executable, args: logicalArgs }
+    const siblingShim = `${resolved}.cmd`
+    if (await candidateExists(siblingShim)) commandShim = siblingShim
+  }
+
+  if (!commandShim) throw new Error('Resolved Windows agent command is not directly executable and has no .cmd shim.')
+  return {
+    file: environment.ComSpec ?? environment.COMSPEC ?? 'cmd.exe',
+    args: ['/d', '/s', '/c', commandForShim(commandShim, logicalArgs)]
+  }
+}
+
 export const createCliTitleAdapter = (
   kind: AgentKind,
   locator: Pick<CliLocator, 'resolveAgent'> = cliLocator,
-  processSpawner: TitleProcessSpawner = defaultProcessSpawner
+  processSpawner: TitleProcessSpawner = defaultProcessSpawner,
+  hostOptions: TitleAdapterHostOptions = {}
 ): TitleAdapter => ({
   async generate(prompt, options) {
     if (options.signal.aborted) throw new Error('Title generation cancelled.')
-    const executable = await locator.resolveAgent(kind)
-    if (!executable) throw new Error(`${kind} is not available.`)
+    const resolved = await locator.resolveAgent(kind)
+    if (!resolved) throw new Error(`${kind} is not available.`)
+    const logicalArgs = argvFor(kind)
+    const launch = (hostOptions.platform ?? process.platform) === 'win32'
+      ? await windowsLaunchSpec(
+        resolved,
+        logicalArgs,
+        hostOptions.environment ?? process.env,
+        hostOptions.candidateExists ?? defaultCandidateExists
+      )
+      : { file: resolved, args: logicalArgs }
     if (options.signal.aborted) throw new Error('Title generation cancelled.')
 
     return new Promise<string>((resolve, reject) => {
       let child: SpawnedTitleProcess
       try {
-        child = processSpawner(executable, argvFor(kind), {
+        child = processSpawner(launch.file, launch.args, {
           cwd: options.cwd,
           windowsHide: true,
           shell: false,
@@ -84,16 +156,21 @@ export const createCliTitleAdapter = (
       let outputBytes = 0
       let settled = false
 
-      const cleanup = (): void => {
+      const stopTransientWork = (): void => {
         child.stdout.removeListener('data', onData)
+        options.signal.removeEventListener('abort', onAbort)
+      }
+      const cleanupAfterClose = (): void => {
+        stopTransientWork()
         child.removeListener('close', onClose)
         child.removeListener('error', onError)
-        options.signal.removeEventListener('abort', onAbort)
+        child.stdin.removeListener('error', onStdinError)
       }
       const rejectOnce = (error: Error, terminate: boolean): void => {
         if (settled) return
         settled = true
-        cleanup()
+        stopTransientWork()
+        reject(error)
         if (terminate) {
           try {
             child.kill()
@@ -101,7 +178,6 @@ export const createCliTitleAdapter = (
             // The process may already have exited.
           }
         }
-        reject(error)
       }
       const onData = (chunk: Buffer | string): void => {
         const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
@@ -113,9 +189,12 @@ export const createCliTitleAdapter = (
         chunks.push(bytes)
       }
       const onClose = (code: number | null): void => {
-        if (settled) return
+        if (settled) {
+          cleanupAfterClose()
+          return
+        }
         settled = true
-        cleanup()
+        cleanupAfterClose()
         if (code === 0) {
           resolve(Buffer.concat(chunks).toString('utf8'))
           return
@@ -123,11 +202,13 @@ export const createCliTitleAdapter = (
         reject(new Error(`${kind} title process exited with code ${code ?? 'unknown'}.`))
       }
       const onError = (error: Error): void => rejectOnce(error, false)
+      const onStdinError = (error: Error): void => rejectOnce(error, true)
       const onAbort = (): void => rejectOnce(new Error('Title generation cancelled.'), true)
 
       child.stdout.on('data', onData)
       child.once('close', onClose)
-      child.once('error', onError)
+      child.on('error', onError)
+      child.stdin.on('error', onStdinError)
       options.signal.addEventListener('abort', onAbort, { once: true })
 
       if (options.signal.aborted) {
