@@ -7,6 +7,7 @@ import type { Dialog } from 'electron'
 import type { AppSnapshot, CapabilityState } from '../shared/contracts'
 import { cliLocator, type CliLocator } from './infrastructure/cli-locator'
 import { registerIpc } from './ipc/register-ipc'
+import { createBeforeQuitHandler } from './shutdown-controller'
 import { ExternalAppService } from './services/external-app-service'
 import { ProjectService } from './services/project-service'
 import { SessionCoordinator } from './services/session-coordinator'
@@ -33,7 +34,8 @@ type TerminalLocator = Pick<CliLocator, 'resolvePowerShell' | 'resolveAgent'>
 const buildGetSnapshot = (
   coordinator: SessionCoordinator,
   externalAppService: ExternalAppService,
-  agentLocator: AgentLocator
+  agentLocator: AgentLocator,
+  store: Pick<SessionStore, 'recoveryWarning'>
 ): (() => Promise<AppSnapshot>) => {
   return async () => {
     const [state, claudePath, codexPath, vscode] = await Promise.all([
@@ -49,7 +51,8 @@ const buildGetSnapshot = (
       ...vscode
     }
 
-    return { state, capabilities }
+    const recoveryWarning = store.recoveryWarning()
+    return recoveryWarning ? { state, capabilities, recoveryWarning } : { state, capabilities }
   }
 }
 
@@ -138,7 +141,7 @@ app.whenReady().then(() => {
     coordinator,
     externalAppService,
     terminalService,
-    getSnapshot: buildGetSnapshot(coordinator, externalAppService, agentLocator)
+    getSnapshot: buildGetSnapshot(coordinator, externalAppService, agentLocator, store)
   })
 
   window.on('closed', () => {
@@ -151,13 +154,16 @@ app.whenReady().then(() => {
     }
   })
 
-  app.on('before-quit', () => {
-    // coordinator.shutdown() can reject (e.g. TerminalService.stopAll() failing to
-    // force-kill a PTY); that must never block quit or escape as an unhandled rejection.
-    coordinator.shutdown().catch((error: unknown) => {
-      console.error('Failed to shut down SessionCoordinator cleanly before quit.', error)
+  app.on(
+    'before-quit',
+    createBeforeQuitHandler({
+      shutdown: () => coordinator.shutdown(),
+      quit: () => app.quit(),
+      onError: (error) => {
+        console.error('Failed to shut down SessionCoordinator cleanly before quit.', error)
+      }
     })
-  })
+  )
 })
 
 app.on('window-all-closed', () => {

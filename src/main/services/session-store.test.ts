@@ -126,6 +126,31 @@ describe('SessionStore', () => {
     await expect(readFile(filePath, 'utf8')).resolves.toBe(malformed)
   })
 
+  it('archives the first malformed primary and reports backup recovery', async () => {
+    const backup = stateWith()
+    const firstMalformed = '{first malformed state'
+    await writeFile(filePath, firstMalformed, 'utf8')
+    await writeFile(`${filePath}.bak`, JSON.stringify(backup), 'utf8')
+
+    const firstStore = new SessionStore(filePath)
+    await expect(firstStore.load()).resolves.toEqual(backup)
+    await expect(readFile(`${filePath}.corrupt`, 'utf8')).resolves.toBe(firstMalformed)
+    expect(firstStore.recoveryWarning()).toMatch(/recovered from backup/i)
+
+    await writeFile(filePath, '{second malformed state', 'utf8')
+    await new SessionStore(filePath).load()
+    await expect(readFile(`${filePath}.corrupt`, 'utf8')).resolves.toBe(firstMalformed)
+  })
+
+  it('reports an empty-state fallback when neither corrupt state file is valid', async () => {
+    await writeFile(filePath, '{malformed primary', 'utf8')
+    await writeFile(`${filePath}.bak`, '{malformed backup', 'utf8')
+
+    const store = new SessionStore(filePath)
+    await expect(store.load()).resolves.toEqual({ version: 1, projects: [], sessions: [] })
+    expect(store.recoveryWarning()).toMatch(/started with empty state/i)
+  })
+
   it('prefers a valid primary over a valid backup', async () => {
     const primary = stateWith()
     const backup = stateWith([{ ...stoppedSession, id: 'backup' }])

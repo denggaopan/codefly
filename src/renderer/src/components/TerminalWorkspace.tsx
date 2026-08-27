@@ -23,6 +23,8 @@ type TerminalEntry = {
 // so it cannot inherit the CSS custom property and needs the same Windows system font stack
 // spelled out here.
 const TERMINAL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
+const MAX_PENDING_DATA_PER_SESSION = 65_536
+const MAX_PENDING_SESSIONS = 32
 
 const sessionKindLabel = (kind: SessionRecord['kind']): string => {
   switch (kind) {
@@ -91,6 +93,7 @@ export default function TerminalWorkspace() {
 
   const [mountedSessionIds, setMountedSessionIds] = useState<string[]>([])
   const entriesRef = useRef<Map<string, TerminalEntry>>(new Map())
+  const pendingDataRef = useRef<Map<string, string>>(new Map())
   const hostRefCallbacks = useRef<Map<string, (element: HTMLDivElement | null) => void>>(new Map())
 
   // Mirrors `activeSessionId` for use inside stable closures (the ResizeObserver callback
@@ -141,6 +144,26 @@ export default function TerminalWorkspace() {
     resizeObserver.observe(element)
 
     entriesRef.current.set(sessionId, { terminal, fitAddon, tracker, element, dataDisposable, resizeObserver, lastCols: 0, lastRows: 0 })
+    const pendingData = pendingDataRef.current.get(sessionId)
+    if (pendingData !== undefined) {
+      pendingDataRef.current.delete(sessionId)
+      terminal.write(pendingData)
+    }
+  }
+
+  const writeOrBuffer = (sessionId: string, data: string): void => {
+    const entry = entriesRef.current.get(sessionId)
+    if (entry) {
+      entry.terminal.write(data)
+      return
+    }
+
+    if (!pendingDataRef.current.has(sessionId) && pendingDataRef.current.size >= MAX_PENDING_SESSIONS) {
+      const oldestSessionId = pendingDataRef.current.keys().next().value as string | undefined
+      if (oldestSessionId !== undefined) pendingDataRef.current.delete(oldestSessionId)
+    }
+    const combined = `${pendingDataRef.current.get(sessionId) ?? ''}${data}`
+    pendingDataRef.current.set(sessionId, combined.slice(-MAX_PENDING_DATA_PER_SESSION))
   }
 
   const getHostRef = (sessionId: string): ((element: HTMLDivElement | null) => void) => {
@@ -184,6 +207,7 @@ export default function TerminalWorkspace() {
         entriesRef.current.delete(id)
       }
       hostRefCallbacks.current.delete(id)
+      pendingDataRef.current.delete(id)
     }
     setMountedSessionIds((previous) => previous.filter((id) => !staleIds.includes(id)))
   }, [sessions, mountedSessionIds])
@@ -192,14 +216,14 @@ export default function TerminalWorkspace() {
   // remaining entry and both subscriptions on unmount.
   useEffect(() => {
     const disposeData = window.codefly.onTerminalData(({ sessionId, data }) => {
-      entriesRef.current.get(sessionId)?.terminal.write(data)
+      writeOrBuffer(sessionId, data)
     })
     const disposeExit = window.codefly.onTerminalExit(({ sessionId, exitCode }) => {
       // The session record's status flips to 'stopped' via the main process's broadcast
       // state (session-coordinator marks it on PTY exit), which drives the header's restart
       // action; here we only append a notice to the owning terminal's own scrollback. The
       // entry itself is deliberately NOT disposed, preserving the visible xterm contents.
-      entriesRef.current.get(sessionId)?.terminal.write(`\r\n\x1b[90m[process exited with code ${exitCode}]\x1b[0m\r\n`)
+      writeOrBuffer(sessionId, `\r\n\x1b[90m[process exited with code ${exitCode}]\x1b[0m\r\n`)
     })
 
     return () => {
@@ -211,6 +235,7 @@ export default function TerminalWorkspace() {
         entry.terminal.dispose()
       }
       entriesRef.current.clear()
+      pendingDataRef.current.clear()
     }
   }, [])
 

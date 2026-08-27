@@ -15,6 +15,8 @@ class FakeIpcMain {
   readonly handlers = new Map<string, Listener>()
   readonly listeners = new Map<string, Set<Listener>>()
 
+  constructor(private readonly defaultSender: unknown) {}
+
   handle(channel: string, listener: Listener): void {
     this.handlers.set(channel, listener)
   }
@@ -35,13 +37,21 @@ class FakeIpcMain {
   }
 
   invoke(channel: string, payload?: unknown): unknown {
+    return this.invokeFrom(this.defaultSender, channel, payload)
+  }
+
+  invokeFrom(sender: unknown, channel: string, payload?: unknown): unknown {
     const handler = this.handlers.get(channel)
     if (!handler) throw new Error(`No handler registered for channel: ${channel}`)
-    return handler({}, payload)
+    return handler({ sender }, payload)
   }
 
   emit(channel: string, payload?: unknown): void {
-    for (const listener of [...(this.listeners.get(channel) ?? [])]) listener({}, payload)
+    this.emitFrom(this.defaultSender, channel, payload)
+  }
+
+  emitFrom(sender: unknown, channel: string, payload?: unknown): void {
+    for (const listener of [...(this.listeners.get(channel) ?? [])]) listener({ sender }, payload)
   }
 }
 
@@ -151,8 +161,8 @@ const buildHarness = (options: {
   dialogResult?: { canceled: boolean; filePaths: string[] }
   windowDestroyed?: boolean
 } = {}): Harness => {
-  const ipcMain = new FakeIpcMain()
   const window = fakeWindow(options.windowDestroyed ?? false)
+  const ipcMain = new FakeIpcMain(window.webContents)
   const dialog = fakeDialog(options.dialogResult ?? { canceled: true, filePaths: [] })
   const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project) }
   const coordinator = new FakeCoordinator()
@@ -173,6 +183,25 @@ const buildHarness = (options: {
 
   return { ipcMain, window, dialog, projectService, coordinator, externalAppService, terminalService, getSnapshot, dispose }
 }
+
+describe('registerIpc: sender ownership', () => {
+  it('rejects invoke requests from webContents other than the owning window', async () => {
+    const { ipcMain, getSnapshot } = buildHarness()
+
+    await expect(ipcMain.invokeFrom({}, IPC.snapshotGet)).rejects.toThrow(/unauthorized ipc sender/i)
+    expect(getSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('drops send-only terminal events from webContents other than the owning window', () => {
+    const { ipcMain, terminalService } = buildHarness()
+
+    ipcMain.emitFrom({}, IPC.terminalWrite, { sessionId: 'session-1', data: 'whoami\r' })
+    ipcMain.emitFrom({}, IPC.terminalResize, { sessionId: 'session-1', cols: 100, rows: 40 })
+
+    expect(terminalService.write).not.toHaveBeenCalled()
+    expect(terminalService.resize).not.toHaveBeenCalled()
+  })
+})
 
 describe('registerIpc: snapshot:get', () => {
   it('resolves with the composed AppSnapshot', async () => {

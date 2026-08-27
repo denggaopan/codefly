@@ -93,7 +93,7 @@ export type SessionRecord = z.infer<typeof sessionRecordSchema>
 export type SessionKind = z.infer<typeof sessionKindSchema>
 export type CapabilityState = z.infer<typeof capabilityStateSchema>
 
-export type AppSnapshot = { state: AppState; capabilities: CapabilityState }
+export type AppSnapshot = { state: AppState; capabilities: CapabilityState; recoveryWarning?: string }
 
 export type DeleteSessionResult =
   | { status: 'deleted' }

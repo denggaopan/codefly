@@ -101,8 +101,13 @@ export class SessionCoordinator {
         throw error
       }
 
-      const running = await this.updateSession(record.id, (existing) => ({ ...existing, status: 'running' }))
-      return running ?? { ...record, status: 'running' }
+      try {
+        const running = await this.updateSession(record.id, (existing) => ({ ...existing, status: 'running' }))
+        return running ?? { ...record, status: 'running' }
+      } catch (error) {
+        await this.compensateStartedSession(record.id, error)
+        throw error
+      }
     })
   }
 
@@ -128,8 +133,13 @@ export class SessionCoordinator {
         throw error
       }
 
-      const running = await this.updateSession(sessionId, (existing) => withoutError({ ...existing, status: 'running' }))
-      return running ?? withoutError({ ...session, status: 'running' })
+      try {
+        const running = await this.updateSession(sessionId, (existing) => withoutError({ ...existing, status: 'running' }))
+        return running ?? withoutError({ ...session, status: 'running' })
+      } catch (error) {
+        await this.compensateStartedSession(sessionId, error)
+        throw error
+      }
     })
   }
 
@@ -252,6 +262,24 @@ export class SessionCoordinator {
       await this.terminalService.stop(sessionId)
     } finally {
       await this.persistStopped(sessionId)
+    }
+  }
+
+  private async compensateStartedSession(sessionId: string, originalError: unknown): Promise<void> {
+    try {
+      await this.terminalService.stop(sessionId)
+    } catch (stopError) {
+      console.error(`SessionCoordinator: failed to stop PTY after persistence failure for session ${sessionId}.`, stopError)
+    }
+
+    try {
+      await this.updateSession(sessionId, (existing) => ({
+        ...existing,
+        status: 'error',
+        lastError: errorMessage(originalError)
+      }))
+    } catch (reconciliationError) {
+      console.error(`SessionCoordinator: failed to reconcile session ${sessionId} after persistence failure.`, reconciliationError)
     }
   }
 

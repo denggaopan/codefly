@@ -83,7 +83,8 @@ export const useAppStore = create<AppStore>()((set) => ({
         set((state) => ({
           appState: snapshot.state,
           capabilities: snapshot.capabilities,
-          activeProjectId: state.activeProjectId ?? snapshot.state.projects[0]?.id ?? null
+          activeProjectId: state.activeProjectId ?? snapshot.state.projects[0]?.id ?? null,
+          notice: snapshot.recoveryWarning ? { message: snapshot.recoveryWarning, tone: 'info' } : state.notice
         }))
       })
       .catch((error: unknown) => {

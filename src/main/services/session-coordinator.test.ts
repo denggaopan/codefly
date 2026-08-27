@@ -263,6 +263,39 @@ describe('SessionCoordinator.create', () => {
       titleState: 'complete'
     })
   })
+
+  it('stops the started PTY and persists error when the final create update fails', async () => {
+    const { store, terminalService, coordinator } = buildHarness()
+    const persistFailure = new Error('disk full after PTY start')
+    const realUpdate = store.update.getMockImplementation()!
+    store.update.mockImplementationOnce(realUpdate).mockRejectedValueOnce(persistFailure)
+
+    await expect(coordinator.create('project-1', 'powershell')).rejects.toThrow(persistFailure)
+
+    expect(terminalService.start).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }))
+    expect(terminalService.stop).toHaveBeenCalledWith('session-1')
+    await expect(store.load()).resolves.toMatchObject({
+      sessions: [{ id: 'session-1', status: 'error', lastError: persistFailure.message }]
+    })
+  })
+
+  it('stops the PTY and preserves the original error when create compensation cannot persist', async () => {
+    const { store, terminalService, coordinator } = buildHarness()
+    const persistFailure = new Error('final update failed')
+    const compensationFailure = new Error('compensation update failed')
+    const realUpdate = store.update.getMockImplementation()!
+    store.update
+      .mockImplementationOnce(realUpdate)
+      .mockRejectedValueOnce(persistFailure)
+      .mockRejectedValueOnce(compensationFailure)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(coordinator.create('project-1', 'powershell')).rejects.toThrow(persistFailure)
+
+    expect(terminalService.stop).toHaveBeenCalledWith('session-1')
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('session-1'), compensationFailure)
+    consoleError.mockRestore()
+  })
 })
 
 describe('SessionCoordinator.restore', () => {
@@ -278,6 +311,23 @@ describe('SessionCoordinator.restore', () => {
     expect(worktreeService.validate.mock.invocationCallOrder[0]).toBeLessThan(terminalService.start.mock.invocationCallOrder[0]!)
     const persisted = await store.load()
     expect(persisted.sessions[0]).toMatchObject({ status: 'running' })
+  })
+
+  it('stops the started PTY and persists error when the final restore update fails', async () => {
+    const session = runningSession({ status: 'stopped' })
+    const { store, terminalService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+    const persistFailure = new Error('restore status update failed')
+    store.update.mockRejectedValueOnce(persistFailure)
+
+    await expect(coordinator.restore('session-1')).rejects.toThrow(persistFailure)
+
+    expect(terminalService.start).toHaveBeenCalledWith(session)
+    expect(terminalService.stop).toHaveBeenCalledWith('session-1')
+    await expect(store.load()).resolves.toMatchObject({
+      sessions: [{ id: 'session-1', status: 'error', lastError: persistFailure.message }]
+    })
   })
 
   it('marks a missing worktree path without starting a PTY', async () => {

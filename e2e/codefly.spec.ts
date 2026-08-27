@@ -117,6 +117,7 @@ test('adds the fixture project and creates a Claude session as the first worktre
   const claudeRow = sessionRowByGlyph('CL')
   await expect(claudeRow).toHaveCount(1, { timeout: 20_000 })
   await expect(claudeRow.locator('.session-secondary')).toHaveText(/^worktree-\d{6}-1$/)
+  await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_E2E_FAKE_AGENT_READY', { timeout: 20_000 })
 })
 
 test('Claude receives exactly its bypass flag and the persistent warning is visible', async () => {
@@ -125,6 +126,42 @@ test('Claude receives exactly its bypass flag and the persistent warning is visi
     .toEqual(['--dangerously-skip-permissions'])
 
   await expect(visibleBypassWarnings()).toHaveText([BYPASS_WARNING_TEXT, BYPASS_WARNING_TEXT])
+})
+
+test('keeps the terminal workflow usable at the 900 by 600 minimum window size', async () => {
+  const size = await electronApp.evaluate(({ BrowserWindow }) => {
+    const mainWindow = BrowserWindow.getAllWindows()[0]
+    if (!mainWindow) throw new Error('CodeFly main window is missing')
+    mainWindow.setSize(900, 600)
+    return mainWindow.getSize()
+  })
+  expect(size[0]).toBeGreaterThanOrEqual(900)
+  expect(size[0]).toBeLessThanOrEqual(902)
+  expect(size[1]).toBeGreaterThanOrEqual(600)
+  expect(size[1]).toBeLessThanOrEqual(602)
+
+  await expect(window.getByRole('button', { name: 'Open project in VS Code' })).toBeVisible()
+  await expect(window.getByRole('button', { name: 'Open project folder' })).toBeVisible()
+  await expect(window.getByRole('button', { name: 'New session' })).toBeVisible()
+  await expect(window.locator('.terminal-pane:visible .terminal-instance-host')).toBeVisible()
+  await expect(visibleBypassWarnings()).toHaveText([BYPASS_WARNING_TEXT, BYPASS_WARNING_TEXT])
+
+  await window.getByRole('button', { name: 'New session' }).click()
+  const launcher = window.locator('.session-launcher')
+  await expect(launcher).toBeVisible()
+  const [bounds, viewport] = await Promise.all([
+    launcher.boundingBox(),
+    window.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+  ])
+  expect(bounds).not.toBeNull()
+  expect(bounds!.x).toBeGreaterThanOrEqual(0)
+  expect(bounds!.y).toBeGreaterThanOrEqual(0)
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width)
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height)
+
+  await window.keyboard.press('Escape')
+  await expect(launcher).toHaveCount(0)
+  await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1180, 760))
 })
 
 test('submitting the first input replaces the title and never leaks a bypass flag to the title process', async () => {

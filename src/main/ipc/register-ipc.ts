@@ -108,15 +108,23 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
     ]
   ]
 
+  const assertOwningSender = (event: IpcMainInvokeEvent | IpcMainEvent): void => {
+    if (event.sender !== window.webContents) throw new Error('Unauthorized IPC sender.')
+  }
+
   for (const [channel, handler] of invokeHandlers) {
-    ipcMain.handle(channel, handler)
+    ipcMain.handle(channel, async (event, payload) => {
+      assertOwningSender(event)
+      return handler(event, payload)
+    })
   }
 
   // terminal:write and terminal:resize are one-way, send-only channels: there is no
   // invoke/reply round trip, so a parse failure or a downstream service error (e.g. the
   // PTY already exited) is logged and dropped rather than thrown back across ipcMain's
   // listener dispatch, which has no rejection path back to the renderer.
-  const onTerminalWrite = (_event: IpcMainEvent, payload: unknown): void => {
+  const onTerminalWrite = (event: IpcMainEvent, payload: unknown): void => {
+    if (event.sender !== window.webContents) return
     const parsed = terminalWriteRequestSchema.safeParse(payload)
     if (!parsed.success) return
     try {
@@ -126,7 +134,8 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
     }
   }
 
-  const onTerminalResize = (_event: IpcMainEvent, payload: unknown): void => {
+  const onTerminalResize = (event: IpcMainEvent, payload: unknown): void => {
+    if (event.sender !== window.webContents) return
     const parsed = terminalResizeRequestSchema.safeParse(payload)
     if (!parsed.success) return
     try {

@@ -1,4 +1,5 @@
-import { mkdir, readFile } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
+import { copyFile, mkdir, readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
 
@@ -8,7 +9,8 @@ import type { AppState } from '../../shared/contracts'
 type WriteFileAtomic = (filePath: string, contents: string, options: { encoding: 'utf8' }) => Promise<void>
 
 type DiskState =
-  | { kind: 'absent' | 'invalid' }
+  | { kind: 'absent' }
+  | { kind: 'invalid'; contents?: string }
   | { kind: 'valid'; contents: string; state: AppState }
 
 const writeFileAtomic = createRequire(import.meta.url)('write-file-atomic') as WriteFileAtomic
@@ -28,10 +30,14 @@ const normalizeRuntimeStatuses = (state: AppState): AppState => ({
 const isEnoent = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT'
 
+const isEexist = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST'
+
 export class SessionStore {
   // A store instance owns one file and serializes all operations for that file.
   private operationTail: Promise<void> = Promise.resolve()
   private state: AppState | undefined
+  private startupRecoveryWarning: string | undefined
 
   constructor(private readonly filePath: string) {}
 
@@ -60,6 +66,10 @@ export class SessionStore {
     })
   }
 
+  recoveryWarning(): string | undefined {
+    return this.startupRecoveryWarning
+  }
+
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.operationTail.then(operation)
     this.operationTail = result.then(
@@ -79,7 +89,36 @@ export class SessionStore {
     if (primary.kind === 'valid') return primary.state
 
     const backup = await this.readRecoveryDiskState(`${this.filePath}.bak`)
-    return backup.kind === 'valid' ? backup.state : emptyState()
+    if (primary.kind !== 'invalid') return backup.kind === 'valid' ? backup.state : emptyState()
+
+    const archivePath = await this.archiveCorruptPrimary(primary.contents)
+    const archiveDetail = archivePath
+      ? ` The corrupt state was preserved at ${archivePath}.`
+      : ' The corrupt state could not be archived.'
+
+    if (backup.kind === 'valid') {
+      this.startupRecoveryWarning = `CodeFly recovered from backup.${archiveDetail}`
+      return backup.state
+    }
+
+    this.startupRecoveryWarning = `CodeFly could not recover a valid state file and started with empty state.${archiveDetail}`
+    return emptyState()
+  }
+
+  private async archiveCorruptPrimary(contents: string | undefined): Promise<string | undefined> {
+    if (contents === undefined) return undefined
+
+    for (let sequence = 0; sequence < 100; sequence += 1) {
+      const archivePath = sequence === 0 ? `${this.filePath}.corrupt` : `${this.filePath}.corrupt-${sequence}`
+      try {
+        await copyFile(this.filePath, archivePath, fsConstants.COPYFILE_EXCL)
+        return archivePath
+      } catch (error) {
+        if (isEexist(error)) continue
+        return undefined
+      }
+    }
+    return undefined
   }
 
   private async readRecoveryDiskState(filePath: string): Promise<DiskState> {
@@ -110,9 +149,9 @@ export class SessionStore {
 
     try {
       const parsed = appStateSchema.safeParse(JSON.parse(contents))
-      return parsed.success ? { kind: 'valid', contents, state: parsed.data } : { kind: 'invalid' }
+      return parsed.success ? { kind: 'valid', contents, state: parsed.data } : { kind: 'invalid', contents }
     } catch {
-      return { kind: 'invalid' }
+      return { kind: 'invalid', contents }
     }
   }
 }

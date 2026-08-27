@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -189,7 +189,7 @@ beforeEach(() => {
 describe('TerminalWorkspace', () => {
   it('creates exactly one terminal instance per opened session and does not recreate it on re-activation', async () => {
     seedStore(runningClaudeSession, runningPowerShellSession)
-    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
     render(<TerminalWorkspace />)
 
     await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
@@ -197,7 +197,7 @@ describe('TerminalWorkspace', () => {
     useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
     await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
 
-    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
     await waitFor(() => expect(screen.getByTestId(`terminal-host-${runningClaudeSession.id}`).closest('.terminal-pane')).toHaveStyle({ display: 'flex' }))
 
     expect(FakeTerminal.instances).toHaveLength(2)
@@ -242,6 +242,31 @@ describe('TerminalWorkspace', () => {
 
     expect(claudeTerminal.write).toHaveBeenCalledWith('hello from claude')
     expect(psTerminal.write).not.toHaveBeenCalled()
+  })
+
+  it('delivers terminal data that arrives before the owning xterm is mounted', async () => {
+    seedStore(runningClaudeSession)
+    render(<TerminalWorkspace />)
+
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: 'CODEFLY_FAKE_AGENT_READY\r\n' })
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    expect(FakeTerminal.instances[0].write).toHaveBeenCalledWith('CODEFLY_FAKE_AGENT_READY\r\n')
+  })
+
+  it('bounds pre-mount output to the newest 64 KiB per session', async () => {
+    seedStore(runningClaudeSession)
+    render(<TerminalWorkspace />)
+    const oversized = `${'old'.repeat(10_000)}${'n'.repeat(70_000)}`
+
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: oversized })
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    const retained = FakeTerminal.instances[0].write.mock.calls[0]?.[0] as string
+    expect(retained).toHaveLength(65_536)
+    expect(retained).toBe(oversized.slice(-65_536))
   })
 
   it('always forwards keystrokes to writeTerminal and calls submitFirstInput exactly once on the first submitted line', async () => {

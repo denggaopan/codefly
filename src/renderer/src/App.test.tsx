@@ -134,6 +134,20 @@ beforeEach(() => {
 })
 
 describe('App', () => {
+  it('shows a dismissible warning when startup recovered a corrupt state file', async () => {
+    const recoveryWarning = 'CodeFly recovered state from backup. The corrupt state was preserved.'
+    api.getSnapshot.mockResolvedValueOnce({
+      state: stateWith(),
+      capabilities: allAvailableCapabilities,
+      recoveryWarning
+    } as AppSnapshot & { recoveryWarning: string })
+
+    render(<App />)
+
+    expect(await screen.findByText(recoveryWarning)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Dismiss notice' })).toBeInTheDocument()
+  })
+
   it('loads the snapshot on mount and renders the project and its sessions', async () => {
     api = createFakeApi(stateWith(stoppedPowerShellSession, runningClaudeSession), allAvailableCapabilities)
     window.codefly = api
