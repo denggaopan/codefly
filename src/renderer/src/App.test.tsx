@@ -453,7 +453,7 @@ describe('App', () => {
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
   })
 
-  it('applies destructive-state styling to the bypass warning', async () => {
+  it('renders the bypass warning as a compact header badge without a bottom strip', async () => {
     const user = userEvent.setup()
     api = createFakeApi(stateWith(runningClaudeSession), allAvailableCapabilities)
     window.codefly = api
@@ -461,7 +461,8 @@ describe('App', () => {
 
     await user.click(await screen.findByText(runningClaudeSession.title, { selector: 'span.session-title' }))
 
-    expect(await screen.findByRole('status')).toHaveClass('agent-bypass-status--destructive')
+    expect(await screen.findByRole('status')).toHaveClass('terminal-header-bypass')
+    expect(document.querySelector('.agent-bypass-status')).toBeNull()
   })
 
   it('gives each open-session title-bar tab a title attribute matching its full title, for ellipsized long titles', async () => {

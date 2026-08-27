@@ -89,9 +89,9 @@ resolved `codex` CLI with exactly one fixed argument:
 lifetime of that session.** The agent can read, write, and execute commands in its worktree
 without per-action confirmation. This is a deliberate design choice for a fast, low-friction
 terminal workflow, and CodeFly keeps it continuously visible rather than hidden: whenever the
-active session is a running Claude or Codex session, a persistent "Permissions and sandbox
-bypass enabled" warning is shown both in that session's terminal header and in a status strip
-at the bottom of the window, for as long as the session is running. There is no per-session
+active session is a running Claude or Codex session, a compact "Permissions and sandbox
+bypass enabled" warning badge is shown in that session's terminal header for as long as the
+session is running. There is no per-session
 setting to turn the bypass off in this release — if you don't want an agent running with its
 protections bypassed, don't start a Claude or Codex session in CodeFly.
 

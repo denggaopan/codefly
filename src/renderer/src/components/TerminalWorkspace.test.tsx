@@ -4,8 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AppSnapshot, AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../../shared/contracts'
+import { BYPASS_WARNING_TEXT } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
-import { BYPASS_WARNING_TEXT } from './AgentBypassStatus'
 import TerminalWorkspace from './TerminalWorkspace'
 
 // TerminalWorkspace embeds real @xterm/xterm and @xterm/addon-fit instances, which rely on
@@ -529,13 +529,15 @@ describe('TerminalWorkspace', () => {
     expect(await screen.findByText(BYPASS_WARNING_TEXT)).toBeInTheDocument()
   })
 
-  it('applies destructive-state styling to the terminal header bypass banner', async () => {
+  it('renders the bypass disclosure as a compact badge inside the header row, not a banner or strip', async () => {
     seedStore(runningClaudeSession)
     useAppStore.setState({ activeSessionId: runningClaudeSession.id })
     render(<TerminalWorkspace />)
 
-    const banner = await screen.findByText(BYPASS_WARNING_TEXT)
-    expect(banner.closest('.agent-bypass-status')).toHaveClass('agent-bypass-status--destructive')
+    const badge = await screen.findByText(BYPASS_WARNING_TEXT)
+    expect(badge).toHaveClass('terminal-header-bypass')
+    expect(badge.closest('.terminal-header-row')).not.toBeNull()
+    expect(document.querySelector('.agent-bypass-status')).toBeNull()
   })
 
   it('configures xterm with the Cascadia Mono terminal font', async () => {

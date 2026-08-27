@@ -45,7 +45,7 @@ The application uses a dark two-column layout:
 - The left sidebar contains Add Project, search, project groups, and their sessions.
 - The main area contains one xterm.js terminal for the active session.
 - The plus button opens a launcher for PowerShell, Command Prompt, Claude, and Codex.
-- A persistent bottom status strip warns when the active Claude or Codex session is running with permission and sandbox bypass enabled.
+- A compact warning badge in the active session's terminal header discloses when a Claude or Codex session is running with permission and sandbox bypass enabled. (Revised 2026-08-27: the original persistent bottom status strip was removed as too intrusive.)
 
 The default window size is 1180 by 760 pixels, with a minimum size of 900 by 600 pixels. The sidebar remains fixed-width while the terminal fills the remaining space. Long titles and paths use ellipsis and expose their full value in a tooltip.
 
@@ -196,7 +196,7 @@ The same-named branch remains after deletion. Ordinary sessions only stop their 
 
 PowerShell sessions launch the installed Windows PowerShell executable selected by the application. Command Prompt sessions launch `cmd.exe`. Interactive Claude sessions launch the resolved local CLI with `--dangerously-skip-permissions`. Interactive Codex sessions launch the resolved local CLI with `--dangerously-bypass-approvals-and-sandbox`. Both use the session directory as their working directory.
 
-The bypass arguments are fixed launch-adapter values and cannot be supplied or changed by the renderer. Claude and Codex terminal headers and the bottom status strip display `Permissions and sandbox bypass enabled` in the destructive-state color for the entire lifetime of the interactive session. The first release intentionally has no per-session safe-mode toggle.
+The bypass arguments are fixed launch-adapter values and cannot be supplied or changed by the renderer. Claude and Codex terminal headers display `Permissions and sandbox bypass enabled` as a compact warning-tone badge for the entire lifetime of the interactive session (revised 2026-08-27 from the original two-surface destructive treatment). The first release intentionally has no per-session safe-mode toggle.
 
 The application resolves executable locations without concatenating user input into shell command strings. Launch adapters own the executable, fixed arguments, environment inheritance, and display label for each session type.
 

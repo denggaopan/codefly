@@ -734,8 +734,18 @@ input {
   font-size: 0.72rem;
 }
 
+/* Compact bypass disclosure badge, sitting in the header row beside the status pill. Uses
+   the amber warning tone: informative and always visible for a running Claude/Codex session
+   without dominating the workspace the way the former full-width strip did. */
 .terminal-header-bypass {
-  margin-top: 2px;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(224, 169, 64, 0.45);
+  background: rgba(224, 169, 64, 0.12);
+  color: var(--color-state-warning);
+  font-size: 0.68rem;
+  white-space: nowrap;
 }
 
 /* The xterm host needs a real, non-auto height for FitAddon.fit()/proposeDimensions() to
@@ -748,39 +758,6 @@ input {
   min-height: 0;
   padding: 4px 10px;
   background: var(--color-canvas);
-}
-
-/* ==========================================================================
-   Agent bypass status (fixed bottom strip)
-   ========================================================================== */
-
-.agent-bypass-status {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: rgba(229, 72, 77, 0.16);
-  color: var(--color-text);
-  font-size: 0.8rem;
-}
-
-.agent-bypass-status--destructive {
-  border-top: 1px solid var(--color-state-destructive);
-}
-
-.agent-bypass-icon {
-  flex: 0 0 auto;
-  color: var(--color-state-destructive);
-}
-
-.agent-bypass-status-text {
-  flex: 1 1 auto;
-}
-
-.terminal-header-bypass.agent-bypass-status {
-  border-top: none;
-  border-radius: 6px;
 }
 
 /* ==========================================================================

@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 
-import AgentBypassStatus from './components/AgentBypassStatus'
 import ProjectSidebar from './components/ProjectSidebar'
 import TerminalWorkspace from './components/TerminalWorkspace'
 import TitleBar from './components/TitleBar'
@@ -19,7 +18,6 @@ export default function App() {
         <ProjectSidebar />
         <main className="app-main">
           <TerminalWorkspace />
-          <AgentBypassStatus />
         </main>
       </div>
     </div>

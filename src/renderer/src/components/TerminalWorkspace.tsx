@@ -8,10 +8,9 @@ import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
-import { isSessionRestartable, sessionStatusLabel } from '../session-status'
+import { BYPASS_WARNING_TEXT, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
-import { BYPASS_WARNING_TEXT } from './AgentBypassStatus'
 
 type TerminalEntry = {
   terminal: Terminal
@@ -66,6 +65,15 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
         <span className="terminal-header-status" data-status={session.status}>
           {sessionStatusLabel(session)}
         </span>
+        {showBypass && (
+          <span
+            className="terminal-header-bypass"
+            role="status"
+            title="This agent runs with its fixed bypass flag (--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox): it edits files and runs commands without asking for confirmation."
+          >
+            {BYPASS_WARNING_TEXT}
+          </span>
+        )}
         {canRestart && (
           <button type="button" className="terminal-restart-button" onClick={onRestart}>
             Restart session
@@ -75,7 +83,6 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
       <span className="terminal-header-path" title={session.launchPath}>
         {session.launchPath}
       </span>
-      {showBypass && <div className="agent-bypass-status agent-bypass-status--destructive terminal-header-bypass">{BYPASS_WARNING_TEXT}</div>}
     </header>
   )
 }
