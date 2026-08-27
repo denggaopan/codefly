@@ -102,6 +102,16 @@ describe('ProjectSidebar', () => {
     expect(api.addProject).toHaveBeenCalledTimes(1)
   })
 
+  it('renders Add Project as a round icon button docked in the sidebar footer, not in the header', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const addButton = screen.getByRole('button', { name: 'Add Project' })
+    expect(addButton).toHaveClass('add-project-fab')
+    expect(addButton.closest('.project-sidebar-footer')).not.toBeNull()
+    expect(addButton.closest('.project-sidebar-header')).toBeNull()
+  })
+
   it('filters session rows to those matching the search query', async () => {
     const user = userEvent.setup()
     const otherSession: SessionRecord = { ...stoppedSession, id: 'session-other', title: 'Investigate crash' }

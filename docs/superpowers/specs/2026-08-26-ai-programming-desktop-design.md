@@ -42,7 +42,7 @@ The first release uses Electron, React, TypeScript, xterm.js, and node-pty. Clau
 The application uses a dark two-column layout:
 
 - There is no in-app title bar. (Revised 2026-08-27, twice: open-session tabs and the global plus button were removed first — sessions are switched via the sidebar's session rows — and the remaining brand-only bar was then removed entirely; the sidebar and workspace fill the window.)
-- The left sidebar contains Add Project, search, project groups, and their sessions.
+- The left sidebar contains search, project groups with their sessions, and a round Add Project (+) button docked at the bottom-left. (Revised 2026-08-27: Add Project moved from the header to a bottom-left icon button.)
 - The main area contains one xterm.js terminal for the active session.
 - Each project row's plus button opens a launcher for PowerShell, Command Prompt, Claude, and Codex in that project. (Revised 2026-08-27: moved from the title bar onto the project rows.)
 - A compact warning badge in the active session's terminal header discloses when a Claude or Codex session is running with permission and sandbox bypass enabled. (Revised 2026-08-27: the original persistent bottom status strip was removed as too intrusive.)

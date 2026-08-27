@@ -173,7 +173,9 @@ input {
   flex-direction: column;
   width: var(--sidebar-width);
   min-height: 0;
-  overflow-y: auto;
+  /* The sidebar itself does not scroll: .project-groups is the scroll region, so the
+     header (search) and footer (Add Project) stay pinned while projects scroll between. */
+  overflow: hidden;
   background: var(--color-panel);
   border-right: 1px solid var(--color-border);
 }
@@ -185,20 +187,6 @@ input {
   gap: 8px;
   padding: 12px;
   border-bottom: 1px solid var(--color-border);
-}
-
-.add-project-button {
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  background: var(--color-panel-elevated);
-  color: var(--color-text);
-  font-size: 0.85rem;
-  text-align: left;
-}
-
-.add-project-button:hover {
-  border-color: var(--color-accent-blue);
 }
 
 .session-search {
@@ -237,6 +225,33 @@ input {
 .project-groups {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
+}
+
+.project-sidebar-footer {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-start;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.add-project-fab {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.add-project-fab:hover {
+  border-color: var(--color-accent-blue);
+  color: var(--color-accent-blue);
 }
 
 .project-group {

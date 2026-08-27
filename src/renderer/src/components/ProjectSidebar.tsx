@@ -93,7 +93,8 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
 }
 
 /**
- * Left navigation: Add Project, session search, and project groups with their sessions.
+ * Left navigation: session search, project groups with their sessions, and a round
+ * Add Project action docked at the bottom-left.
  * Each row's label and its trailing action button(s) are SIBLING <button> elements (never
  * one button nested inside another interactively-roled element), so every stopPropagation()
  * call below is defensive rather than load-bearing: it keeps a click on VS Code/folder/
@@ -188,9 +189,6 @@ export default function ProjectSidebar() {
   return (
     <aside className="project-sidebar">
       <div className="project-sidebar-header">
-        <button type="button" className="add-project-button" onClick={() => void addProject()}>
-          Add Project
-        </button>
         <input
           type="search"
           className="session-search"
@@ -322,6 +320,12 @@ export default function ProjectSidebar() {
             </section>
           )
         })}
+      </div>
+
+      <div className="project-sidebar-footer">
+        <button type="button" className="add-project-fab" aria-label="Add Project" title="Add Project" onClick={() => void addProject()}>
+          +
+        </button>
       </div>
 
       <ConfirmDialog
