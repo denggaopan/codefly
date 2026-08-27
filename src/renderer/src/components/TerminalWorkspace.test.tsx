@@ -20,6 +20,7 @@ const { FakeTerminal, FakeFitAddon, FakeResizeObserver } = vi.hoisted(() => {
     open = vi.fn()
     write = vi.fn()
     dispose = vi.fn()
+    focus = vi.fn()
     loadAddon = vi.fn()
     onData = vi.fn((listener: (data: string) => void) => {
       this.dataListeners.push(listener)
@@ -227,6 +228,60 @@ describe('TerminalWorkspace', () => {
     expect(claudeHost.closest('.terminal-pane')).toHaveStyle({ display: 'none' })
     expect(psHost.closest('.terminal-pane')).toHaveStyle({ display: 'flex' })
     expect(FakeTerminal.instances[0].dispose).not.toHaveBeenCalled()
+  })
+
+  it('focuses the terminal as soon as its session becomes active so typing works without clicking', async () => {
+    seedStore(runningPowerShellSession)
+    act(() => useAppStore.setState({ activeSessionId: runningPowerShellSession.id }))
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    await waitFor(() => expect(FakeTerminal.instances[0].focus).toHaveBeenCalled())
+  })
+
+  it('focuses the newly activated terminal when switching between sessions', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    act(() => useAppStore.setState({ activeSessionId: runningPowerShellSession.id }))
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
+    await waitFor(() => expect(FakeTerminal.instances[1].focus).toHaveBeenCalled())
+  })
+
+  it('re-focuses the active terminal when its session is restarted back to running', async () => {
+    const stoppedActive = { ...runningPowerShellSession, status: 'stopped' as const }
+    seedStore(stoppedActive)
+    act(() => useAppStore.setState({ activeSessionId: stoppedActive.id }))
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    await waitFor(() => expect(FakeTerminal.instances[0].focus).toHaveBeenCalled())
+    FakeTerminal.instances[0].focus.mockClear()
+
+    act(() =>
+      useAppStore.setState({
+        appState: { version: 1, projects: [project1], sessions: [{ ...stoppedActive, status: 'running' }] }
+      })
+    )
+    await waitFor(() => expect(FakeTerminal.instances[0].focus).toHaveBeenCalled())
+  })
+
+  it('does not steal focus when the active session exits to stopped', async () => {
+    seedStore(runningPowerShellSession)
+    act(() => useAppStore.setState({ activeSessionId: runningPowerShellSession.id }))
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    await waitFor(() => expect(FakeTerminal.instances[0].focus).toHaveBeenCalled())
+    FakeTerminal.instances[0].focus.mockClear()
+
+    act(() =>
+      useAppStore.setState({
+        appState: { version: 1, projects: [project1], sessions: [{ ...runningPowerShellSession, status: 'stopped' }] }
+      })
+    )
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20))
+    expect(FakeTerminal.instances[0].focus).not.toHaveBeenCalled()
   })
 
   it('routes incoming terminal data only to the terminal owning that session ID', async () => {

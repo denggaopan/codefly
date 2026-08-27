@@ -207,6 +207,12 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
   await expect(visibleBypassWarnings()).toHaveCount(0)
 
+  // Regression guard: a freshly created session's terminal must own keyboard focus, so
+  // typing works immediately WITHOUT clicking into the terminal first. (No Enter pressed:
+  // the guarded behavior is keystroke echo, not command execution or first-input titling.)
+  await window.keyboard.type('CODEFLY_FOCUS_CHECK')
+  await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_FOCUS_CHECK', { timeout: 20_000 })
+
   await window.getByRole('button', { name: 'New session' }).click()
   await window.locator('.session-launcher').getByRole('button', { name: 'Command Prompt', exact: true }).click()
   const cmdRow = sessionRowByGlyph('CMD')
@@ -234,6 +240,12 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
   await powershellRow.locator('.session-row-content').click()
   await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
   await expect(powershellRow.locator('.session-row-content')).toHaveAttribute('aria-current', 'true')
+
+  // Regression guard: restoring a session must also hand keyboard focus to its terminal —
+  // this exact flow (relaunch, click to restore, start typing) is where the missing focus
+  // was reported as "cannot type".
+  await window.keyboard.type('CODEFLY_RESTORE_FOCUS_CHECK')
+  await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_RESTORE_FOCUS_CHECK', { timeout: 20_000 })
 })
 
 test('mocked VS Code and Explorer project-row actions do not toggle the row or change the active session', async () => {

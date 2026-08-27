@@ -183,14 +183,30 @@ export default function TerminalWorkspace() {
     setMountedSessionIds((previous) => (previous.includes(activeSessionId) ? previous : [...previous, activeSessionId]))
   }, [activeSessionId])
 
-  // Fit on activation: runs whenever the active session changes AND whenever a new entry
-  // becomes available (mountedSessionIds grows), since entry creation happens one render
+  // Fit and focus on activation: runs whenever the active session changes AND whenever a new
+  // entry becomes available (mountedSessionIds grows), since entry creation happens one render
   // after the id above is first tracked (the host div only mounts once its pane renders).
+  // Focusing here is what lets the user type immediately after creating, restoring, or
+  // switching to a session — without it, keyboard focus stays on the sidebar/launcher control
+  // that triggered the change and keystrokes never reach xterm.
   useEffect(() => {
     if (!activeSessionId) return
-    if (!entriesRef.current.has(activeSessionId)) return
+    const entry = entriesRef.current.get(activeSessionId)
+    if (!entry) return
     applyFit(activeSessionId)
+    entry.terminal.focus()
   }, [activeSessionId, mountedSessionIds])
+
+  // Re-focus when the ACTIVE session's status returns to running (the header's
+  // "Restart session" action restarts in place: neither the active id nor the mounted list
+  // changes, so the activation effect above does not re-fire). Guarded to running-only so an
+  // unexpected exit (running -> stopped) never steals focus from wherever the user is typing.
+  const activeSessionStatus = sessions.find((session) => session.id === activeSessionId)?.status
+  useEffect(() => {
+    if (!activeSessionId) return
+    if (activeSessionStatus !== 'running') return
+    entriesRef.current.get(activeSessionId)?.terminal.focus()
+  }, [activeSessionId, activeSessionStatus, mountedSessionIds])
 
   // Dispose entries whose session no longer exists (deleted), and drop their pane.
   useEffect(() => {

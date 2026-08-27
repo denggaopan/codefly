@@ -16,6 +16,7 @@ vi.mock('@xterm/xterm', () => ({
     open = vi.fn()
     write = vi.fn()
     dispose = vi.fn()
+    focus = vi.fn()
     loadAddon = vi.fn()
     onData = vi.fn(() => ({ dispose: vi.fn() }))
   }
