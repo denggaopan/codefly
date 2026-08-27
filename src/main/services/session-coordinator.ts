@@ -101,7 +101,7 @@ export class SessionCoordinator {
         throw error
       }
 
-      const running = await this.updateSession(record.id, () => ({ ...record, status: 'running' }))
+      const running = await this.updateSession(record.id, (existing) => ({ ...existing, status: 'running' }))
       return running ?? { ...record, status: 'running' }
     })
   }
@@ -134,43 +134,67 @@ export class SessionCoordinator {
   }
 
   async stop(sessionId: string): Promise<void> {
-    return this.withLock(`session:${sessionId}`, async () => {
-      await this.terminalService.stop(sessionId)
-      await this.persistStopped(sessionId)
-    })
+    return this.withLock(`session:${sessionId}`, () => this.stopAndPersist(sessionId))
   }
 
   async submitFirstInput(sessionId: string, text: string): Promise<void> {
+    // Fast path only: an in-memory guard cannot be the source of truth for "one attempt ever"
+    // because a fresh coordinator (e.g. after a restart) would have no memory of a prior
+    // attempt. The real, durable guard is claimTitleJob's persisted titleState transition below.
     if (this.titleJobs.has(sessionId)) return
     this.titleJobs.add(sessionId)
 
-    const current = await this.store.load()
-    const session = current.sessions.find((candidate) => candidate.id === sessionId)
-    if (!session || session.titleState !== 'pending') return
+    // Flip titleState to 'complete' (keeping the current temporary title) and claim the job
+    // BEFORE calling TitleService.generate, so a concurrent or later submission — in this
+    // process or, after a restart, in a fresh one — sees titleState already 'complete' and
+    // never starts a second attempt, even if this attempt never finishes.
+    const claimed = await this.claimTitleJob(sessionId)
+    if (!claimed) return
 
     let generated = ''
     try {
-      generated = await this.titleService.generate(sessionId, session.kind, text)
+      generated = await this.titleService.generate(sessionId, claimed.kind, text)
     } catch {
       generated = ''
     }
 
-    await this.updateSession(sessionId, (existing) =>
-      generated.length > 0 ? { ...existing, title: generated, titleState: 'complete' } : { ...existing, titleState: 'complete' }
-    )
+    if (generated.length > 0) {
+      await this.updateSession(sessionId, (existing) => ({ ...existing, title: generated }))
+    }
+  }
+
+  /**
+   * Atomically transitions a session's titleState from 'pending' to 'complete' and returns
+   * the updated record only when this call performed that transition. Returns undefined when
+   * the session is missing or titleState was already 'complete' (a previous claim won).
+   */
+  private async claimTitleJob(sessionId: string): Promise<SessionRecord | undefined> {
+    let claimed: SessionRecord | undefined
+    const next = await this.store.update((state) => {
+      const index = state.sessions.findIndex((session) => session.id === sessionId)
+      if (index === -1) return state
+      const session = state.sessions[index]!
+      if (session.titleState !== 'pending') return state
+      const updated: SessionRecord = { ...session, titleState: 'complete' }
+      claimed = updated
+      const sessions = [...state.sessions]
+      sessions[index] = updated
+      return { ...state, sessions }
+    })
+    if (claimed) this.emit(next)
+    return claimed
   }
 
   async delete(sessionId: string): Promise<DeleteSessionResult> {
     return this.withLock(`session:${sessionId}`, async () => {
-      this.titleService.cancel(sessionId)
-      await this.terminalService.stop(sessionId)
-      await this.persistStopped(sessionId)
-
-      const current = await this.store.load()
-      const session = current.sessions.find((candidate) => candidate.id === sessionId)
-      if (!session) return { status: 'deleted' }
-
       try {
+        this.titleService.cancel(sessionId)
+        await this.stopAndPersist(sessionId)
+
+        const current = await this.store.load()
+        const session = current.sessions.find((candidate) => candidate.id === sessionId)
+        if (!session) return { status: 'deleted' }
+
         const project = await this.projectService.get(session.projectId)
         const result = await this.worktreeService.remove(session, project)
 
@@ -211,7 +235,24 @@ export class SessionCoordinator {
   }
 
   private readonly handleExit = (payload: TerminalEventMap['exit']): void => {
-    void this.persistStopped(payload.sessionId)
+    this.persistStopped(payload.sessionId).catch((error: unknown) => {
+      console.error(`SessionCoordinator: failed to persist stopped status after PTY exit for session ${payload.sessionId}.`, error)
+    })
+  }
+
+  /**
+   * Stops the PTY, then persists 'stopped' regardless of whether the stop resolved or
+   * rejected (the force-kill timeout path can reject after TerminalService has already
+   * removed its own entry, so the session must not be left stuck at a stale status such
+   * as 'running' — that would make restore() treat it as already running and no-op forever).
+   * The original stop error, if any, still propagates to the caller after persisting.
+   */
+  private async stopAndPersist(sessionId: string): Promise<void> {
+    try {
+      await this.terminalService.stop(sessionId)
+    } finally {
+      await this.persistStopped(sessionId)
+    }
   }
 
   private async persistStopped(sessionId: string): Promise<void> {

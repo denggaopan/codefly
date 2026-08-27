@@ -233,6 +233,36 @@ describe('SessionCoordinator.create', () => {
     expect(order).toEqual(['worktree.create', 'terminal.start', 'worktree.create', 'terminal.start'])
     expect(a.id).not.toBe(b.id)
   })
+
+  it('does not revert a title persisted by submitFirstInput while the PTY is still starting', async () => {
+    const { store, terminalService, titleService, coordinator } = buildHarness()
+    let startResolve!: () => void
+    terminalService.start.mockImplementation(
+      () => new Promise<undefined>((resolve) => {
+        startResolve = () => resolve(undefined)
+      })
+    )
+    titleService.generate.mockResolvedValue('Fix login bug')
+
+    const creation = coordinator.create('project-1', 'claude')
+    // Wait until the 'creating' record is persisted and terminalService.start is in flight
+    // before racing submitFirstInput's title persistence against create()'s eventual
+    // 'running' persist — this is the window the finding described.
+    await vi.waitFor(() => expect(terminalService.start).toHaveBeenCalled())
+
+    const titling = coordinator.submitFirstInput('session-1', 'please fix the login bug')
+    await vi.waitFor(() => expect(titleService.generate).toHaveBeenCalled())
+
+    startResolve()
+    await Promise.all([creation, titling])
+
+    const persisted = await store.load()
+    expect(persisted.sessions[0]).toMatchObject({
+      status: 'running',
+      title: 'Fix login bug',
+      titleState: 'complete'
+    })
+  })
 })
 
 describe('SessionCoordinator.restore', () => {
@@ -299,8 +329,8 @@ describe('SessionCoordinator.restore', () => {
 })
 
 describe('SessionCoordinator.submitFirstInput', () => {
-  it('starts exactly one title job per session and persists the sanitized title', async () => {
-    const session = runningSession({ kind: 'claude', status: 'running' })
+  it('flips titleState to complete (keeping the temporary title) before calling generate, then persists the sanitized title', async () => {
+    const session = runningSession({ kind: 'claude', title: 'New Claude session', status: 'running' })
     const { store, titleService, coordinator } = buildHarness({
       initial: { ...emptyState(), sessions: [session] }
     })
@@ -309,10 +339,42 @@ describe('SessionCoordinator.submitFirstInput', () => {
     await coordinator.submitFirstInput('session-1', 'please fix the login bug')
     await coordinator.submitFirstInput('session-1', 'a second, later submission')
 
+    // The titleState-flipping store.update (the claim) happens strictly before generate is called.
+    expect(store.update.mock.invocationCallOrder[0]).toBeLessThan(titleService.generate.mock.invocationCallOrder[0]!)
     expect(titleService.generate).toHaveBeenCalledTimes(1)
     expect(titleService.generate).toHaveBeenCalledWith('session-1', 'claude', 'please fix the login bug')
     const persisted = await store.load()
     expect(persisted.sessions[0]).toMatchObject({ title: 'Fix login bug', titleState: 'complete' })
+  })
+
+  it('has already persisted titleState complete with the temporary title by the time generate is called', async () => {
+    const session = runningSession({ kind: 'claude', title: 'New Claude session', status: 'running' })
+    const { store, titleService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+    let snapshotWhenGenerateStarts: SessionRecord | undefined
+    titleService.generate.mockImplementation(async () => {
+      const state = await store.load()
+      snapshotWhenGenerateStarts = state.sessions[0]
+      return 'Fix login bug'
+    })
+
+    await coordinator.submitFirstInput('session-1', 'please fix the login bug')
+
+    expect(snapshotWhenGenerateStarts).toMatchObject({ title: 'New Claude session', titleState: 'complete' })
+  })
+
+  it('ignores a submission after a restart when titleState is already complete, even with a fresh in-memory guard', async () => {
+    // Simulates a process restart mid-generation: a fresh SessionCoordinator (fresh in-memory
+    // Set) must still refuse a second attempt because the persisted titleState already claimed it.
+    const session = runningSession({ kind: 'claude', title: 'New Claude session', titleState: 'complete', status: 'running' })
+    const { titleService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+
+    await coordinator.submitFirstInput('session-1', 'late input')
+
+    expect(titleService.generate).not.toHaveBeenCalled()
   })
 
   it('ignores a concurrent duplicate submission before the first resolves', async () => {
@@ -390,6 +452,51 @@ describe('SessionCoordinator.stop and exits', () => {
     const persisted = await store.load()
     expect(persisted.sessions[0]).toMatchObject({ status: 'stopped' })
   })
+
+  it('logs rather than rejecting unhandled when persisting after an exit event fails', async () => {
+    const session = runningSession({ status: 'running' })
+    const { store, terminalService } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+    const persistFailure = new Error('disk full')
+    store.update.mockRejectedValueOnce(persistFailure)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    terminalService.emitExit('session-1', 1)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('session-1'), persistFailure)
+    consoleError.mockRestore()
+  })
+
+  it('persists stopped even when terminalService.stop rejects (force-kill failure), then rethrows', async () => {
+    const session = runningSession({ status: 'running' })
+    const { store, terminalService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+    const killError = new Error('kill failed')
+    terminalService.stop.mockRejectedValueOnce(killError)
+
+    await expect(coordinator.stop('session-1')).rejects.toThrow(killError)
+
+    const persisted = await store.load()
+    expect(persisted.sessions[0]).toMatchObject({ status: 'stopped' })
+  })
+
+  it('allows restoring a session after a failed stop instead of leaving it a permanent zombie', async () => {
+    const session = runningSession({ status: 'running' })
+    const { terminalService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+    terminalService.stop.mockRejectedValueOnce(new Error('kill failed'))
+    await expect(coordinator.stop('session-1')).rejects.toThrow('kill failed')
+
+    terminalService.stop.mockResolvedValue(undefined)
+    const restored = await coordinator.restore('session-1')
+
+    expect(restored.status).toBe('running')
+    expect(terminalService.start).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }))
+  })
 })
 
 describe('SessionCoordinator.delete', () => {
@@ -466,6 +573,23 @@ describe('SessionCoordinator.delete', () => {
     const { coordinator } = buildHarness()
 
     await expect(coordinator.delete('missing-id')).resolves.toEqual({ status: 'deleted' })
+  })
+
+  it('maps a terminal stop failure to failed instead of throwing, and still persists stopped', async () => {
+    const session = runningSession({ mode: 'worktree', worktreeName: 'w', worktreePath: 'p', branchName: 'w', status: 'running' })
+    const { store, terminalService, titleService, worktreeService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+    terminalService.stop.mockRejectedValueOnce(new Error('kill failed'))
+
+    const result = await coordinator.delete('session-1')
+
+    expect(result).toEqual({ status: 'failed', message: 'kill failed' })
+    expect(titleService.cancel).toHaveBeenCalledWith('session-1')
+    expect(worktreeService.remove).not.toHaveBeenCalled()
+    const persisted = await store.load()
+    expect(persisted.sessions).toHaveLength(1)
+    expect(persisted.sessions[0]).toMatchObject({ status: 'stopped' })
   })
 })
 
