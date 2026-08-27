@@ -334,14 +334,6 @@ input {
   display: block;
 }
 
-.icon-chevron {
-  transition: transform 120ms ease-out;
-}
-
-.icon-chevron--expanded {
-  transform: rotate(180deg);
-}
-
 .project-action-hint {
   margin: 0 12px 8px;
   padding: 4px 8px;

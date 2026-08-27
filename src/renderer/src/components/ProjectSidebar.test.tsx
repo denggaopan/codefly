@@ -124,7 +124,7 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
   })
 
-  it('orders project row actions as New session, VS Code, folder, then expand control', () => {
+  it('orders project row actions as New session, VS Code, then folder', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
@@ -133,7 +133,7 @@ describe('ProjectSidebar', () => {
     const buttons = within(actions).getAllByRole('button')
     const names = buttons.map((button) => button.getAttribute('aria-label'))
 
-    expect(names).toEqual(['New session', 'Open project in VS Code', 'Open project folder', expect.stringMatching(/sessions/i)])
+    expect(names).toEqual(['New session', 'Open project in VS Code', 'Open project folder'])
   })
 
   it('does not put the project-row label or session-row label inside a role="button" ancestor', () => {
@@ -209,17 +209,35 @@ describe('ProjectSidebar', () => {
     expect(useAppStore.getState().activeProjectId).toBe('project-1')
   })
 
-  it('collapses and expands the session list with the expand control', async () => {
+  it('expands the clicked project and collapses the others (accordion), with no expand control', async () => {
     const user = userEvent.setup()
-    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    const project2: ProjectRecord = { id: 'project-2', name: 'second-project', path: 'C:\\work\\second', createdAt: '2026-08-21T00:00:00.000Z' }
+    const sessionInP2: SessionRecord = { ...stoppedSession, id: 'session-p2', projectId: 'project-2', title: 'P2 session' }
+    seedStore({ version: 1, projects: [project1, project2], sessions: [stoppedSession, sessionInP2] })
     render(<ProjectSidebar />)
 
-    const toggle = screen.getByRole('button', { name: /collapse sessions/i })
-    await user.click(toggle)
-    expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: /expand sessions/i }))
+    // No active project yet: every group is expanded, and there is no expand/collapse control.
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+    expect(screen.getByText('P2 session')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /collapse sessions|expand sessions/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByText(project2.name))
+    expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
+    expect(screen.getByText('P2 session')).toBeInTheDocument()
+
+    await user.click(screen.getByText(project1.name))
+    expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+    expect(screen.queryByText('P2 session')).not.toBeInTheDocument()
+  })
+
+  it('shows matching sessions in every project while searching, regardless of the active project', async () => {
+    const project2: ProjectRecord = { id: 'project-2', name: 'second-project', path: 'C:\\work\\second', createdAt: '2026-08-21T00:00:00.000Z' }
+    const sessionInP2: SessionRecord = { ...stoppedSession, id: 'session-p2', projectId: 'project-2', title: 'Special P2 session' }
+    seedStore({ version: 1, projects: [project1, project2], sessions: [stoppedSession, sessionInP2] })
+    useAppStore.setState({ activeProjectId: project1.id, searchQuery: 'special' })
+    render(<ProjectSidebar />)
+
+    expect(screen.getByText('Special P2 session')).toBeInTheDocument()
   })
 
   it('shows worktree name for a worktree session and "Ordinary session" for a fallback session', () => {

@@ -260,17 +260,20 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
 test('mocked VS Code and Explorer project-row actions do not toggle the row or change the active session', async () => {
   const activeRowBefore = window.locator('.session-row-content[aria-current="true"]')
   const activeGlyphBefore = await activeRowBefore.locator('.session-kind-icon').textContent()
-  const chevron = window.getByRole('button', { name: 'Collapse sessions' })
-  await expect(chevron).toHaveAttribute('aria-expanded', 'true')
+  // The expand control is gone (project groups are an accordion on activation): "not
+  // toggling the row" now means the session list stays visible and the active session
+  // unchanged after each project-row action.
+  const sessionRowCount = await window.locator('.session-row').count()
+  expect(sessionRowCount).toBeGreaterThan(0)
 
   await window.getByRole('button', { name: 'Open project in VS Code' }).click()
   await expect(window.locator('.sidebar-notice')).toHaveCount(0)
-  await expect(chevron).toHaveAttribute('aria-expanded', 'true')
+  await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
   await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveText(activeGlyphBefore ?? '')
 
   await window.getByRole('button', { name: 'Open project folder' }).click()
   await expect(window.locator('.sidebar-notice')).toHaveCount(0)
-  await expect(chevron).toHaveAttribute('aria-expanded', 'true')
+  await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
   await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveText(activeGlyphBefore ?? '')
 })
 

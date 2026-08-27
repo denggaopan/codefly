@@ -51,7 +51,7 @@ The default window size is 1180 by 760 pixels, with a minimum size of 900 by 600
 
 ### Project and Session Rows
 
-A project row shows the selected directory name and path. Its right-side actions contain a bundled blue Visual Studio Code SVG icon, a folder SVG icon, and the expand/collapse control in that order. Clicking the Visual Studio Code icon opens the project's original user-selected directory in VS Code. Clicking the folder icon opens the same original directory in Windows File Explorer. Neither action targets an active session worktree, toggles the project row, or changes the active session. The icons have accessible `Open project in VS Code` and `Open project folder` labels.
+A project row shows the selected directory name and path. Its right-side actions contain a New session (+) button, a bundled blue Visual Studio Code SVG icon, and a folder SVG icon in that order. (Revised 2026-08-27: the expand/collapse control was removed — project groups behave as an accordion: activating a project expands it and collapses the others, every group shows before anything is active, and an active search shows matches in every project.) Clicking the Visual Studio Code icon opens the project's original user-selected directory in VS Code. Clicking the folder icon opens the same original directory in Windows File Explorer. Neither action targets an active session worktree, toggles the project row, or changes the active session. The icons have accessible `Open project in VS Code` and `Open project folder` labels.
 
 Its child session rows show:
 

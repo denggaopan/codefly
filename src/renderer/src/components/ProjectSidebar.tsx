@@ -32,20 +32,6 @@ function FolderGlyph() {
   )
 }
 
-function ChevronGlyph({ expanded }: { expanded: boolean }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      width="14"
-      height="14"
-      className={expanded ? 'icon icon-chevron icon-chevron--expanded' : 'icon icon-chevron'}
-    >
-      <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2" />
-    </svg>
-  )
-}
-
 type SessionRowProps = {
   session: SessionRecord
   active: boolean
@@ -121,7 +107,6 @@ export default function ProjectSidebar() {
   const openLauncher = useAppStore((state) => state.openLauncher)
   const closeLauncher = useAppStore((state) => state.closeLauncher)
 
-  const [collapsedProjectIds, setCollapsedProjectIds] = useState<ReadonlySet<string>>(() => new Set())
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
 
   // Focus restoration for the launcher: whichever project-row "+" trigger opened it gets
@@ -143,15 +128,6 @@ export default function ProjectSidebar() {
   // completed/failed delete that leaves the row in place), instead of being dropped to
   // <body>.
   const pendingDeleteTriggerRef = useRef<HTMLButtonElement | null>(null)
-
-  const toggleExpanded = (projectId: string): void => {
-    setCollapsedProjectIds((previous) => {
-      const next = new Set(previous)
-      if (next.has(projectId)) next.delete(projectId)
-      else next.add(projectId)
-      return next
-    })
-  }
 
   const handleRowActivate = (session: SessionRecord): void => {
     if (isSessionRestartable(session)) {
@@ -210,7 +186,11 @@ export default function ProjectSidebar() {
 
       <div className="project-groups">
         {appState.projects.map((project) => {
-          const expanded = !collapsedProjectIds.has(project.id)
+          // Accordion: activating a project (clicking its row, its "+" action, or one of its
+          // sessions) expands it and collapses every other project. Before anything is
+          // active, every group shows. An active search overrides collapse so matches in
+          // every project stay discoverable.
+          const expanded = activeProjectId === null || project.id === activeProjectId || normalizedQuery !== ''
           const sessions = appState.sessions.filter((session) => session.projectId === project.id)
           const visibleSessions = normalizedQuery
             ? sessions.filter((session) => session.title.toLowerCase().includes(normalizedQuery))
@@ -276,17 +256,6 @@ export default function ProjectSidebar() {
                     }}
                   >
                     <FolderGlyph />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={expanded ? 'Collapse sessions' : 'Expand sessions'}
-                    aria-expanded={expanded}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      toggleExpanded(project.id)
-                    }}
-                  >
-                    <ChevronGlyph expanded={expanded} />
                   </button>
                 </div>
                 {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} />}
