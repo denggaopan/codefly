@@ -1,25 +1,9 @@
 import { useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
+import { isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import ConfirmDialog from './ConfirmDialog'
-
-const sessionStatusLabel = (session: SessionRecord): string => {
-  switch (session.status) {
-    case 'running':
-      return 'Running'
-    case 'stopped':
-      return 'Click to restore'
-    case 'creating':
-      return 'Starting…'
-    case 'missing':
-      return 'Path missing'
-    case 'error':
-      return session.lastError ?? 'Error'
-    default:
-      return session.status
-  }
-}
 
 const sessionKindGlyph = (kind: SessionRecord['kind']): string => {
   switch (kind) {
@@ -146,10 +130,10 @@ export default function ProjectSidebar() {
   }
 
   const handleRowActivate = (session: SessionRecord): void => {
-    if (session.status === 'running' || session.status === 'creating') {
-      setActiveSession(session.id, session.projectId)
-    } else {
+    if (isSessionRestartable(session)) {
       void restoreSession(session.id)
+    } else {
+      setActiveSession(session.id, session.projectId)
     }
   }
 

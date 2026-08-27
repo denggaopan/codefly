@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
+import { isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
 import { BYPASS_WARNING_TEXT } from './AgentBypassStatus'
@@ -41,7 +42,7 @@ type TerminalHeaderProps = {
 function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
   const running = session.status === 'running'
   const showBypass = running && (session.kind === 'claude' || session.kind === 'codex')
-  const canRestart = !running && session.status !== 'creating'
+  const canRestart = isSessionRestartable(session)
 
   return (
     <header className="terminal-header">
@@ -50,7 +51,7 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
           {session.title}
         </span>
         <span className="terminal-header-kind">{sessionKindLabel(session.kind)}</span>
-        <span className="terminal-header-status">{running ? 'Running' : 'Stopped'}</span>
+        <span className="terminal-header-status">{sessionStatusLabel(session)}</span>
         {canRestart && (
           <button type="button" className="terminal-restart-button" onClick={onRestart}>
             Restart session
@@ -85,14 +86,27 @@ export default function TerminalWorkspace() {
   const entriesRef = useRef<Map<string, TerminalEntry>>(new Map())
   const hostRefCallbacks = useRef<Map<string, (element: HTMLDivElement | null) => void>>(new Map())
 
+  // Mirrors `activeSessionId` for use inside stable closures (the ResizeObserver callback
+  // created once per entry in `ensureEntry`) that must always see the LATEST active session,
+  // not a value snapshotted at entry-creation time. Written during render (not in an effect)
+  // so it is current by the time any event fires after this commit; read-only outside render.
+  const activeSessionIdRef = useRef<string | null>(null)
+  activeSessionIdRef.current = activeSessionId
+
   const applyFit = (sessionId: string): void => {
     const entry = entriesRef.current.get(sessionId)
     if (!entry) return
+    // A pane not currently active is rendered with display:none; fitting/resizing it would
+    // reflow xterm against a zero-size box and can hand back degenerate (0 or NaN) dimensions.
+    // The ResizeObserver keeps observing hidden panes (so it's ready the instant they become
+    // visible again), so this guard — not the observer subscription — is what makes hidden
+    // panes inert.
+    if (sessionId !== activeSessionIdRef.current) return
     entry.fitAddon.fit()
     const dimensions = entry.fitAddon.proposeDimensions()
     if (!dimensions) return
     const { cols, rows } = dimensions
-    if (cols <= 0 || rows <= 0) return
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) return
     if (cols === entry.lastCols && rows === entry.lastRows) return
     entry.lastCols = cols
     entry.lastRows = rows

@@ -307,6 +307,53 @@ describe('TerminalWorkspace', () => {
     expect(api.resizeTerminal).not.toHaveBeenCalled()
   })
 
+  it('never sends non-finite (NaN/Infinity) dimensions to resizeTerminal', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeResizeObserver.instances).toHaveLength(1))
+
+    const fitAddon = FakeFitAddon.instances[0]
+    const resizeObserver = FakeResizeObserver.instances[0]
+    api.resizeTerminal.mockClear()
+
+    fitAddon.proposeDimensions.mockReturnValue({ cols: NaN, rows: NaN })
+    resizeObserver.trigger()
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+
+    fitAddon.proposeDimensions.mockReturnValue({ cols: 80, rows: NaN })
+    resizeObserver.trigger()
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+
+    fitAddon.proposeDimensions.mockReturnValue({ cols: Infinity, rows: 24 })
+    resizeObserver.trigger()
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('does not fit or resize a hidden (inactive) pane when its ResizeObserver fires', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    const claudeFitAddon = FakeFitAddon.instances[0]
+    const claudeResizeObserver = FakeResizeObserver.instances[0]
+
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
+
+    claudeFitAddon.fit.mockClear()
+    api.resizeTerminal.mockClear()
+
+    // Claude's pane is now display:none (PowerShell is active); its ResizeObserver keeps
+    // observing so it's ready when the pane becomes visible again, but firing it now must be
+    // a no-op — it must not reflow (fit()) or resize a hidden terminal.
+    claudeResizeObserver.trigger()
+
+    expect(claudeFitAddon.fit).not.toHaveBeenCalled()
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+  })
+
   it('disposes the terminal entry and removes its pane when its session is deleted', async () => {
     seedStore(runningClaudeSession)
     useAppStore.setState({ activeSessionId: runningClaudeSession.id })
@@ -364,6 +411,34 @@ describe('TerminalWorkspace', () => {
     expect(screen.getByText(runningClaudeSession.launchPath)).toBeInTheDocument()
     expect(screen.getByText('Claude')).toBeInTheDocument()
     expect(screen.getByText('Running')).toBeInTheDocument()
+  })
+
+  it('shows "Starting…" for a creating session header, matching the sidebar\'s shared label', async () => {
+    const creatingSession: SessionRecord = { ...runningPowerShellSession, id: 'session-creating', status: 'creating' }
+    seedStore(creatingSession)
+    useAppStore.setState({ activeSessionId: creatingSession.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText('Starting…')).toBeInTheDocument()
+    expect(screen.queryByText('Stopped')).not.toBeInTheDocument()
+  })
+
+  it("shows the session's lastError for an error session header, matching the sidebar's shared label", async () => {
+    const errorSession: SessionRecord = { ...runningPowerShellSession, id: 'session-error', status: 'error', lastError: 'PTY spawn failed' }
+    seedStore(errorSession)
+    useAppStore.setState({ activeSessionId: errorSession.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText('PTY spawn failed')).toBeInTheDocument()
+  })
+
+  it('shows "Path missing" for a missing session header, matching the sidebar\'s shared label', async () => {
+    const missingSession: SessionRecord = { ...runningPowerShellSession, id: 'session-missing', status: 'missing' }
+    seedStore(missingSession)
+    useAppStore.setState({ activeSessionId: missingSession.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText('Path missing')).toBeInTheDocument()
   })
 
   it('shows the shared bypass warning text in a running Claude header', async () => {
