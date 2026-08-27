@@ -78,6 +78,19 @@ const readJsonArgvLog = (path: string): unknown => JSON.parse(readFileSync(path,
 const sessionRowByGlyph = (glyph: string) =>
   window.locator('.session-row', { has: window.locator('.session-kind-icon', { hasText: glyph }) })
 
+// The app renders the bypass warning on TWO surfaces for a running Claude/Codex session:
+// the persistent bottom strip (AgentBypassStatus.tsx, role="status") and the active
+// session's own terminal header banner (TerminalWorkspace.tsx's TerminalHeader, no role).
+// Every session that has ever been made active keeps its terminal pane — and thus its
+// header — mounted in the DOM, just hidden (display:none on the pane) while inactive, so a
+// still-running-but-inactive Claude/Codex session's header would inflate a raw, non-visibility
+// filtered DOM count. Only the currently ACTIVE session's pane is ever visible, so filtering
+// to :visible pins this to exactly the two surfaces a user can actually see for the current
+// active session: 2 when it is a running Claude/Codex session, 0 otherwise (including while a
+// running Claude/Codex session merely isn't the active one).
+const visibleBypassWarnings = () =>
+  window.locator('.agent-bypass-status-text:visible, .terminal-header-bypass:visible')
+
 test.beforeAll(async () => {
   repoPath = createRepo()
   userDataDir = mkdtempSync(join(tmpdir(), 'codefly-e2e-userdata-'))
@@ -111,9 +124,7 @@ test('Claude receives exactly its bypass flag and the persistent warning is visi
     .poll(() => (existsSync(terminalArgvLog) ? readJsonArgvLog(terminalArgvLog) : undefined), { timeout: 20_000 })
     .toEqual(['--dangerously-skip-permissions'])
 
-  const warning = window.getByRole('status')
-  await expect(warning).toBeVisible()
-  await expect(warning).toHaveText(BYPASS_WARNING_TEXT)
+  await expect(visibleBypassWarnings()).toHaveText([BYPASS_WARNING_TEXT, BYPASS_WARNING_TEXT])
 })
 
 test('submitting the first input replaces the title and never leaks a bypass flag to the title process', async () => {
@@ -148,7 +159,7 @@ test('creates a Codex session as the second worktree, receiving exactly its own 
     .poll(() => (existsSync(terminalArgvLog) ? readJsonArgvLog(terminalArgvLog) : undefined), { timeout: 20_000 })
     .toEqual(['--dangerously-bypass-approvals-and-sandbox'])
 
-  await expect(window.getByRole('status')).toHaveText(BYPASS_WARNING_TEXT)
+  await expect(visibleBypassWarnings()).toHaveText([BYPASS_WARNING_TEXT, BYPASS_WARNING_TEXT])
 })
 
 test('creates PowerShell and Command Prompt sessions with the bypass warning absent', async () => {
@@ -157,14 +168,14 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   const powershellRow = sessionRowByGlyph('PS')
   await expect(powershellRow).toHaveCount(1, { timeout: 20_000 })
   await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
-  await expect(window.getByRole('status')).toHaveCount(0)
+  await expect(visibleBypassWarnings()).toHaveCount(0)
 
   await window.getByRole('button', { name: 'New session' }).click()
   await window.locator('.session-launcher').getByRole('button', { name: 'Command Prompt', exact: true }).click()
   const cmdRow = sessionRowByGlyph('CMD')
   await expect(cmdRow).toHaveCount(1, { timeout: 20_000 })
   await expect(cmdRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
-  await expect(window.getByRole('status')).toHaveCount(0)
+  await expect(visibleBypassWarnings()).toHaveCount(0)
 })
 
 test('stopping and relaunching the app preserves sessions as stopped, and clicking one restores it', async () => {
