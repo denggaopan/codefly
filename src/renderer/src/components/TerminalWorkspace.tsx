@@ -1,5 +1,10 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
+// xterm's own stylesheet is REQUIRED for its layered DOM to lay out correctly: it makes
+// .xterm-viewport an absolute overlay instead of a normal-flow block. Without it, the
+// viewport's scroll area pushes .xterm-screen below the host, rendering the prompt outside
+// the visible pane ("cannot see the input line").
+import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'

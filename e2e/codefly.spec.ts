@@ -213,6 +213,18 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   await window.keyboard.type('CODEFLY_FOCUS_CHECK')
   await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_FOCUS_CHECK', { timeout: 20_000 })
 
+  // Regression guard: the terminal's rendered screen must sit at the TOP of its host and stay
+  // inside it. Without xterm.css, the viewport layer participates in normal flow and pushes
+  // .xterm-screen below the host (prompt clipped at the window's bottom edge — reported as
+  // "cannot see the input line"). Text-based assertions cannot catch this: the DOM text is
+  // present either way, so this must check geometry.
+  const hostBox = await window.locator('.terminal-pane:visible .terminal-instance-host').boundingBox()
+  const screenBox = await window.locator('.terminal-pane:visible .xterm-screen').boundingBox()
+  expect(hostBox).not.toBeNull()
+  expect(screenBox).not.toBeNull()
+  expect(Math.abs(screenBox!.y - hostBox!.y)).toBeLessThan(16)
+  expect(screenBox!.y + screenBox!.height).toBeLessThanOrEqual(hostBox!.y + hostBox!.height + 2)
+
   await window.getByRole('button', { name: 'New session' }).click()
   await window.locator('.session-launcher').getByRole('button', { name: 'Command Prompt', exact: true }).click()
   const cmdRow = sessionRowByGlyph('CMD')

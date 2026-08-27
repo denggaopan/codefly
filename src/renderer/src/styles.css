@@ -740,16 +740,14 @@ input {
 
 /* The xterm host needs a real, non-auto height for FitAddon.fit()/proposeDimensions() to
    compute anything other than a degenerate size: it fills the remaining space below the
-   header inside its (already height-constrained) .terminal-pane ancestor. */
+   header inside its (already height-constrained) .terminal-pane ancestor. The internal
+   .xterm/.xterm-viewport/.xterm-screen layering is laid out by xterm's own stylesheet,
+   imported in TerminalWorkspace.tsx — do not override those layers here. */
 .terminal-instance-host {
   flex: 1 1 auto;
   min-height: 0;
   padding: 4px 10px;
   background: var(--color-canvas);
-}
-
-.terminal-instance-host :is(.xterm, .xterm-viewport, .xterm-screen) {
-  height: 100%;
 }
 
 /* ==========================================================================
