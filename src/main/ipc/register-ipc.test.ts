@@ -1,0 +1,479 @@
+import { describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
+
+import type { AppSnapshot, AppState, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../shared/contracts'
+import { IPC } from '../../shared/ipc'
+import { ProjectNotFoundError, type ProjectService } from '../services/project-service'
+import { SessionNotFoundError, type SessionCoordinator } from '../services/session-coordinator'
+import type { ExternalAppService } from '../services/external-app-service'
+import type { TerminalService } from '../services/terminal-service'
+import { registerIpc } from './register-ipc'
+
+type Listener = (event: unknown, payload?: unknown) => unknown
+
+class FakeIpcMain {
+  readonly handlers = new Map<string, Listener>()
+  readonly listeners = new Map<string, Set<Listener>>()
+
+  handle(channel: string, listener: Listener): void {
+    this.handlers.set(channel, listener)
+  }
+
+  removeHandler(channel: string): void {
+    this.handlers.delete(channel)
+  }
+
+  on(channel: string, listener: Listener): this {
+    if (!this.listeners.has(channel)) this.listeners.set(channel, new Set())
+    this.listeners.get(channel)!.add(listener)
+    return this
+  }
+
+  removeListener(channel: string, listener: Listener): this {
+    this.listeners.get(channel)?.delete(listener)
+    return this
+  }
+
+  invoke(channel: string, payload?: unknown): unknown {
+    const handler = this.handlers.get(channel)
+    if (!handler) throw new Error(`No handler registered for channel: ${channel}`)
+    return handler({}, payload)
+  }
+
+  emit(channel: string, payload?: unknown): void {
+    for (const listener of [...(this.listeners.get(channel) ?? [])]) listener({}, payload)
+  }
+}
+
+const fakeWindow = (destroyed = false) => ({
+  webContents: {
+    send: vi.fn(),
+    isDestroyed: vi.fn(() => destroyed)
+  }
+})
+
+const fakeDialog = (result: { canceled: boolean; filePaths: string[] }) => ({
+  showOpenDialog: vi.fn(async () => result)
+})
+
+class FakeCoordinator {
+  readonly create = vi.fn()
+  readonly restore = vi.fn()
+  readonly delete = vi.fn()
+  readonly submitFirstInput = vi.fn()
+  private readonly stateListeners = new Set<(state: AppState) => void>()
+
+  onStateChanged(listener: (state: AppState) => void): () => void {
+    this.stateListeners.add(listener)
+    return () => {
+      this.stateListeners.delete(listener)
+    }
+  }
+
+  emitState(state: AppState): void {
+    for (const listener of [...this.stateListeners]) listener(state)
+  }
+
+  listenerCount(): number {
+    return this.stateListeners.size
+  }
+}
+
+class FakeTerminalService {
+  readonly write = vi.fn()
+  readonly resize = vi.fn()
+  private readonly listeners = {
+    data: new Set<(payload: { sessionId: string; data: string }) => void>(),
+    exit: new Set<(payload: { sessionId: string; exitCode: number }) => void>()
+  }
+
+  on(event: 'data' | 'exit', listener: (payload: never) => void): () => void {
+    const set = this.listeners[event] as Set<(payload: never) => void>
+    set.add(listener)
+    return () => {
+      set.delete(listener)
+    }
+  }
+
+  emitData(payload: { sessionId: string; data: string }): void {
+    for (const listener of [...this.listeners.data]) listener(payload)
+  }
+
+  emitExit(payload: { sessionId: string; exitCode: number }): void {
+    for (const listener of [...this.listeners.exit]) listener(payload)
+  }
+
+  listenerCounts(): { data: number; exit: number } {
+    return { data: this.listeners.data.size, exit: this.listeners.exit.size }
+  }
+}
+
+const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
+
+const capabilities = (): AppSnapshot['capabilities'] => ({
+  claude: { available: true, detail: 'C:\\claude.exe' },
+  codex: { available: false, detail: 'Install Codex CLI (codex) and sign in.' },
+  vscode: { available: true, detail: 'C:\\Code.exe' }
+})
+
+const project: ProjectRecord = {
+  id: 'project-1',
+  name: 'App',
+  path: 'C:\\Projects\\App',
+  createdAt: '2026-08-26T00:00:00.000Z'
+}
+
+const session: SessionRecord = {
+  id: 'session-1',
+  projectId: 'project-1',
+  kind: 'powershell',
+  title: 'New PowerShell session',
+  titleState: 'pending',
+  createdAt: '2026-08-26T00:00:00.000Z',
+  mode: 'ordinary',
+  launchPath: 'C:\\Projects\\App',
+  status: 'running'
+} as SessionRecord
+
+type Harness = {
+  ipcMain: FakeIpcMain
+  window: ReturnType<typeof fakeWindow>
+  dialog: ReturnType<typeof fakeDialog>
+  projectService: { register: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> }
+  coordinator: FakeCoordinator
+  externalAppService: { openInVSCode: ReturnType<typeof vi.fn>; openInExplorer: ReturnType<typeof vi.fn> }
+  terminalService: FakeTerminalService
+  getSnapshot: ReturnType<typeof vi.fn>
+  dispose: () => void
+}
+
+const buildHarness = (options: {
+  dialogResult?: { canceled: boolean; filePaths: string[] }
+  windowDestroyed?: boolean
+} = {}): Harness => {
+  const ipcMain = new FakeIpcMain()
+  const window = fakeWindow(options.windowDestroyed ?? false)
+  const dialog = fakeDialog(options.dialogResult ?? { canceled: true, filePaths: [] })
+  const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project) }
+  const coordinator = new FakeCoordinator()
+  const externalAppService = { openInVSCode: vi.fn(async () => undefined), openInExplorer: vi.fn(async () => undefined) }
+  const terminalService = new FakeTerminalService()
+  const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ state: emptyState(), capabilities: capabilities() }))
+
+  const dispose = registerIpc({
+    ipcMain: ipcMain as unknown as Electron.IpcMain,
+    dialog: dialog as unknown as Electron.Dialog,
+    window: window as unknown as Electron.BrowserWindow,
+    projectService: projectService as unknown as ProjectService,
+    coordinator: coordinator as unknown as SessionCoordinator,
+    externalAppService: externalAppService as unknown as ExternalAppService,
+    terminalService: terminalService as unknown as TerminalService,
+    getSnapshot
+  })
+
+  return { ipcMain, window, dialog, projectService, coordinator, externalAppService, terminalService, getSnapshot, dispose }
+}
+
+describe('registerIpc: snapshot:get', () => {
+  it('resolves with the composed AppSnapshot', async () => {
+    const { ipcMain, getSnapshot } = buildHarness()
+    const snapshot: AppSnapshot = { state: emptyState(), capabilities: capabilities() }
+    getSnapshot.mockResolvedValue(snapshot)
+
+    await expect(ipcMain.invoke(IPC.snapshotGet)).resolves.toEqual(snapshot)
+  })
+})
+
+describe('registerIpc: project:add', () => {
+  it('returns null and does not call ProjectService.register when the dialog is cancelled', async () => {
+    const { ipcMain, projectService } = buildHarness({ dialogResult: { canceled: true, filePaths: [] } })
+
+    await expect(ipcMain.invoke(IPC.projectAdd)).resolves.toBeNull()
+    expect(projectService.register).not.toHaveBeenCalled()
+  })
+
+  it('returns null when the dialog resolves with no selected paths', async () => {
+    const { ipcMain, projectService } = buildHarness({ dialogResult: { canceled: false, filePaths: [] } })
+
+    await expect(ipcMain.invoke(IPC.projectAdd)).resolves.toBeNull()
+    expect(projectService.register).not.toHaveBeenCalled()
+  })
+
+  it('registers the selected directory and returns the resulting ProjectRecord', async () => {
+    const { ipcMain, dialog, projectService } = buildHarness({
+      dialogResult: { canceled: false, filePaths: ['C:\\Projects\\App'] }
+    })
+
+    await expect(ipcMain.invoke(IPC.projectAdd)).resolves.toEqual(project)
+    expect(dialog.showOpenDialog).toHaveBeenCalledWith({ properties: ['openDirectory'] })
+    expect(projectService.register).toHaveBeenCalledWith('C:\\Projects\\App')
+  })
+})
+
+describe('registerIpc: project:open-vscode', () => {
+  it('parses the request, resolves the project, and opens it in VS Code', async () => {
+    const { ipcMain, projectService, externalAppService } = buildHarness()
+
+    await ipcMain.invoke(IPC.projectOpenVSCode, { projectId: 'project-1' })
+
+    expect(projectService.get).toHaveBeenCalledWith('project-1')
+    expect(externalAppService.openInVSCode).toHaveBeenCalledWith(project)
+  })
+
+  it('rejects an invalid request without calling ProjectService or ExternalAppService', async () => {
+    const { ipcMain, projectService, externalAppService } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.projectOpenVSCode, {})).rejects.toBeInstanceOf(z.ZodError)
+    await expect(ipcMain.invoke(IPC.projectOpenVSCode, { projectId: 'p1', extra: true })).rejects.toBeInstanceOf(z.ZodError)
+    expect(projectService.get).not.toHaveBeenCalled()
+    expect(externalAppService.openInVSCode).not.toHaveBeenCalled()
+  })
+
+  it('propagates the typed ProjectNotFoundError from the service instead of resolving it at the IPC layer', async () => {
+    const { ipcMain, projectService, externalAppService } = buildHarness()
+    projectService.get.mockRejectedValue(new ProjectNotFoundError('missing-id'))
+
+    await expect(ipcMain.invoke(IPC.projectOpenVSCode, { projectId: 'missing-id' })).rejects.toBeInstanceOf(ProjectNotFoundError)
+    expect(externalAppService.openInVSCode).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: project:open-folder', () => {
+  it('parses the request, resolves the project, and opens it in Explorer', async () => {
+    const { ipcMain, projectService, externalAppService } = buildHarness()
+
+    await ipcMain.invoke(IPC.projectOpenFolder, { projectId: 'project-1' })
+
+    expect(projectService.get).toHaveBeenCalledWith('project-1')
+    expect(externalAppService.openInExplorer).toHaveBeenCalledWith(project)
+  })
+
+  it('rejects an invalid request without calling ProjectService or ExternalAppService', async () => {
+    const { ipcMain, projectService, externalAppService } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.projectOpenFolder, { projectId: 42 })).rejects.toBeInstanceOf(z.ZodError)
+    expect(projectService.get).not.toHaveBeenCalled()
+    expect(externalAppService.openInExplorer).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: session:create', () => {
+  it('parses the request and delegates to SessionCoordinator.create', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+    coordinator.create.mockResolvedValue(session)
+
+    await expect(ipcMain.invoke(IPC.sessionCreate, { projectId: 'project-1', kind: 'claude' })).resolves.toEqual(session)
+    expect(coordinator.create).toHaveBeenCalledWith('project-1', 'claude')
+  })
+
+  it('rejects an invalid session kind without calling the coordinator', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.sessionCreate, { projectId: 'project-1', kind: 'bash' })).rejects.toBeInstanceOf(z.ZodError)
+    expect(coordinator.create).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: session:restore', () => {
+  it('parses the request and delegates to SessionCoordinator.restore', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+    coordinator.restore.mockResolvedValue(session)
+
+    await expect(ipcMain.invoke(IPC.sessionRestore, { sessionId: 'session-1' })).resolves.toEqual(session)
+    expect(coordinator.restore).toHaveBeenCalledWith('session-1')
+  })
+
+  it('rejects an invalid request without calling the coordinator', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.sessionRestore, {})).rejects.toBeInstanceOf(z.ZodError)
+    expect(coordinator.restore).not.toHaveBeenCalled()
+  })
+
+  it('lets a SessionNotFoundError, or a PTY-start rejection, propagate to the renderer unchanged', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+    coordinator.restore.mockRejectedValue(new SessionNotFoundError('missing-id'))
+
+    await expect(ipcMain.invoke(IPC.sessionRestore, { sessionId: 'missing-id' })).rejects.toBeInstanceOf(SessionNotFoundError)
+  })
+})
+
+describe('registerIpc: session:delete', () => {
+  it('parses the request and returns the DeleteSessionResult from the coordinator verbatim', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+    const result: DeleteSessionResult = { status: 'dirty', changedFiles: 2 }
+    coordinator.delete.mockResolvedValue(result)
+
+    await expect(ipcMain.invoke(IPC.sessionDelete, { sessionId: 'session-1' })).resolves.toEqual(result)
+    expect(coordinator.delete).toHaveBeenCalledWith('session-1')
+  })
+})
+
+describe('registerIpc: session:first-input', () => {
+  it('parses the request and delegates to SessionCoordinator.submitFirstInput', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+
+    await ipcMain.invoke(IPC.sessionFirstInput, { sessionId: 'session-1', text: 'fix the bug' })
+
+    expect(coordinator.submitFirstInput).toHaveBeenCalledWith('session-1', 'fix the bug')
+  })
+
+  it('rejects empty text without calling the coordinator', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.sessionFirstInput, { sessionId: 'session-1', text: '' })).rejects.toBeInstanceOf(z.ZodError)
+    expect(coordinator.submitFirstInput).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: terminal:write (send-only)', () => {
+  it('parses the payload and forwards it to TerminalService.write', () => {
+    const { ipcMain, terminalService } = buildHarness()
+
+    ipcMain.emit(IPC.terminalWrite, { sessionId: 'session-1', data: 'ls\r' })
+
+    expect(terminalService.write).toHaveBeenCalledWith('session-1', 'ls\r')
+  })
+
+  it('silently drops an invalid payload without calling TerminalService.write', () => {
+    const { ipcMain, terminalService } = buildHarness()
+
+    expect(() => ipcMain.emit(IPC.terminalWrite, { sessionId: 'session-1' })).not.toThrow()
+    expect(() => ipcMain.emit(IPC.terminalWrite, { sessionId: '', data: 'x' })).not.toThrow()
+
+    expect(terminalService.write).not.toHaveBeenCalled()
+  })
+
+  it('does not let a TerminalService.write failure escape the listener', () => {
+    const { ipcMain, terminalService } = buildHarness()
+    terminalService.write.mockImplementation(() => {
+      throw new Error('Terminal session is not running: session-1')
+    })
+
+    expect(() => ipcMain.emit(IPC.terminalWrite, { sessionId: 'session-1', data: 'x' })).not.toThrow()
+  })
+})
+
+describe('registerIpc: terminal:resize (send-only)', () => {
+  it('parses the payload and forwards it to TerminalService.resize', () => {
+    const { ipcMain, terminalService } = buildHarness()
+
+    ipcMain.emit(IPC.terminalResize, { sessionId: 'session-1', cols: 100, rows: 40 })
+
+    expect(terminalService.resize).toHaveBeenCalledWith('session-1', 100, 40)
+  })
+
+  it('silently drops a payload with out-of-range dimensions', () => {
+    const { ipcMain, terminalService } = buildHarness()
+
+    expect(() => ipcMain.emit(IPC.terminalResize, { sessionId: 'session-1', cols: 0, rows: 40 })).not.toThrow()
+    expect(() => ipcMain.emit(IPC.terminalResize, { sessionId: 'session-1', cols: 100, rows: 1001 })).not.toThrow()
+
+    expect(terminalService.resize).not.toHaveBeenCalled()
+  })
+
+  it('does not let a TerminalService.resize failure escape the listener', () => {
+    const { ipcMain, terminalService } = buildHarness()
+    terminalService.resize.mockImplementation(() => {
+      throw new Error('Terminal session is not running: session-1')
+    })
+
+    expect(() => ipcMain.emit(IPC.terminalResize, { sessionId: 'session-1', cols: 100, rows: 40 })).not.toThrow()
+  })
+})
+
+describe('registerIpc: event publication', () => {
+  it('publishes stateChanged to the window webContents when it is not destroyed', () => {
+    const { window, coordinator } = buildHarness({ windowDestroyed: false })
+    const state = emptyState()
+
+    coordinator.emitState(state)
+
+    expect(window.webContents.send).toHaveBeenCalledWith(IPC.stateChanged, state)
+  })
+
+  it('does not publish stateChanged when the window webContents is destroyed', () => {
+    const { window, coordinator } = buildHarness({ windowDestroyed: true })
+
+    coordinator.emitState(emptyState())
+
+    expect(window.webContents.send).not.toHaveBeenCalled()
+  })
+
+  it('publishes terminal data only to a non-destroyed window', () => {
+    const { window, terminalService } = buildHarness({ windowDestroyed: false })
+    const payload = { sessionId: 'session-1', data: 'output' }
+
+    terminalService.emitData(payload)
+
+    expect(window.webContents.send).toHaveBeenCalledWith(IPC.terminalData, payload)
+  })
+
+  it('does not publish terminal data when the window webContents is destroyed', () => {
+    const { window, terminalService } = buildHarness({ windowDestroyed: true })
+
+    terminalService.emitData({ sessionId: 'session-1', data: 'output' })
+
+    expect(window.webContents.send).not.toHaveBeenCalled()
+  })
+
+  it('publishes terminal exit only to a non-destroyed window', () => {
+    const { window, terminalService } = buildHarness({ windowDestroyed: false })
+    const payload = { sessionId: 'session-1', exitCode: 0 }
+
+    terminalService.emitExit(payload)
+
+    expect(window.webContents.send).toHaveBeenCalledWith(IPC.terminalExit, payload)
+  })
+
+  it('does not publish terminal exit when the window webContents is destroyed', () => {
+    const { window, terminalService } = buildHarness({ windowDestroyed: true })
+
+    terminalService.emitExit({ sessionId: 'session-1', exitCode: 1 })
+
+    expect(window.webContents.send).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: disposer', () => {
+  it('removes every registered invoke handler', async () => {
+    const { ipcMain, dispose } = buildHarness()
+
+    dispose()
+
+    for (const channel of [
+      IPC.snapshotGet,
+      IPC.projectAdd,
+      IPC.projectOpenVSCode,
+      IPC.projectOpenFolder,
+      IPC.sessionCreate,
+      IPC.sessionRestore,
+      IPC.sessionDelete,
+      IPC.sessionFirstInput
+    ]) {
+      expect(ipcMain.handlers.has(channel)).toBe(false)
+    }
+  })
+
+  it('removes every registered send-only listener', () => {
+    const { ipcMain, dispose } = buildHarness()
+
+    dispose()
+
+    expect(ipcMain.listeners.get(IPC.terminalWrite)?.size ?? 0).toBe(0)
+    expect(ipcMain.listeners.get(IPC.terminalResize)?.size ?? 0).toBe(0)
+  })
+
+  it('unsubscribes from coordinator state changes and terminal events so nothing is published afterwards', () => {
+    const { window, coordinator, terminalService, dispose } = buildHarness({ windowDestroyed: false })
+
+    dispose()
+    coordinator.emitState(emptyState())
+    terminalService.emitData({ sessionId: 'session-1', data: 'output' })
+    terminalService.emitExit({ sessionId: 'session-1', exitCode: 0 })
+
+    expect(window.webContents.send).not.toHaveBeenCalled()
+    expect(coordinator.listenerCount()).toBe(0)
+    expect(terminalService.listenerCounts()).toEqual({ data: 0, exit: 0 })
+  })
+})
