@@ -24,8 +24,15 @@ export class ExternalAppLaunchError extends Error {
   readonly app: ExternalApp
   readonly target: string
 
-  constructor(app: ExternalApp, target: string, cause?: unknown) {
-    super(`Could not open ${target} in ${app === 'vscode' ? 'Visual Studio Code' : 'Windows File Explorer'}.`)
+  // The renderer receives only `message` across the IPC boundary (Error `cause` is not
+  // serialized by ipcRenderer.invoke), so everything a user needs to act on — the target,
+  // the launcher executable, and the underlying failure — must be part of the message.
+  constructor(app: ExternalApp, target: string, cause?: unknown, launcher?: string) {
+    const appName = app === 'vscode' ? 'Visual Studio Code' : 'Windows File Explorer'
+    const launcherText = launcher ? ` (launcher: ${launcher})` : ''
+    const causeMessage = cause instanceof Error ? cause.message : cause !== undefined ? String(cause) : ''
+    const causeText = causeMessage ? `: ${causeMessage}` : '.'
+    super(`Could not open ${target} in ${appName}${launcherText}${causeText}`)
     this.name = 'ExternalAppLaunchError'
     this.app = app
     this.target = target
@@ -126,7 +133,7 @@ export class ExternalAppService {
     try {
       await this.spawnDetached(executable, [project.path])
     } catch (cause) {
-      throw new ExternalAppLaunchError('vscode', executable, cause)
+      throw new ExternalAppLaunchError('vscode', project.path, cause, executable)
     }
   }
 
@@ -176,6 +183,8 @@ export class ExternalAppService {
   }
 
   private async ensureProjectPath(project: ProjectRecord, app: ExternalApp): Promise<void> {
-    if (!(await this.pathExists(project.path))) throw new ExternalAppLaunchError(app, project.path)
+    if (!(await this.pathExists(project.path))) {
+      throw new ExternalAppLaunchError(app, project.path, new Error('The project folder no longer exists.'))
+    }
   }
 }

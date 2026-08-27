@@ -137,13 +137,19 @@ describe('ExternalAppService', () => {
     expect(spawnDetached).not.toHaveBeenCalled()
   })
 
-  it('wraps VS Code spawn failures with the executable target and cause', async () => {
-    const failure = new Error('spawn failed')
+  it('wraps VS Code spawn failures with the project target, launcher path, and cause message', async () => {
+    const failure = new Error('EACCES: permission denied')
     const service = new ExternalAppService(locatorFor('C:\\VS Code\\Code.exe'), vi.fn(async () => true), vi.fn().mockRejectedValue(failure), vi.fn(), {})
 
-    await expect(service.openInVSCode(project('C:\\Projects\\One'))).rejects.toMatchObject({
-      app: 'vscode', target: 'C:\\VS Code\\Code.exe', cause: failure
+    const rejection = expect(service.openInVSCode(project('C:\\Projects\\One'))).rejects
+    await rejection.toMatchObject({
+      app: 'vscode', target: 'C:\\Projects\\One', cause: failure
     } satisfies Partial<ExternalAppLaunchError>)
+    // The IPC boundary serializes only `message`, so the message itself must carry the
+    // launcher executable and the underlying cause for the renderer notice to be actionable.
+    await rejection.toThrow('C:\\Projects\\One')
+    await rejection.toThrow('C:\\VS Code\\Code.exe')
+    await rejection.toThrow('EACCES: permission denied')
   })
 
   it('opens Explorer with the exact original path when Electron returns an empty result', async () => {
