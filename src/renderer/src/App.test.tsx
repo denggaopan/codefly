@@ -215,6 +215,64 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
   })
 
+  it('returns focus to the New session trigger after closing the launcher with its close button', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    const trigger = await screen.findByRole('button', { name: 'New session' })
+    await user.click(trigger)
+    await screen.findByRole('button', { name: 'PowerShell' })
+
+    await user.click(screen.getByRole('button', { name: 'Close launcher' }))
+
+    expect(screen.queryByRole('button', { name: 'PowerShell' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('returns focus to the New session trigger after closing the launcher with Escape', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    const trigger = await screen.findByRole('button', { name: 'New session' })
+    await user.click(trigger)
+    await screen.findByRole('button', { name: 'PowerShell' })
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('button', { name: 'PowerShell' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('creates a session by activating a launcher item with the keyboard and returns focus to the trigger', async () => {
+    const user = userEvent.setup()
+    const created: SessionRecord = {
+      id: 'session-kbd',
+      projectId: 'project-1',
+      kind: 'powershell',
+      title: 'New session (powershell)',
+      titleState: 'pending',
+      createdAt: '2026-08-20T00:03:00.000Z',
+      mode: 'ordinary',
+      launchPath: 'C:\\work\\demo-project',
+      status: 'running'
+    }
+    api.createSession.mockResolvedValueOnce(created)
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    const trigger = await screen.findByRole('button', { name: 'New session' })
+    await user.click(trigger)
+
+    const powershellButton = await screen.findByRole('button', { name: 'PowerShell' })
+    powershellButton.focus()
+    await user.keyboard('{Enter}')
+
+    expect(api.createSession).toHaveBeenCalledWith('project-1', 'powershell')
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
   it('shows Ctrl+T beside PowerShell in the launcher', async () => {
     const user = userEvent.setup()
     render(<App />)
@@ -378,5 +436,25 @@ describe('App', () => {
     await user.click(await screen.findByText(stoppedClaudeSession.title, { selector: 'span.session-title' }))
 
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+  })
+
+  it('applies destructive-state styling to the bypass warning', async () => {
+    const user = userEvent.setup()
+    api = createFakeApi(stateWith(runningClaudeSession), allAvailableCapabilities)
+    window.codefly = api
+    render(<App />)
+
+    await user.click(await screen.findByText(runningClaudeSession.title, { selector: 'span.session-title' }))
+
+    expect(await screen.findByRole('status')).toHaveClass('agent-bypass-status--destructive')
+  })
+
+  it('gives each open-session title-bar tab a title attribute matching its full title, for ellipsized long titles', async () => {
+    api = createFakeApi(stateWith(runningClaudeSession), allAvailableCapabilities)
+    window.codefly = api
+    render(<App />)
+
+    const tab = await screen.findByRole('tab', { name: runningClaudeSession.title })
+    expect(tab).toHaveAttribute('title', runningClaudeSession.title)
   })
 })

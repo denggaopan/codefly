@@ -330,4 +330,100 @@ describe('ProjectSidebar', () => {
     expect(button).toBeDisabled()
     expect(button).toHaveAttribute('title', 'Install VS Code or the code command.')
   })
+
+  it('also shows the disabled VS Code reason as visible text, not only a hover tooltip', () => {
+    seedStore(
+      { version: 1, projects: [project1], sessions: [] },
+      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail: 'Install VS Code or the code command.' } }
+    )
+    render(<ProjectSidebar />)
+
+    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
+    const hint = screen.getByText('Install VS Code or the code command.')
+    expect(hint).toBeVisible()
+    // The visible hint is programmatically associated with the button too, so screen
+    // reader users who tab to it (never having "hovered") still get the explanation.
+    expect(button).toHaveAttribute('aria-describedby', hint.id)
+  })
+
+  it('does not render a visible VS Code hint when the capability is available', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    expect(screen.queryByText(/install vs code/i)).not.toBeInTheDocument()
+  })
+
+  it('renders the bundled VS Code SVG asset (not the old inline placeholder) inside the action button', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
+    const icon = button.querySelector('img.icon-vscode') as HTMLImageElement | null
+    expect(icon).not.toBeNull()
+    expect(icon).toHaveAttribute('src')
+    // Decorative: the button's own aria-label is the accessible name, not the image.
+    expect(icon).toHaveAttribute('alt', '')
+  })
+
+  it('gives the session secondary label (worktree name / "Ordinary session") a title attribute for ellipsized text', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession, runningWorktreeSession] })
+    render(<ProjectSidebar />)
+
+    expect(screen.getByText('Ordinary session')).toHaveAttribute('title', 'Ordinary session')
+    expect(screen.getByText(runningWorktreeSession.worktreeName as string)).toHaveAttribute('title', runningWorktreeSession.worktreeName)
+  })
+
+  it('exposes an accessible name for every icon-only button in a project row', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    render(<ProjectSidebar />)
+
+    const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
+    const actions = row.querySelector('[data-project-actions]') as HTMLElement
+    for (const button of within(actions).getAllByRole('button')) {
+      const accessibleName = button.getAttribute('aria-label')
+      expect(accessibleName).toBeTruthy()
+    }
+
+    const deleteButton = screen.getByRole('button', { name: `Delete ${stoppedSession.title}` })
+    expect(deleteButton.getAttribute('aria-label')).toBeTruthy()
+  })
+
+  it('returns focus to the Delete button that opened the confirmation after Cancel', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    render(<ProjectSidebar />)
+
+    const deleteButton = screen.getByRole('button', { name: `Delete ${stoppedSession.title}` })
+    await user.click(deleteButton)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(deleteButton).toHaveFocus()
+  })
+
+  it('returns focus to the Delete button that opened the confirmation after Escape', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    render(<ProjectSidebar />)
+
+    const deleteButton = screen.getByRole('button', { name: `Delete ${stoppedSession.title}` })
+    await user.click(deleteButton)
+    await user.keyboard('{Escape}')
+
+    expect(deleteButton).toHaveFocus()
+  })
+
+  it('returns focus to the Delete button after a dirty-delete result leaves the session in place', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
+    api.deleteSession = vi.fn(async () => ({ status: 'dirty', changedFiles: 1 }) as DeleteSessionResult)
+    window.codefly = api
+    render(<ProjectSidebar />)
+
+    const deleteButton = screen.getByRole('button', { name: `Delete ${stoppedSession.title}` })
+    await user.click(deleteButton)
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+
+    await screen.findByText('Worktree has 1 changed files. Commit or discard them before deleting.')
+    expect(deleteButton).toHaveFocus()
+  })
 })

@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 import { useAppStore } from '../store/use-app-store'
 import SessionLauncher from './SessionLauncher'
 
@@ -21,6 +23,20 @@ export default function TitleBar() {
   const closeLauncher = useAppStore((state) => state.closeLauncher)
   const setActiveSession = useAppStore((state) => state.setActiveSession)
 
+  // Focus restoration: whichever action closes the launcher (the close button, Escape
+  // inside SessionLauncher, or a successful session creation collapsing it), keyboard and
+  // screen-reader focus should land back on the trigger that opened it rather than being
+  // dropped to <body>.
+  const plusButtonRef = useRef<HTMLButtonElement>(null)
+  const wasLauncherOpenRef = useRef(false)
+
+  useEffect(() => {
+    if (wasLauncherOpenRef.current && !launcherOpen) {
+      plusButtonRef.current?.focus()
+    }
+    wasLauncherOpenRef.current = launcherOpen
+  }, [launcherOpen])
+
   return (
     <header className="title-bar">
       <div className="title-bar-brand">CodeFly</div>
@@ -41,6 +57,7 @@ export default function TitleBar() {
       </div>
       <div className="title-bar-launcher">
         <button
+          ref={plusButtonRef}
           type="button"
           className="title-bar-plus"
           aria-label="New session"

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { SessionKind } from '../../../shared/contracts'
 import { useAppStore } from '../store/use-app-store'
@@ -33,6 +33,19 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   const createSession = useAppStore((state) => state.createSession)
   const closeLauncher = useAppStore((state) => state.closeLauncher)
   const [pending, setPending] = useState(false)
+
+  // Escape closes the launcher from the keyboard; TitleBar's focus-restoration effect
+  // (watching launcherOpen) then returns focus to the "New session" trigger.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeLauncher()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [closeLauncher])
 
   const availability: Record<SessionKind, { available: boolean; detail?: string }> = {
     powershell: { available: true },

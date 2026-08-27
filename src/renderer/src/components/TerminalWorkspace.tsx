@@ -19,6 +19,11 @@ type TerminalEntry = {
   lastRows: number
 }
 
+// Kept identical to the --font-mono value in styles.css: xterm renders to its own canvas,
+// so it cannot inherit the CSS custom property and needs the same Windows system font stack
+// spelled out here.
+const TERMINAL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
+
 const sessionKindLabel = (kind: SessionRecord['kind']): string => {
   switch (kind) {
     case 'powershell':
@@ -51,7 +56,9 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
           {session.title}
         </span>
         <span className="terminal-header-kind">{sessionKindLabel(session.kind)}</span>
-        <span className="terminal-header-status">{sessionStatusLabel(session)}</span>
+        <span className="terminal-header-status" data-status={session.status}>
+          {sessionStatusLabel(session)}
+        </span>
         {canRestart && (
           <button type="button" className="terminal-restart-button" onClick={onRestart}>
             Restart session
@@ -116,7 +123,7 @@ export default function TerminalWorkspace() {
   const ensureEntry = (sessionId: string, element: HTMLDivElement): void => {
     if (entriesRef.current.has(sessionId)) return
 
-    const terminal = new Terminal({ convertEol: true, cursorBlink: true })
+    const terminal = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: TERMINAL_FONT_FAMILY })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.open(element)

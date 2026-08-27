@@ -1,8 +1,45 @@
+/* ==========================================================================
+   Tokens
+   ========================================================================== */
+
 :root {
-  color: #e7edf5;
-  background: #11161d;
-  font-family: "Segoe UI", sans-serif;
+  /* Surfaces, from deepest to nearest the user */
+  --color-canvas: #0b0f14;
+  --color-panel: #11161d;
+  --color-panel-elevated: #1a212b;
+  --color-border: #262f3a;
+
+  /* Text */
+  --color-text: #e7edf5;
+  --color-text-muted: #8b98a9;
+
+  /* Accent + state tokens */
+  --color-accent-blue: #3b9eff;
+  --color-state-running: #3ecf8e;
+  --color-state-warning: #e0a940;
+  --color-state-destructive: #e5484d;
+
+  /* Fonts: both are Windows system fonts, never fetched over the network. Bahnschrift is
+     the application-chrome typeface; Cascadia Mono is used for terminal metadata and is
+     also handed to xterm's own `fontFamily` option (see TerminalWorkspace.tsx). */
+  --font-chrome: 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  /* Layout constants (approved structure) */
+  --title-bar-height: 46px;
+  --sidebar-width: 300px;
+  --sidebar-width-narrow: 250px;
+  --tab-width: 220px;
+  --tab-width-narrow: 150px;
+
+  color: var(--color-text);
+  background: var(--color-canvas);
+  font-family: var(--font-chrome);
 }
+
+/* ==========================================================================
+   Reset & base
+   ========================================================================== */
 
 * {
   box-sizing: border-box;
@@ -12,18 +49,16 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: radial-gradient(circle at top, #1e2a37, #11161d 60%);
+  color: var(--color-text);
+  /* Dark layered background: a flat canvas fill with a subtle radial blue highlight behind
+     the title bar/top-left, rather than a single flat color. */
+  background:
+    radial-gradient(ellipse 900px 500px at 20% -10%, rgba(59, 158, 255, 0.16), transparent 60%),
+    var(--color-canvas);
 }
 
 #root {
   min-height: 100vh;
-}
-
-.app-shell {
-  display: grid;
-  min-height: 100vh;
-  place-content: center;
-  padding: 2rem;
 }
 
 h1,
@@ -31,11 +66,778 @@ p {
   margin: 0;
 }
 
-h1 {
-  font-size: 2.25rem;
+button {
+  font-family: inherit;
+  color: inherit;
 }
 
-p {
-  margin-top: 0.5rem;
-  color: #9dacbf;
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent-blue);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   Motion: 180ms staggered reveal for the sidebar and terminal workspace only.
+   ========================================================================== */
+
+@keyframes codefly-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.project-sidebar,
+.terminal-workspace {
+  animation: codefly-reveal 180ms ease-out both;
+}
+
+.project-sidebar {
+  animation-delay: 0ms;
+}
+
+.terminal-workspace {
+  animation-delay: 90ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-sidebar,
+  .terminal-workspace {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ==========================================================================
+   Layout
+   ========================================================================== */
+
+.app-shell {
+  display: grid;
+  grid-template-rows: var(--title-bar-height) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-canvas);
+}
+
+/* ==========================================================================
+   Title bar
+   ========================================================================== */
+
+.title-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--title-bar-height);
+  padding: 0 12px;
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title-bar-brand {
+  flex: 0 0 auto;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text);
+}
+
+.title-bar-tabs {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.title-bar-tab {
+  flex: 0 1 auto;
+  max-width: var(--tab-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.title-bar-tab:hover {
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
+}
+
+.title-bar-tab[aria-selected='true'] {
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
+  border-color: var(--color-accent-blue);
+}
+
+.title-bar-launcher {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.title-bar-plus {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.title-bar-plus:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.title-bar-plus:not(:disabled):hover {
+  border-color: var(--color-accent-blue);
+}
+
+/* ==========================================================================
+   Project sidebar
+   ========================================================================== */
+
+.project-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-border);
+}
+
+.project-sidebar-header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.add-project-button {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.add-project-button:hover {
+  border-color: var(--color-accent-blue);
+}
+
+.session-search {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--color-panel);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.sidebar-notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-state-destructive);
+  border-radius: 6px;
+  background: rgba(229, 72, 77, 0.12);
+  color: var(--color-text);
+  font-size: 0.8rem;
+}
+
+.sidebar-notice button {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.project-groups {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.project-group {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 8px 10px;
+  border-left: 3px solid transparent;
+}
+
+.project-row[aria-current='true'] {
+  background: var(--color-panel-elevated);
+  border-left-color: var(--color-accent-blue);
+}
+
+.project-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.project-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.project-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.project-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.project-actions button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.project-actions button:not(:disabled):hover {
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
+}
+
+.project-actions button:disabled {
+  opacity: 0.4;
+}
+
+.icon {
+  display: block;
+}
+
+.icon-chevron {
+  transition: transform 120ms ease-out;
+}
+
+.icon-chevron--expanded {
+  transform: rotate(180deg);
+}
+
+.project-action-hint {
+  margin: 0 12px 8px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: rgba(224, 169, 64, 0.12);
+  color: var(--color-state-warning);
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.session-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+}
+
+.session-row-content {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+  padding: 6px 6px 6px 28px;
+  border: none;
+  border-left: 3px solid transparent;
+  background: transparent;
+  text-align: left;
+  font-size: 0.82rem;
+}
+
+.session-row-content:hover {
+  background: var(--color-panel-elevated);
+}
+
+.session-row-content[aria-current='true'] {
+  background: var(--color-panel-elevated);
+  border-left-color: var(--color-accent-blue);
+}
+
+.session-kind-icon {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+}
+
+.session-title {
+  grid-column: 2;
+  grid-row: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.session-secondary {
+  grid-column: 2;
+  grid-row: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.session-status {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-panel-elevated);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.session-status[data-status='running'] {
+  background: rgba(62, 207, 142, 0.16);
+  color: var(--color-state-running);
+}
+
+.session-status[data-status='creating'] {
+  background: rgba(59, 158, 255, 0.16);
+  color: var(--color-accent-blue);
+}
+
+.session-status[data-status='missing'] {
+  background: rgba(224, 169, 64, 0.16);
+  color: var(--color-state-warning);
+}
+
+.session-status[data-status='error'] {
+  background: rgba(229, 72, 77, 0.16);
+  color: var(--color-state-destructive);
+}
+
+.session-delete {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.session-delete:hover {
+  background: rgba(229, 72, 77, 0.16);
+  color: var(--color-state-destructive);
+}
+
+/* ==========================================================================
+   Session launcher
+   ========================================================================== */
+
+.session-launcher {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 220px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-panel-elevated);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.session-launcher-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.session-launcher-close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.session-launcher-close:hover {
+  color: var(--color-text);
+}
+
+.session-launcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+}
+
+.session-launcher-item button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.session-launcher-item button:not(:disabled):hover {
+  background: var(--color-panel);
+}
+
+.session-launcher-item button:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+.session-launcher-shortcut {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.session-launcher-detail {
+  margin: 0 10px 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(224, 169, 64, 0.12);
+  color: var(--color-state-warning);
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+/* ==========================================================================
+   Terminal workspace
+   ========================================================================== */
+
+.terminal-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.terminal-empty-state {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+}
+
+.terminal-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.terminal-header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel);
+  font-family: var(--font-mono);
+}
+
+.terminal-header-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.terminal-header-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.terminal-header-kind {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.terminal-header-status {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-panel-elevated);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.terminal-header-status[data-status='running'] {
+  background: rgba(62, 207, 142, 0.16);
+  color: var(--color-state-running);
+}
+
+.terminal-header-status[data-status='creating'] {
+  background: rgba(59, 158, 255, 0.16);
+  color: var(--color-accent-blue);
+}
+
+.terminal-header-status[data-status='missing'] {
+  background: rgba(224, 169, 64, 0.16);
+  color: var(--color-state-warning);
+}
+
+.terminal-header-status[data-status='error'] {
+  background: rgba(229, 72, 77, 0.16);
+  color: var(--color-state-destructive);
+}
+
+.terminal-restart-button {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 3px 10px;
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
+  font-size: 0.72rem;
+}
+
+.terminal-restart-button:hover {
+  border-color: var(--color-accent-blue);
+}
+
+.terminal-header-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.terminal-header-bypass {
+  margin-top: 2px;
+}
+
+/* The xterm host needs a real, non-auto height for FitAddon.fit()/proposeDimensions() to
+   compute anything other than a degenerate size: it fills the remaining space below the
+   header inside its (already height-constrained) .terminal-pane ancestor. */
+.terminal-instance-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 10px;
+  background: var(--color-canvas);
+}
+
+.terminal-instance-host :is(.xterm, .xterm-viewport, .xterm-screen) {
+  height: 100%;
+}
+
+/* ==========================================================================
+   Agent bypass status (fixed bottom strip)
+   ========================================================================== */
+
+.agent-bypass-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(229, 72, 77, 0.16);
+  color: var(--color-text);
+  font-size: 0.8rem;
+}
+
+.agent-bypass-status--destructive {
+  border-top: 1px solid var(--color-state-destructive);
+}
+
+.agent-bypass-icon {
+  flex: 0 0 auto;
+  color: var(--color-state-destructive);
+}
+
+.agent-bypass-status-text {
+  flex: 1 1 auto;
+}
+
+.terminal-header-bypass.agent-bypass-status {
+  border-top: none;
+  border-radius: 6px;
+}
+
+/* ==========================================================================
+   Confirm dialog
+   ========================================================================== */
+
+.confirm-dialog-backdrop {
+  /* position:fixed escapes the sidebar's overflow-y:auto clipping (it establishes no
+     transform/filter/contain context), so the dialog always centers on the full window
+     even though ProjectSidebar renders it without a portal. */
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 6, 9, 0.55);
+}
+
+.confirm-dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-panel-elevated);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.confirm-dialog-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.confirm-dialog-description {
+  margin: 0 0 16px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-dialog-cancel,
+.confirm-dialog-confirm {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  background: var(--color-panel);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.confirm-dialog-confirm--destructive {
+  border-color: var(--color-state-destructive);
+  background: var(--color-state-destructive);
+  color: #fff;
+}
+
+/* ==========================================================================
+   Responsive (Windows desktop only — no mobile navigation mode)
+   ========================================================================== */
+
+@media (max-width: 999px) {
+  :root {
+    --sidebar-width: var(--sidebar-width-narrow);
+    --tab-width: var(--tab-width-narrow);
+  }
+
+  .session-launcher {
+    width: 190px;
+  }
 }

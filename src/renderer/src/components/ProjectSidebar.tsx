@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
+import vscodeIconUrl from '../assets/vscode.svg'
 import { isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import ConfirmDialog from './ConfirmDialog'
@@ -20,13 +21,7 @@ const sessionKindGlyph = (kind: SessionRecord['kind']): string => {
   }
 }
 
-function VSCodeGlyph() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" className="icon icon-vscode">
-      <path d="M17 3l4 2v14l-4 2-9-8 9-8z" fill="currentColor" />
-    </svg>
-  )
-}
+const vscodeHintId = (projectId: string): string => `vscode-hint-${projectId}`
 
 function FolderGlyph() {
   return (
@@ -54,7 +49,7 @@ type SessionRowProps = {
   session: SessionRecord
   active: boolean
   onActivate: () => void
-  onRequestDelete: () => void
+  onRequestDelete: (trigger: HTMLButtonElement) => void
 }
 
 function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRowProps) {
@@ -74,8 +69,12 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
         <span className="session-title" title={session.title}>
           {session.title}
         </span>
-        <span className="session-secondary">{secondary}</span>
-        <span className="session-status">{sessionStatusLabel(session)}</span>
+        <span className="session-secondary" title={secondary}>
+          {secondary}
+        </span>
+        <span className="session-status" data-status={session.status}>
+          {sessionStatusLabel(session)}
+        </span>
       </button>
       <button
         type="button"
@@ -83,7 +82,7 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
         aria-label={`Delete ${session.title}`}
         onClick={(event) => {
           event.stopPropagation()
-          onRequestDelete()
+          onRequestDelete(event.currentTarget)
         }}
       >
         ×
@@ -120,6 +119,12 @@ export default function ProjectSidebar() {
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<ReadonlySet<string>>(() => new Set())
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
 
+  // Focus restoration for the delete confirmation: remembers whichever "Delete" button
+  // opened it so focus can return there once the dialog closes (Cancel, Escape, or a
+  // completed/failed delete that leaves the row in place), instead of being dropped to
+  // <body>.
+  const pendingDeleteTriggerRef = useRef<HTMLButtonElement | null>(null)
+
   const toggleExpanded = (projectId: string): void => {
     setCollapsedProjectIds((previous) => {
       const next = new Set(previous)
@@ -137,11 +142,27 @@ export default function ProjectSidebar() {
     }
   }
 
+  const handleRequestDelete = (session: SessionRecord, trigger: HTMLButtonElement): void => {
+    pendingDeleteTriggerRef.current = trigger
+    setPendingDelete(session)
+  }
+
+  const restoreDeleteTriggerFocus = (): void => {
+    pendingDeleteTriggerRef.current?.focus()
+    pendingDeleteTriggerRef.current = null
+  }
+
   const handleConfirmDelete = async (): Promise<void> => {
     if (!pendingDelete) return
     const session = pendingDelete
     setPendingDelete(null)
     await deleteSession(session.id)
+    restoreDeleteTriggerFocus()
+  }
+
+  const handleCancelDelete = (): void => {
+    setPendingDelete(null)
+    restoreDeleteTriggerFocus()
   }
 
   const normalizedQuery = searchQuery.trim().toLowerCase()
@@ -203,13 +224,14 @@ export default function ProjectSidebar() {
                     type="button"
                     aria-label="Open project in VS Code"
                     title={capabilities.vscode.available ? undefined : capabilities.vscode.detail}
+                    aria-describedby={capabilities.vscode.available ? undefined : vscodeHintId(project.id)}
                     disabled={!capabilities.vscode.available}
                     onClick={(event) => {
                       event.stopPropagation()
                       void openProjectInVSCode(project.id)
                     }}
                   >
-                    <VSCodeGlyph />
+                    <img src={vscodeIconUrl} alt="" width={16} height={16} className="icon icon-vscode" />
                   </button>
                   <button
                     type="button"
@@ -235,6 +257,18 @@ export default function ProjectSidebar() {
                 </div>
               </div>
 
+              {/*
+                Visible (not hover-only) explanation for a disabled tool: the `title`
+                attribute above still gives mouse users a native tooltip, but an
+                unauthenticated/missing VS Code install needs to be discoverable without
+                hovering, matching SessionLauncher's visible capability-detail text.
+              */}
+              {!capabilities.vscode.available && (
+                <p className="project-action-hint" id={vscodeHintId(project.id)}>
+                  {capabilities.vscode.detail}
+                </p>
+              )}
+
               {expanded && (
                 <ul className="session-list">
                   {visibleSessions.map((session) => (
@@ -243,7 +277,7 @@ export default function ProjectSidebar() {
                       session={session}
                       active={session.id === activeSessionId}
                       onActivate={() => handleRowActivate(session)}
-                      onRequestDelete={() => setPendingDelete(session)}
+                      onRequestDelete={(trigger) => handleRequestDelete(session, trigger)}
                     />
                   ))}
                 </ul>
@@ -260,7 +294,7 @@ export default function ProjectSidebar() {
         confirmLabel="Delete"
         destructive
         onConfirm={() => void handleConfirmDelete()}
-        onCancel={() => setPendingDelete(null)}
+        onCancel={handleCancelDelete}
       />
     </aside>
   )

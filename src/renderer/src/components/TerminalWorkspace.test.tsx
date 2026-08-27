@@ -449,6 +449,32 @@ describe('TerminalWorkspace', () => {
     expect(await screen.findByText(BYPASS_WARNING_TEXT)).toBeInTheDocument()
   })
 
+  it('applies destructive-state styling to the terminal header bypass banner', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    const banner = await screen.findByText(BYPASS_WARNING_TEXT)
+    expect(banner.closest('.agent-bypass-status')).toHaveClass('agent-bypass-status--destructive')
+  })
+
+  it('configures xterm with the Cascadia Mono terminal font', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    expect(FakeTerminal.instances[0].options.fontFamily).toContain('Cascadia Mono')
+  })
+
+  it('gives the terminal header status a data-status attribute matching the shared status pill styling', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText('Running')).toHaveAttribute('data-status', 'running')
+  })
+
   it('hides the bypass warning text in a running PowerShell header', async () => {
     seedStore(runningPowerShellSession)
     useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
