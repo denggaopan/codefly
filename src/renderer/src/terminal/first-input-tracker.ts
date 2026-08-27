@@ -1,6 +1,6 @@
 export type FirstInputResult = { submitted?: string; passthrough: string }
 
-type EscapeState = 'normal' | 'escape' | 'csi' | 'ss3' | 'osc' | 'osc-escape' | 'string' | 'string-escape'
+type EscapeState = 'normal' | 'escape' | 'escape-intermediate' | 'csi' | 'ss3' | 'osc' | 'osc-escape' | 'string' | 'string-escape'
 
 export class FirstInputTracker {
   private captured = ''
@@ -90,7 +90,16 @@ export class FirstInputTracker {
       else if (character === ']') this.escapeState = 'osc'
       else if (character === 'O') this.escapeState = 'ss3'
       else if (['P', 'X', '^', '_'].includes(character)) this.escapeState = 'string'
-      else this.escapeState = 'normal'
+      else {
+        const codePoint = character.codePointAt(0) ?? 0
+        this.escapeState = codePoint >= 0x20 && codePoint <= 0x2f ? 'escape-intermediate' : 'normal'
+      }
+      return true
+    }
+
+    if (this.escapeState === 'escape-intermediate') {
+      const codePoint = character.codePointAt(0) ?? 0
+      if (codePoint < 0x20 || codePoint > 0x2f) this.escapeState = 'normal'
       return true
     }
 

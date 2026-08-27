@@ -155,7 +155,7 @@ const productionAdapters = (): TitleAdapterMap => ({
 const removeAnsiAndControls = (value: string): string => value
   .replace(/\x1B\][^\x07]*(?:\x07|\x1B\\)/g, '')
   .replace(/(?:\x1B\[|\u009B)[0-?]*[ -/]*[@-~]/g, '')
-  .replace(/\x1B[@-_]/g, '')
+  .replace(/\x1B[\x20-\x2F]*[\x30-\x7E]/g, '')
   .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
 
 const unwrapTitle = (value: string): string => {

@@ -27,6 +27,13 @@ describe('FirstInputTracker', () => {
     expect(tracker.push('\u001b\\b\r')).toEqual({ passthrough: '\u001b\\b\r', submitted: 'ab' })
   })
 
+  it('ignores an ESC sequence with an intermediate byte across chunks', () => {
+    const tracker = new FirstInputTracker()
+
+    expect(tracker.push('a\u001b(')).toEqual({ passthrough: 'a\u001b(' })
+    expect(tracker.push('Bb\r')).toEqual({ passthrough: 'Bb\r', submitted: 'ab' })
+  })
+
   it('captures bracketed paste content but not its ANSI markers', () => {
     const tracker = new FirstInputTracker()
 

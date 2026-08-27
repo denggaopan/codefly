@@ -37,6 +37,12 @@ describe('TitleService', () => {
     await expect(service.generate('session-1', kind, 'ignored input')).resolves.toBe(expected)
   })
 
+  it('strips ESC sequences containing intermediate bytes from AI output', async () => {
+    const service = serviceWith({ claude: adapterFor(vi.fn(async () => '\u001b(BTitle\u001b)0')) })
+
+    await expect(service.generate('session-1', 'claude', 'fallback')).resolves.toBe('Title')
+  })
+
   it('limits a title to 24 Unicode code points', async () => {
     const service = serviceWith({ claude: adapterFor(vi.fn(async () => `${'😀'.repeat(23)}中文`)) })
 
