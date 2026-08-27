@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from 'electron'
+import { app, BrowserWindow, Menu, nativeTheme } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -21,12 +21,19 @@ export function createMainWindow(): BrowserWindow {
   // that still attaches a default menu to the window.
   Menu.setApplicationMenu(null)
 
+  // CodeFly's UI is dark-only. Forcing the dark native theme makes Windows render the OS
+  // window title bar (and native scrollbars/dialogs) dark instead of following a light
+  // system theme; backgroundColor keeps the first painted frame dark instead of flashing
+  // white before the renderer loads. #0b0f14 mirrors --color-canvas in styles.css.
+  nativeTheme.themeSource = 'dark'
+
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
     minWidth: 900,
     minHeight: 600,
     autoHideMenuBar: true,
+    backgroundColor: '#0b0f14',
     webPreferences: {
       preload: join(currentDirectory, '../preload/index.js'),
       contextIsolation: true,

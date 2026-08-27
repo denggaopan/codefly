@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockApp, browserWindow, fakeWindow, mockMenu } = vi.hoisted(() => {
+const { mockApp, browserWindow, fakeWindow, mockMenu, mockNativeTheme } = vi.hoisted(() => {
   const fakeWindow = {
     loadURL: vi.fn(async () => undefined),
     loadFile: vi.fn(async () => undefined),
@@ -12,11 +12,12 @@ const { mockApp, browserWindow, fakeWindow, mockMenu } = vi.hoisted(() => {
       return fakeWindow
     }),
     fakeWindow,
-    mockMenu: { setApplicationMenu: vi.fn() }
+    mockMenu: { setApplicationMenu: vi.fn() },
+    mockNativeTheme: { themeSource: 'system' as string }
   }
 })
 
-vi.mock('electron', () => ({ app: mockApp, BrowserWindow: browserWindow, Menu: mockMenu }))
+vi.mock('electron', () => ({ app: mockApp, BrowserWindow: browserWindow, Menu: mockMenu, nativeTheme: mockNativeTheme }))
 
 import { createMainWindow } from './window'
 
@@ -81,5 +82,15 @@ describe('createMainWindow', () => {
     expect(mockMenu.setApplicationMenu).toHaveBeenCalledWith(null)
     const [options] = browserWindow.mock.calls[0] as unknown as [{ autoHideMenuBar?: boolean }]
     expect(options.autoHideMenuBar).toBe(true)
+  })
+
+  it('forces the dark native theme so the OS window title bar renders dark, with a dark startup background', () => {
+    mockNativeTheme.themeSource = 'system'
+
+    createMainWindow()
+
+    expect(mockNativeTheme.themeSource).toBe('dark')
+    const [options] = browserWindow.mock.calls[0] as unknown as [{ backgroundColor?: string }]
+    expect(options.backgroundColor).toBe('#0b0f14')
   })
 })
