@@ -40,7 +40,8 @@ export class ExternalAppLaunchError extends Error {
   }
 }
 
-export type SpawnDetached = (file: string, args: readonly string[]) => Promise<void>
+export type SpawnDetachedOptions = { windowsVerbatimArguments?: boolean }
+export type SpawnDetached = (file: string, args: readonly string[], options?: SpawnDetachedOptions) => Promise<void>
 export type OpenPath = (path: string) => Promise<string>
 export type PathExists = (path: string) => Promise<boolean>
 
@@ -55,7 +56,7 @@ export type SpawnedProcess = {
 export type ProcessSpawner = (
   file: string,
   args: readonly string[],
-  options: { detached: true; stdio: 'ignore'; windowsHide: true; shell: false }
+  options: { detached: true; stdio: 'ignore'; windowsHide: true; shell: false; windowsVerbatimArguments?: boolean }
 ) => SpawnedProcess
 
 const defaultPathExists: PathExists = async (candidate) => {
@@ -70,13 +71,14 @@ const defaultPathExists: PathExists = async (candidate) => {
 const defaultOpenPath: OpenPath = (candidate) => shell.openPath(candidate)
 
 export const createSpawnDetached = (processSpawner: ProcessSpawner = spawn): SpawnDetached =>
-  (file, args) => new Promise<void>((resolve, reject) => {
+  (file, args, options) => new Promise<void>((resolve, reject) => {
     try {
       const child = processSpawner(file, args, {
         detached: true,
         stdio: 'ignore',
         windowsHide: true,
-        shell: false
+        shell: false,
+        ...(options?.windowsVerbatimArguments !== undefined ? { windowsVerbatimArguments: options.windowsVerbatimArguments } : {})
       })
       let settled = false
       const cleanup = (): void => {
@@ -133,7 +135,21 @@ export class ExternalAppService {
     try {
       await this.spawnDetached(executable, [project.path])
     } catch (cause) {
-      throw new ExternalAppLaunchError('vscode', project.path, cause, executable)
+      // Directly CreateProcess-ing a user-profile executable can be denied (EACCES) by
+      // security policy on managed machines for some launch ancestries (observed when
+      // CodeFly itself was started from Explorer/the Start Menu), while the same executable
+      // launches fine through the shell's `start` chain. Retry through ComSpec before
+      // giving up; if that also fails, report the ORIGINAL direct-spawn cause.
+      // Quoting note: Windows paths cannot contain `"`, and inside cmd quotes the remaining
+      // metacharacters (&, ^, spaces, Unicode) are literal, so plain quoting is sufficient.
+      try {
+        const comSpec = this.environment.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe'
+        await this.spawnDetached(comSpec, ['/d', '/s', '/c', `"start "" "${executable}" "${project.path}""`], {
+          windowsVerbatimArguments: true
+        })
+      } catch {
+        throw new ExternalAppLaunchError('vscode', project.path, cause, executable)
+      }
     }
   }
 

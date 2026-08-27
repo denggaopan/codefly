@@ -137,6 +137,47 @@ describe('ExternalAppService', () => {
     expect(spawnDetached).not.toHaveBeenCalled()
   })
 
+  it('falls back to a ComSpec start chain when the direct VS Code spawn is denied, quoting the launcher and project', async () => {
+    const denied = Object.assign(new Error('spawn EACCES'), { code: 'EACCES' })
+    const spawnDetached = vi.fn().mockRejectedValueOnce(denied).mockResolvedValueOnce(undefined)
+    const service = new ExternalAppService(
+      locatorFor('C:\\VS Code\\Code.exe'),
+      vi.fn(async () => true),
+      spawnDetached,
+      vi.fn(),
+      { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }
+    )
+
+    await service.openInVSCode(project('C:\\Projects\\My App\\中文'))
+
+    expect(spawnDetached).toHaveBeenNthCalledWith(1, 'C:\\VS Code\\Code.exe', ['C:\\Projects\\My App\\中文'])
+    expect(spawnDetached).toHaveBeenNthCalledWith(
+      2,
+      'C:\\Windows\\System32\\cmd.exe',
+      ['/d', '/s', '/c', '"start "" "C:\\VS Code\\Code.exe" "C:\\Projects\\My App\\中文""'],
+      { windowsVerbatimArguments: true }
+    )
+  })
+
+  it('throws with the original direct-spawn cause when the start-chain fallback also fails', async () => {
+    const denied = Object.assign(new Error('spawn EACCES'), { code: 'EACCES' })
+    const spawnDetached = vi.fn().mockRejectedValue(denied)
+    const service = new ExternalAppService(
+      locatorFor('C:\\VS Code\\Code.exe'),
+      vi.fn(async () => true),
+      spawnDetached,
+      vi.fn(),
+      { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }
+    )
+
+    await expect(service.openInVSCode(project('C:\\Projects\\One'))).rejects.toMatchObject({
+      app: 'vscode',
+      target: 'C:\\Projects\\One',
+      cause: denied
+    } satisfies Partial<ExternalAppLaunchError>)
+    expect(spawnDetached).toHaveBeenCalledTimes(2)
+  })
+
   it('wraps VS Code spawn failures with the project target, launcher path, and cause message', async () => {
     const failure = new Error('EACCES: permission denied')
     const service = new ExternalAppService(locatorFor('C:\\VS Code\\Code.exe'), vi.fn(async () => true), vi.fn().mockRejectedValue(failure), vi.fn(), {})

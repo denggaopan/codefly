@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockApp, browserWindow, fakeWindow } = vi.hoisted(() => {
+const { mockApp, browserWindow, fakeWindow, mockMenu } = vi.hoisted(() => {
   const fakeWindow = {
     loadURL: vi.fn(async () => undefined),
     loadFile: vi.fn(async () => undefined),
@@ -11,11 +11,12 @@ const { mockApp, browserWindow, fakeWindow } = vi.hoisted(() => {
     browserWindow: vi.fn(function BrowserWindowMock() {
       return fakeWindow
     }),
-    fakeWindow
+    fakeWindow,
+    mockMenu: { setApplicationMenu: vi.fn() }
   }
 })
 
-vi.mock('electron', () => ({ app: mockApp, BrowserWindow: browserWindow }))
+vi.mock('electron', () => ({ app: mockApp, BrowserWindow: browserWindow, Menu: mockMenu }))
 
 import { createMainWindow } from './window'
 
@@ -72,5 +73,13 @@ describe('createMainWindow', () => {
     expect(fakeWindow.webContents.setWindowOpenHandler).toHaveBeenCalledOnce()
     const handler = fakeWindow.webContents.setWindowOpenHandler.mock.calls[0]![0] as () => { action: string }
     expect(handler()).toEqual({ action: 'deny' })
+  })
+
+  it('removes the application menu bar entirely', () => {
+    createMainWindow()
+
+    expect(mockMenu.setApplicationMenu).toHaveBeenCalledWith(null)
+    const [options] = browserWindow.mock.calls[0] as unknown as [{ autoHideMenuBar?: boolean }]
+    expect(options.autoHideMenuBar).toBe(true)
   })
 })
