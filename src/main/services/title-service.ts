@@ -52,6 +52,7 @@ export type TitleProcessSpawner = (
   options: {
     cwd: string
     windowsHide: true
+    windowsVerbatimArguments?: true
     shell: false
     stdio: ['pipe', 'pipe', 'ignore']
   }
@@ -71,7 +72,7 @@ export type TitleAdapterHostOptions = {
   candidateExists?: CandidateExists
 }
 
-type TitleLaunchSpec = { file: string; args: readonly string[] }
+type TitleLaunchSpec = { file: string; args: readonly string[]; windowsVerbatimArguments?: true }
 
 const defaultCandidateExists: CandidateExists = async (candidate) => {
   try {
@@ -84,8 +85,7 @@ const defaultCandidateExists: CandidateExists = async (candidate) => {
 
 const commandForShim = (shim: string, logicalArgs: readonly string[]): string => {
   if (/["\u0000-\u001F\u007F]/u.test(shim)) throw new Error('Resolved command shim contains unsafe characters.')
-  const quotedShim = `"${shim.replace(/%/g, '^%')}"`
-  return [quotedShim, ...logicalArgs].join(' ')
+  return `""${shim.replace(/%/g, '^%')}" ${logicalArgs.join(' ')}"`
 }
 
 const windowsLaunchSpec = async (
@@ -117,7 +117,8 @@ const windowsLaunchSpec = async (
   if (!commandShim) throw new Error('Resolved Windows agent command is not directly executable and has no command shim.')
   return {
     file: environment.ComSpec ?? environment.COMSPEC ?? 'cmd.exe',
-    args: ['/d', '/s', '/c', commandForShim(commandShim, logicalArgs)]
+    args: ['/d', '/s', '/c', commandForShim(commandShim, logicalArgs)],
+    windowsVerbatimArguments: true
   }
 }
 
@@ -148,6 +149,7 @@ export const createCliTitleAdapter = (
         child = processSpawner(launch.file, launch.args, {
           cwd: options.cwd,
           windowsHide: true,
+          ...(launch.windowsVerbatimArguments ? { windowsVerbatimArguments: true as const } : {}),
           shell: false,
           stdio: ['pipe', 'pipe', 'ignore']
         })

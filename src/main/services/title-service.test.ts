@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -225,9 +227,10 @@ describe('createCliTitleAdapter', () => {
     child.emit('close', 0, null)
 
     await expect(pending).resolves.toBe('Hosted title')
-    expect(spawn).toHaveBeenCalledWith(comspec, ['/d', '/s', '/c', `"${shim}" ${logicalArgs.join(' ')}`], {
+    expect(spawn).toHaveBeenCalledWith(comspec, ['/d', '/s', '/c', `""${shim}" ${logicalArgs.join(' ')}"`], {
       cwd: 'C:\\Data\\title-generator',
       windowsHide: true,
+      windowsVerbatimArguments: true,
       shell: false,
       stdio: ['pipe', 'pipe', 'ignore']
     })
@@ -259,7 +262,11 @@ describe('createCliTitleAdapter', () => {
 
     await expect(pending).resolves.toBe('')
     expect(candidateExists.mock.calls).toEqual([ [`${resolved}.exe`], [commandShim] ])
-    expect(spawn).toHaveBeenCalledWith('cmd.exe', ['/d', '/s', '/c', `"${commandShim}" --print`], expect.objectContaining({ shell: false }))
+    expect(spawn).toHaveBeenCalledWith(
+      'cmd.exe',
+      ['/d', '/s', '/c', `""${commandShim}" --print"`],
+      expect.objectContaining({ shell: false, windowsVerbatimArguments: true })
+    )
   })
 
   it('selects an existing sibling .bat after .exe and .cmd for an extensionless result', async () => {
@@ -292,8 +299,8 @@ describe('createCliTitleAdapter', () => {
     ])
     expect(spawn).toHaveBeenCalledWith(
       'C:\\Windows\\cmd.exe',
-      ['/d', '/s', '/c', `"${batchShim}" --print`],
-      expect.objectContaining({ shell: false })
+      ['/d', '/s', '/c', `""${batchShim}" --print"`],
+      expect.objectContaining({ shell: false, windowsVerbatimArguments: true })
     )
     expect(child.stdin.end).toHaveBeenCalledWith(prompt)
   })
@@ -408,5 +415,48 @@ describe('createCliTitleAdapter', () => {
 
     await expect(pending).rejects.toThrow(/cancelled/i)
     expect(child.kill).toHaveBeenCalledOnce()
+  })
+})
+
+describe.skipIf(process.platform !== 'win32')('createCliTitleAdapter Windows integration', () => {
+  it.each([
+    ['claude' as const, 'cmd', '--print'],
+    ['codex' as const, 'bat', 'exec --skip-git-repo-check -']
+  ])('executes %s through a real spaced .%s shim', async (kind, extension, expectedArgs) => {
+    const directory = await mkdtemp(join(tmpdir(), 'codefly title shim '))
+    const shim = join(directory, `${kind}.${extension}`)
+    const argsFile = join(directory, 'received args.txt')
+    const stdinFile = join(directory, 'received stdin.txt')
+    const stdinRecorder = join(directory, 'record stdin.cjs')
+    const prompt = 'prompt & echo stays on stdin'
+    const script = [
+      '@echo off',
+      `> "${argsFile}" echo %*`,
+      `"${process.execPath}" "${stdinRecorder}" "${stdinFile}"`,
+      'echo Real integration title',
+      ''
+    ].join('\r\n')
+
+    try {
+      await writeFile(shim, script, 'utf8')
+      await writeFile(stdinRecorder, "process.stdin.pipe(require('node:fs').createWriteStream(process.argv[2]))\n", 'utf8')
+      const adapter = createCliTitleAdapter(kind, { resolveAgent: vi.fn(async () => shim) })
+
+      const output = await adapter.generate(prompt, {
+        cwd: directory,
+        signal: new AbortController().signal,
+        maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+      })
+
+      expect(output).toContain('Real integration title')
+      const receivedArgs = (await readFile(argsFile, 'utf8')).trim()
+      expect(receivedArgs).toBe(expectedArgs)
+      expect(receivedArgs).not.toContain('prompt')
+      expect(receivedArgs).not.toContain('--dangerously-skip-permissions')
+      expect(receivedArgs).not.toContain('--dangerously-bypass-approvals-and-sandbox')
+      expect(await readFile(stdinFile, 'utf8')).toBe(prompt)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })
