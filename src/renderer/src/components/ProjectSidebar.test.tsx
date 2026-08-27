@@ -114,7 +114,7 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
   })
 
-  it('orders project row actions as VS Code, folder, then expand control', () => {
+  it('orders project row actions as New session, VS Code, folder, then expand control', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
@@ -123,7 +123,7 @@ describe('ProjectSidebar', () => {
     const buttons = within(actions).getAllByRole('button')
     const names = buttons.map((button) => button.getAttribute('aria-label'))
 
-    expect(names).toEqual(['Open project in VS Code', 'Open project folder', expect.stringMatching(/sessions/i)])
+    expect(names).toEqual(['New session', 'Open project in VS Code', 'Open project folder', expect.stringMatching(/sessions/i)])
   })
 
   it('does not put the project-row label or session-row label inside a role="button" ancestor', () => {

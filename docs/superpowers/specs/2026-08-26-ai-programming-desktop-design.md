@@ -41,10 +41,10 @@ The first release uses Electron, React, TypeScript, xterm.js, and node-pty. Clau
 
 The application uses a dark two-column layout:
 
-- The title bar contains the CodeFly identity, open session tabs, and a plus button.
+- The title bar contains the CodeFly identity. (Revised 2026-08-27: open-session tabs and the global plus button were removed; sessions are switched via the sidebar's session rows.)
 - The left sidebar contains Add Project, search, project groups, and their sessions.
 - The main area contains one xterm.js terminal for the active session.
-- The plus button opens a launcher for PowerShell, Command Prompt, Claude, and Codex.
+- Each project row's plus button opens a launcher for PowerShell, Command Prompt, Claude, and Codex in that project. (Revised 2026-08-27: moved from the title bar onto the project rows.)
 - A compact warning badge in the active session's terminal header discloses when a Claude or Codex session is running with permission and sandbox bypass enabled. (Revised 2026-08-27: the original persistent bottom status strip was removed as too intrusive.)
 
 The default window size is 1180 by 760 pixels, with a minimum size of 900 by 600 pixels. The sidebar remains fixed-width while the terminal fills the remaining space. Long titles and paths use ellipsis and expose their full value in a tooltip.

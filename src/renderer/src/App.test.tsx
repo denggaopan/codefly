@@ -157,7 +157,7 @@ describe('App', () => {
 
     expect(await screen.findByText(project1.name)).toBeInTheDocument()
     expect(await screen.findByText(stoppedPowerShellSession.title, { selector: 'span.session-title' })).toBeInTheDocument()
-    // Running sessions also get a title-bar tab, so this asserts the sidebar row specifically.
+    // Assert the sidebar row specifically via its span.session-title selector.
     expect(await screen.findByText(runningClaudeSession.title, { selector: 'span.session-title' })).toBeInTheDocument()
   })
 
@@ -465,12 +465,46 @@ describe('App', () => {
     expect(document.querySelector('.agent-bypass-status')).toBeNull()
   })
 
-  it('gives each open-session title-bar tab a title attribute matching its full title, for ellipsized long titles', async () => {
+  it('renders no session tabs in the title bar', async () => {
     api = createFakeApi(stateWith(runningClaudeSession), allAvailableCapabilities)
     window.codefly = api
     render(<App />)
 
-    const tab = await screen.findByRole('tab', { name: runningClaudeSession.title })
-    expect(tab).toHaveAttribute('title', runningClaudeSession.title)
+    await screen.findByText(runningClaudeSession.title, { selector: 'span.session-title' })
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+    expect(document.querySelector('.title-bar-tabs')).toBeNull()
+  })
+
+  it('creates a session in the project whose row-level New session button was clicked', async () => {
+    const user = userEvent.setup()
+    const project2: ProjectRecord = {
+      id: 'project-2',
+      name: 'second-project',
+      path: 'C:\\work\\second-project',
+      createdAt: '2026-08-21T00:00:00.000Z'
+    }
+    api = createFakeApi({ version: 1, projects: [project1, project2], sessions: [] }, allAvailableCapabilities)
+    const created: SessionRecord = {
+      id: 'session-p2',
+      projectId: 'project-2',
+      kind: 'powershell',
+      title: 'New PowerShell session',
+      titleState: 'pending',
+      createdAt: '2026-08-21T00:01:00.000Z',
+      mode: 'ordinary',
+      launchPath: 'C:\\work\\second-project',
+      status: 'running'
+    }
+    api.createSession.mockResolvedValueOnce(created)
+    window.codefly = api
+    render(<App />)
+
+    await screen.findByText(project2.name)
+    const triggers = await screen.findAllByRole('button', { name: 'New session' })
+    expect(triggers).toHaveLength(2)
+    await user.click(triggers[1])
+    await user.click(await screen.findByRole('button', { name: 'PowerShell' }))
+
+    expect(api.createSession).toHaveBeenCalledWith('project-2', 'powershell')
   })
 })

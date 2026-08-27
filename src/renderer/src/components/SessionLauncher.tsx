@@ -34,8 +34,8 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   const closeLauncher = useAppStore((state) => state.closeLauncher)
   const [pending, setPending] = useState(false)
 
-  // Escape closes the launcher from the keyboard; TitleBar's focus-restoration effect
-  // (watching launcherOpen) then returns focus to the "New session" trigger.
+  // Escape closes the launcher from the keyboard; ProjectSidebar's focus-restoration effect
+  // (watching launcherOpen) then returns focus to the project-row "New session" trigger.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {

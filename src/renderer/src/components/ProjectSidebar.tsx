@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
 import vscodeIconUrl from '../assets/vscode.svg'
 import { isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import ConfirmDialog from './ConfirmDialog'
+import SessionLauncher from './SessionLauncher'
 
 const sessionKindGlyph = (kind: SessionRecord['kind']): string => {
   switch (kind) {
@@ -115,9 +116,26 @@ export default function ProjectSidebar() {
   const openProjectInVSCode = useAppStore((state) => state.openProjectInVSCode)
   const openProjectFolder = useAppStore((state) => state.openProjectFolder)
   const dismissNotice = useAppStore((state) => state.dismissNotice)
+  const launcherOpen = useAppStore((state) => state.launcherOpen)
+  const openLauncher = useAppStore((state) => state.openLauncher)
+  const closeLauncher = useAppStore((state) => state.closeLauncher)
 
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<ReadonlySet<string>>(() => new Set())
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
+
+  // Focus restoration for the launcher: whichever project-row "+" trigger opened it gets
+  // keyboard/screen-reader focus back when the launcher closes (close button, Escape, or a
+  // successful creation collapsing it), instead of focus being dropped to <body>.
+  const launcherTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const wasLauncherOpenRef = useRef(false)
+
+  useEffect(() => {
+    if (wasLauncherOpenRef.current && !launcherOpen) {
+      launcherTriggerRef.current?.focus()
+      launcherTriggerRef.current = null
+    }
+    wasLauncherOpenRef.current = launcherOpen
+  }, [launcherOpen])
 
   // Focus restoration for the delete confirmation: remembers whichever "Delete" button
   // opened it so focus can return there once the dialog closes (Cancel, Escape, or a
@@ -222,6 +240,24 @@ export default function ProjectSidebar() {
                 <div className="project-actions" data-project-actions>
                   <button
                     type="button"
+                    aria-label="New session"
+                    aria-haspopup="true"
+                    aria-expanded={launcherOpen && project.id === activeProjectId}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (launcherOpen && activeProjectId === project.id) {
+                        closeLauncher()
+                        return
+                      }
+                      launcherTriggerRef.current = event.currentTarget
+                      setActiveProject(project.id)
+                      openLauncher()
+                    }}
+                  >
+                    +
+                  </button>
+                  <button
+                    type="button"
                     aria-label="Open project in VS Code"
                     title={capabilities.vscode.available ? undefined : capabilities.vscode.detail}
                     aria-describedby={capabilities.vscode.available ? undefined : vscodeHintId(project.id)}
@@ -255,6 +291,7 @@ export default function ProjectSidebar() {
                     <ChevronGlyph expanded={expanded} />
                   </button>
                 </div>
+                {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} />}
               </div>
 
               {/*

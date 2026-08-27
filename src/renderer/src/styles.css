@@ -29,8 +29,6 @@
   --title-bar-height: 46px;
   --sidebar-width: 300px;
   --sidebar-width-narrow: 250px;
-  --tab-width: 220px;
-  --tab-width-narrow: 150px;
 
   color: var(--color-text);
   background: var(--color-canvas);
@@ -188,67 +186,6 @@ input {
   color: var(--color-text);
 }
 
-.title-bar-tabs {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  overflow-x: auto;
-}
-
-.title-bar-tab {
-  flex: 0 1 auto;
-  max-width: var(--tab-width);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 4px 10px;
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: 0.85rem;
-}
-
-.title-bar-tab:hover {
-  background: var(--color-panel-elevated);
-  color: var(--color-text);
-}
-
-.title-bar-tab[aria-selected='true'] {
-  background: var(--color-panel-elevated);
-  color: var(--color-text);
-  border-color: var(--color-accent-blue);
-}
-
-.title-bar-launcher {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.title-bar-plus {
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-panel-elevated);
-  color: var(--color-text);
-  font-size: 1rem;
-  line-height: 1;
-}
-
-.title-bar-plus:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.title-bar-plus:not(:disabled):hover {
-  border-color: var(--color-accent-blue);
-}
-
 /* ==========================================================================
    Project sidebar
    ========================================================================== */
@@ -329,6 +266,8 @@ input {
 }
 
 .project-row {
+  /* Anchors the session-launcher popover (position: absolute) below this row. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -827,7 +766,6 @@ input {
 @media (max-width: 999px) {
   :root {
     --sidebar-width: var(--sidebar-width-narrow);
-    --tab-width: var(--tab-width-narrow);
   }
 
   .session-launcher {
