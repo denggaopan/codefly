@@ -1,0 +1,407 @@
+// @vitest-environment jsdom
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import type { AppSnapshot, AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../../shared/contracts'
+import { useAppStore } from '../store/use-app-store'
+import { BYPASS_WARNING_TEXT } from './AgentBypassStatus'
+import TerminalWorkspace from './TerminalWorkspace'
+
+// TerminalWorkspace embeds real @xterm/xterm and @xterm/addon-fit instances, which rely on
+// canvas/ResizeObserver browser APIs jsdom does not provide. Both packages are mocked with
+// minimal, introspectable test doubles below (vi.hoisted so the factory can reference them)
+// rather than exercising the real library — the behavior under test is TerminalWorkspace's
+// own ownership/routing/dispose logic, not xterm's rendering internals.
+const { FakeTerminal, FakeFitAddon, FakeResizeObserver } = vi.hoisted(() => {
+  class FakeTerminalImpl {
+    static instances: FakeTerminalImpl[] = []
+    options: Record<string, unknown>
+    open = vi.fn()
+    write = vi.fn()
+    dispose = vi.fn()
+    loadAddon = vi.fn()
+    onData = vi.fn((listener: (data: string) => void) => {
+      this.dataListeners.push(listener)
+      return { dispose: vi.fn() }
+    })
+
+    private dataListeners: Array<(data: string) => void> = []
+
+    constructor(options?: Record<string, unknown>) {
+      this.options = options ?? {}
+      FakeTerminalImpl.instances.push(this)
+    }
+
+    emitData(data: string): void {
+      for (const listener of [...this.dataListeners]) listener(data)
+    }
+  }
+
+  class FakeFitAddonImpl {
+    static instances: FakeFitAddonImpl[] = []
+    fit = vi.fn()
+    dispose = vi.fn()
+    proposeDimensions = vi.fn((): { cols: number; rows: number } | undefined => ({ cols: 80, rows: 24 }))
+
+    constructor() {
+      FakeFitAddonImpl.instances.push(this)
+    }
+  }
+
+  class FakeResizeObserverImpl {
+    static instances: FakeResizeObserverImpl[] = []
+    observe = vi.fn()
+    unobserve = vi.fn()
+    disconnect = vi.fn()
+    private readonly callback: () => void
+
+    constructor(callback: () => void) {
+      this.callback = callback
+      FakeResizeObserverImpl.instances.push(this)
+    }
+
+    trigger(): void {
+      this.callback()
+    }
+  }
+
+  return { FakeTerminal: FakeTerminalImpl, FakeFitAddon: FakeFitAddonImpl, FakeResizeObserver: FakeResizeObserverImpl }
+})
+
+vi.mock('@xterm/xterm', () => ({ Terminal: FakeTerminal }))
+vi.mock('@xterm/addon-fit', () => ({ FitAddon: FakeFitAddon }))
+
+// Deliberately NOT annotated with a `CodeFlyApi`-shaped return type (see App.test.tsx): that
+// would widen every vi.fn() property down to a plain function type and lose access to mock
+// helpers like mockResolvedValueOnce/mockClear used below. Structural compatibility with
+// window.codefly is still checked at the `window.codefly = api` assignment site.
+const createFakeApi = () => {
+  const dataListeners = new Set<(payload: { sessionId: string; data: string }) => void>()
+  const exitListeners = new Set<(payload: { sessionId: string; exitCode: number }) => void>()
+  return {
+    getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state: { version: 1, projects: [], sessions: [] }, capabilities: defaultCapabilities() })),
+    addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
+    openProjectInVSCode: vi.fn(async (): Promise<void> => undefined),
+    openProjectFolder: vi.fn(async (): Promise<void> => undefined),
+    createSession: vi.fn(async () => {
+      throw new Error('createSession not stubbed for this test')
+    }),
+    restoreSession: vi.fn(async (_sessionId: string): Promise<SessionRecord> => {
+      throw new Error('restoreSession not stubbed for this test')
+    }),
+    deleteSession: vi.fn(async (): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
+    submitFirstInput: vi.fn(async (): Promise<void> => undefined),
+    writeTerminal: vi.fn(),
+    resizeTerminal: vi.fn(),
+    onStateChanged: vi.fn(() => () => undefined),
+    onTerminalData: vi.fn((listener: (payload: { sessionId: string; data: string }) => void) => {
+      dataListeners.add(listener)
+      return vi.fn(() => {
+        dataListeners.delete(listener)
+      })
+    }),
+    onTerminalExit: vi.fn((listener: (payload: { sessionId: string; exitCode: number }) => void) => {
+      exitListeners.add(listener)
+      return vi.fn(() => {
+        exitListeners.delete(listener)
+      })
+    }),
+    emitTerminalData: (payload: { sessionId: string; data: string }) => {
+      for (const listener of [...dataListeners]) listener(payload)
+    },
+    emitTerminalExit: (payload: { sessionId: string; exitCode: number }) => {
+      for (const listener of [...exitListeners]) listener(payload)
+    }
+  }
+}
+
+const defaultCapabilities = (): CapabilityState => ({
+  claude: { available: true, detail: '' },
+  codex: { available: true, detail: '' },
+  vscode: { available: true, detail: '' }
+})
+
+const project1: ProjectRecord = {
+  id: 'project-1',
+  name: 'demo-project',
+  path: 'C:\\work\\demo-project',
+  createdAt: '2026-08-20T00:00:00.000Z'
+}
+
+const runningClaudeSession: SessionRecord = {
+  id: 'session-claude',
+  projectId: 'project-1',
+  kind: 'claude',
+  title: 'Fix login bug',
+  titleState: 'complete',
+  createdAt: '2026-08-20T00:02:00.000Z',
+  mode: 'worktree',
+  worktreeName: 'worktree-260820-1',
+  worktreePath: 'C:\\work\\demo-project\\.worktrees\\worktree-260820-1',
+  branchName: 'worktree-260820-1',
+  launchPath: 'C:\\work\\demo-project\\.worktrees\\worktree-260820-1',
+  status: 'running'
+}
+
+const runningPowerShellSession: SessionRecord = {
+  id: 'session-ps',
+  projectId: 'project-1',
+  kind: 'powershell',
+  title: 'New PowerShell session',
+  titleState: 'pending',
+  createdAt: '2026-08-20T00:01:00.000Z',
+  mode: 'ordinary',
+  launchPath: 'C:\\work\\demo-project',
+  status: 'running'
+}
+
+const stoppedSession: SessionRecord = { ...runningPowerShellSession, id: 'session-stopped', status: 'stopped' }
+
+const seedStore = (...sessions: SessionRecord[]): void => {
+  useAppStore.setState({
+    appState: { version: 1, projects: [project1], sessions },
+    capabilities: defaultCapabilities(),
+    activeProjectId: project1.id,
+    activeSessionId: null,
+    launcherOpen: false,
+    searchQuery: '',
+    notice: null
+  })
+}
+
+type FakeApi = ReturnType<typeof createFakeApi>
+
+let api: FakeApi
+
+beforeEach(() => {
+  useAppStore.getState().reset()
+  api = createFakeApi()
+  window.codefly = api
+  FakeTerminal.instances = []
+  FakeFitAddon.instances = []
+  FakeResizeObserver.instances = []
+  // jsdom has no ResizeObserver; stub a controllable one so tests can trigger the callback
+  // TerminalWorkspace registers per entry and assert what it does in response.
+  vi.stubGlobal('ResizeObserver', FakeResizeObserver)
+})
+
+describe('TerminalWorkspace', () => {
+  it('creates exactly one terminal instance per opened session and does not recreate it on re-activation', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
+
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    await waitFor(() => expect(screen.getByTestId(`terminal-host-${runningClaudeSession.id}`).closest('.terminal-pane')).toHaveStyle({ display: 'flex' }))
+
+    expect(FakeTerminal.instances).toHaveLength(2)
+  })
+
+  it('does not create a terminal for a session that has never been active', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    expect(screen.queryByTestId(`terminal-host-${runningPowerShellSession.id}`)).not.toBeInTheDocument()
+  })
+
+  it('keeps an inactive terminal mounted with display:none instead of unmounting it', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
+
+    const claudeHost = screen.getByTestId(`terminal-host-${runningClaudeSession.id}`)
+    const psHost = screen.getByTestId(`terminal-host-${runningPowerShellSession.id}`)
+
+    expect(claudeHost.closest('.terminal-pane')).toHaveStyle({ display: 'none' })
+    expect(psHost.closest('.terminal-pane')).toHaveStyle({ display: 'flex' })
+    expect(FakeTerminal.instances[0].dispose).not.toHaveBeenCalled()
+  })
+
+  it('routes incoming terminal data only to the terminal owning that session ID', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
+
+    const [claudeTerminal, psTerminal] = FakeTerminal.instances
+
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: 'hello from claude' })
+
+    expect(claudeTerminal.write).toHaveBeenCalledWith('hello from claude')
+    expect(psTerminal.write).not.toHaveBeenCalled()
+  })
+
+  it('always forwards keystrokes to writeTerminal and calls submitFirstInput exactly once on the first submitted line', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    const terminal = FakeTerminal.instances[0]
+    terminal.emitData('h')
+    terminal.emitData('i')
+    terminal.emitData('\r')
+    terminal.emitData('more')
+    terminal.emitData('\r')
+
+    expect(api.writeTerminal).toHaveBeenNthCalledWith(1, runningClaudeSession.id, 'h')
+    expect(api.writeTerminal).toHaveBeenNthCalledWith(2, runningClaudeSession.id, 'i')
+    expect(api.writeTerminal).toHaveBeenNthCalledWith(3, runningClaudeSession.id, '\r')
+    expect(api.writeTerminal).toHaveBeenNthCalledWith(4, runningClaudeSession.id, 'more')
+    expect(api.writeTerminal).toHaveBeenNthCalledWith(5, runningClaudeSession.id, '\r')
+    expect(api.writeTerminal).toHaveBeenCalledTimes(5)
+
+    await waitFor(() => expect(api.submitFirstInput).toHaveBeenCalledTimes(1))
+    expect(api.submitFirstInput).toHaveBeenCalledWith(runningClaudeSession.id, 'hi')
+  })
+
+  it('fits the terminal when its session becomes active', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeFitAddon.instances).toHaveLength(1))
+    expect(FakeFitAddon.instances[0].fit).toHaveBeenCalled()
+
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    await waitFor(() => expect(FakeFitAddon.instances).toHaveLength(2))
+    expect(FakeFitAddon.instances[1].fit).toHaveBeenCalled()
+  })
+
+  it('sends only changed, positive dimensions when the ResizeObserver fires', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeResizeObserver.instances).toHaveLength(1))
+
+    const fitAddon = FakeFitAddon.instances[0]
+    const resizeObserver = FakeResizeObserver.instances[0]
+    api.resizeTerminal.mockClear()
+
+    fitAddon.proposeDimensions.mockReturnValue({ cols: 100, rows: 40 })
+    resizeObserver.trigger()
+    expect(api.resizeTerminal).toHaveBeenCalledWith(runningClaudeSession.id, 100, 40)
+
+    api.resizeTerminal.mockClear()
+    resizeObserver.trigger()
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+
+    fitAddon.proposeDimensions.mockReturnValue({ cols: 0, rows: 0 })
+    resizeObserver.trigger()
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+
+    fitAddon.proposeDimensions.mockReturnValue(undefined)
+    resizeObserver.trigger()
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('disposes the terminal entry and removes its pane when its session is deleted', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    useAppStore.setState((state) => ({ appState: { ...state.appState, sessions: [] } }))
+
+    await waitFor(() => expect(FakeTerminal.instances[0].dispose).toHaveBeenCalled())
+    expect(FakeResizeObserver.instances[0].disconnect).toHaveBeenCalled()
+    expect(screen.queryByTestId(`terminal-host-${runningClaudeSession.id}`)).not.toBeInTheDocument()
+  })
+
+  it('preserves xterm contents after an unexpected exit by writing a notice instead of disposing', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    api.emitTerminalExit({ sessionId: runningClaudeSession.id, exitCode: 1 })
+
+    expect(FakeTerminal.instances[0].write).toHaveBeenCalledWith(expect.stringContaining('exited'))
+    expect(FakeTerminal.instances[0].dispose).not.toHaveBeenCalled()
+    expect(screen.getByTestId(`terminal-host-${runningClaudeSession.id}`)).toBeInTheDocument()
+  })
+
+  it('disposes every terminal entry and both IPC subscriptions on unmount', async () => {
+    seedStore(runningClaudeSession, runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    const { unmount } = render(<TerminalWorkspace />)
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
+
+    expect(api.onTerminalData).toHaveBeenCalledTimes(1)
+    expect(api.onTerminalExit).toHaveBeenCalledTimes(1)
+    const dataUnsubscribe = api.onTerminalData.mock.results[0]!.value as ReturnType<typeof vi.fn>
+    const exitUnsubscribe = api.onTerminalExit.mock.results[0]!.value as ReturnType<typeof vi.fn>
+
+    unmount()
+
+    expect(dataUnsubscribe).toHaveBeenCalledTimes(1)
+    expect(exitUnsubscribe).toHaveBeenCalledTimes(1)
+    expect(FakeTerminal.instances[0].dispose).toHaveBeenCalled()
+    expect(FakeTerminal.instances[1].dispose).toHaveBeenCalled()
+    expect(FakeResizeObserver.instances[0].disconnect).toHaveBeenCalled()
+    expect(FakeResizeObserver.instances[1].disconnect).toHaveBeenCalled()
+  })
+
+  it('renders session title, full launch path, kind, and running status in the header', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText(runningClaudeSession.title)).toBeInTheDocument()
+    expect(screen.getByText(runningClaudeSession.launchPath)).toBeInTheDocument()
+    expect(screen.getByText('Claude')).toBeInTheDocument()
+    expect(screen.getByText('Running')).toBeInTheDocument()
+  })
+
+  it('shows the shared bypass warning text in a running Claude header', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText(BYPASS_WARNING_TEXT)).toBeInTheDocument()
+  })
+
+  it('hides the bypass warning text in a running PowerShell header', async () => {
+    seedStore(runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    render(<TerminalWorkspace />)
+
+    await screen.findByText(runningPowerShellSession.title)
+    expect(screen.queryByText(BYPASS_WARNING_TEXT)).not.toBeInTheDocument()
+  })
+
+  it('shows a compact restart action for a stopped session that calls the store restore path', async () => {
+    const user = userEvent.setup()
+    seedStore(stoppedSession)
+    useAppStore.setState({ activeSessionId: stoppedSession.id })
+    api.restoreSession.mockResolvedValueOnce({ ...stoppedSession, status: 'running' })
+    render(<TerminalWorkspace />)
+
+    const restartButton = await screen.findByRole('button', { name: /restart/i })
+    await user.click(restartButton)
+
+    expect(api.restoreSession).toHaveBeenCalledWith(stoppedSession.id)
+  })
+
+  it('does not show a restart action for a running session', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await screen.findByText(runningClaudeSession.title)
+    expect(screen.queryByRole('button', { name: /restart/i })).not.toBeInTheDocument()
+  })
+})

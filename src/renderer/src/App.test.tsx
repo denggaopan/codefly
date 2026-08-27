@@ -7,6 +7,35 @@ import type { AppSnapshot, AppState, CapabilityState, DeleteSessionResult, Proje
 import App from './App'
 import { useAppStore } from './store/use-app-store'
 
+// App renders TerminalWorkspace, which embeds real @xterm/xterm and @xterm/addon-fit
+// instances. Both rely on browser APIs (canvas, matchMedia, ResizeObserver) that jsdom does
+// not provide, so — same as TerminalWorkspace's own tests — they are replaced here with
+// inert stubs; these tests exercise navigation/session flows, not terminal rendering.
+vi.mock('@xterm/xterm', () => ({
+  Terminal: class {
+    open = vi.fn()
+    write = vi.fn()
+    dispose = vi.fn()
+    loadAddon = vi.fn()
+    onData = vi.fn(() => ({ dispose: vi.fn() }))
+  }
+}))
+vi.mock('@xterm/addon-fit', () => ({
+  FitAddon: class {
+    fit = vi.fn()
+    dispose = vi.fn()
+    proposeDimensions = vi.fn(() => undefined)
+  }
+}))
+vi.stubGlobal(
+  'ResizeObserver',
+  class {
+    observe = vi.fn()
+    unobserve = vi.fn()
+    disconnect = vi.fn()
+  }
+)
+
 // Deliberately NOT annotated with a `CodeFlyApi`-shaped return type: that would widen every
 // vi.fn() property down to a plain function type and lose access to mock helpers like
 // mockResolvedValueOnce in the tests below. Structural compatibility with window.codefly
