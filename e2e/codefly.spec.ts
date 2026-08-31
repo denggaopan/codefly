@@ -104,6 +104,35 @@ test.afterAll(async () => {
   await electronApp?.close()
 })
 
+test('keeps Settings interactive outside the draggable title bar', async () => {
+  const trigger = window.getByRole('button', { name: 'Settings' })
+  const dialog = window.getByRole('dialog', { name: 'Settings' })
+
+  await trigger.click()
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Light' }).click()
+  await expect(window.locator('html')).toHaveAttribute('data-theme', 'light')
+  await expect(dialog.getByRole('button', { name: 'Light' })).toHaveAttribute('aria-pressed', 'true')
+
+  await dialog.getByRole('button', { name: 'Close settings' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  await trigger.click()
+  await expect(dialog).toBeVisible()
+  await window.locator('.settings-dialog-backdrop').click({ position: { x: 8, y: 8 } })
+  await expect(dialog).toHaveCount(0)
+
+  await trigger.click()
+  await expect(dialog).toBeVisible()
+  await window.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+
+  await trigger.click()
+  await dialog.getByRole('button', { name: 'Dark' }).click()
+  await expect(window.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await window.keyboard.press('Escape')
+})
+
 test('adds the fixture project and creates a Claude session as the first worktree', async () => {
   await window.getByRole('button', { name: 'Add Project' }).click()
   await expect(window.locator('[data-project-row]')).toHaveCount(1, { timeout: 20_000 })

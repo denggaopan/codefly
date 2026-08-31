@@ -490,6 +490,7 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Settings' }))
     const dialog = await screen.findByRole('dialog', { name: 'Settings' })
     expect(dialog).toBeInTheDocument()
+    expect(dialog.closest('.title-bar')).toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'Light' }))
     expect(document.documentElement.dataset.theme).toBe('light')
@@ -503,6 +504,25 @@ describe('App', () => {
     expect(api.setTheme).toHaveBeenLastCalledWith('dark')
 
     await user.click(screen.getByRole('button', { name: 'Close settings' }))
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument()
+  })
+
+  it('closes Settings from the backdrop and Escape', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const trigger = screen.getByRole('button', { name: 'Settings' })
+    await user.click(trigger)
+
+    const backdrop = document.querySelector('.settings-dialog-backdrop')
+    expect(backdrop).not.toBeNull()
+    await user.click(backdrop!)
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument()
+
+    await user.click(trigger)
+    await screen.findByRole('dialog', { name: 'Settings' })
+    await user.keyboard('{Escape}')
+
     expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument()
   })
 

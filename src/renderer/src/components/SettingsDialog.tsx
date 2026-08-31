@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 import { useAppStore } from '../store/use-app-store'
 
@@ -36,7 +37,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   if (!open) return null
 
-  return (
+  return createPortal(
     <div className="settings-dialog-backdrop" onClick={onClose}>
       <div
         className="settings-dialog"
@@ -67,6 +68,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
