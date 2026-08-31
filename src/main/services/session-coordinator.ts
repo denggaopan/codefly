@@ -127,7 +127,7 @@ export class SessionCoordinator {
       }
 
       try {
-        await this.terminalService.start(session)
+        await this.terminalService.start(session, { resume: true })
       } catch (error) {
         await this.updateSession(sessionId, (existing) => ({ ...existing, status: 'error', lastError: errorMessage(error) }))
         throw error

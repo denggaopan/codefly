@@ -309,6 +309,7 @@ describe('SessionCoordinator.restore', () => {
 
     expect(restored.status).toBe('running')
     expect(worktreeService.validate.mock.invocationCallOrder[0]).toBeLessThan(terminalService.start.mock.invocationCallOrder[0]!)
+    expect(terminalService.start).toHaveBeenCalledWith(session, { resume: true })
     const persisted = await store.load()
     expect(persisted.sessions[0]).toMatchObject({ status: 'running' })
   })
@@ -323,7 +324,7 @@ describe('SessionCoordinator.restore', () => {
 
     await expect(coordinator.restore('session-1')).rejects.toThrow(persistFailure)
 
-    expect(terminalService.start).toHaveBeenCalledWith(session)
+    expect(terminalService.start).toHaveBeenCalledWith(session, { resume: true })
     expect(terminalService.stop).toHaveBeenCalledWith('session-1')
     await expect(store.load()).resolves.toMatchObject({
       sessions: [{ id: 'session-1', status: 'error', lastError: persistFailure.message }]
@@ -545,7 +546,7 @@ describe('SessionCoordinator.stop and exits', () => {
     const restored = await coordinator.restore('session-1')
 
     expect(restored.status).toBe('running')
-    expect(terminalService.start).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }))
+    expect(terminalService.start).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), { resume: true })
   })
 })
 

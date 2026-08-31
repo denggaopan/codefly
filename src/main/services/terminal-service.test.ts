@@ -226,6 +226,46 @@ describe('TerminalService launch adapters', () => {
     )
   })
 
+  it.each([
+    ['claude' as const, 'C:\\Agents With Spaces\\claude.exe', ['--dangerously-skip-permissions', '--continue']],
+    ['codex' as const, 'C:\\Agents With Spaces\\codex.com', ['resume', '--last', '--dangerously-bypass-approvals-and-sandbox']]
+  ])('spawns a restored direct %s executable with its conversation resume arguments', async (kind, executable, expectedArgs) => {
+    const factory = new FakePtyFactory(new FakePty())
+    const service = serviceWith(factory, { locator: locatorWith({ [kind]: executable }) })
+
+    await service.start(session(`${kind}-resume`, kind), { resume: true })
+
+    expect(factory.spawn).toHaveBeenCalledWith(executable, expectedArgs, expect.any(Object))
+  })
+
+  it('hosts a restored claude .cmd shim with the continue flag inside the wrapped command', async () => {
+    const shim = 'C:\\Users\\Dev Name\\AppData\\Roaming\\npm\\claude.cmd'
+    const comspec = 'C:\\Windows\\System32\\cmd.exe'
+    const factory = new FakePtyFactory(new FakePty())
+    const service = serviceWith(factory, {
+      locator: locatorWith({ claude: shim }),
+      environment: { ComSpec: comspec },
+      candidateExists: vi.fn(async () => false)
+    })
+
+    await service.start(session('claude-resume-shim', 'claude'), { resume: true })
+
+    expect(factory.spawn).toHaveBeenCalledWith(
+      comspec,
+      `/d /s /c ""${shim}" --dangerously-skip-permissions --continue"`,
+      expect.any(Object)
+    )
+  })
+
+  it('starts a restored shell without resume arguments', async () => {
+    const factory = new FakePtyFactory(new FakePty())
+    const service = serviceWith(factory, { locator: locatorWith() })
+
+    await service.start(session('shell-resume'), { resume: true })
+
+    expect(factory.spawn).toHaveBeenCalledWith(expect.any(String), [], expect.any(Object))
+  })
+
   it('rejects unavailable and unsafe agent commands without spawning', async () => {
     const factory = new FakePtyFactory()
     const unavailable = serviceWith(factory, { locator: locatorWith() })

@@ -14,9 +14,21 @@ const STOP_TIMEOUT_MS = 2_000
 
 type AgentKind = Extract<SessionKind, 'claude' | 'codex'>
 
-const agentArguments: Readonly<Record<AgentKind, readonly string[]>> = {
-  claude: ['--dangerously-skip-permissions'],
-  codex: ['--dangerously-bypass-approvals-and-sandbox']
+// On restore the previous agent conversation must come back, not a fresh one: claude
+// continues the newest conversation recorded for the launch directory, while codex only
+// exposes resume as a subcommand that reopens its most recent session.
+const agentArguments = (kind: AgentKind, resume: boolean): readonly string[] => {
+  if (kind === 'claude') {
+    return resume ? ['--dangerously-skip-permissions', '--continue'] : ['--dangerously-skip-permissions']
+  }
+  return resume
+    ? ['resume', '--last', '--dangerously-bypass-approvals-and-sandbox']
+    : ['--dangerously-bypass-approvals-and-sandbox']
+}
+
+export type TerminalStartOptions = {
+  /** Relaunch an agent CLI so it reattaches its previous conversation instead of starting a new one. */
+  resume?: boolean
 }
 
 export type TerminalEventMap = {
@@ -139,14 +151,14 @@ export class TerminalService {
     private readonly stopTimeoutMs = STOP_TIMEOUT_MS
   ) {}
 
-  async start(session: SessionRecord): Promise<void> {
+  async start(session: SessionRecord, options: TerminalStartOptions = {}): Promise<void> {
     if (this.entries.has(session.id) || this.starting.has(session.id)) {
       throw new Error(`Terminal session is already running or starting: ${session.id}`)
     }
 
     this.starting.add(session.id)
     try {
-      const launch = await this.resolveLaunchSpec(session.kind)
+      const launch = await this.resolveLaunchSpec(session.kind, options.resume === true)
       const pty = this.ptyFactory.spawn(launch.file, launch.args, {
         name: 'xterm-256color',
         cols: DEFAULT_COLS,
@@ -229,7 +241,7 @@ export class TerminalService {
     return () => { listeners.delete(listener) }
   }
 
-  private async resolveLaunchSpec(kind: SessionKind): Promise<LaunchSpec> {
+  private async resolveLaunchSpec(kind: SessionKind, resume: boolean): Promise<LaunchSpec> {
     if (kind === 'powershell') {
       const executable = await this.locator.resolvePowerShell()
       if (!executable) throw new Error('PowerShell is not available.')
@@ -241,7 +253,7 @@ export class TerminalService {
 
     const resolved = await this.locator.resolveAgent(kind)
     if (!resolved) throw new Error(`${kind} is not available.`)
-    const logicalArgs = agentArguments[kind]
+    const logicalArgs = agentArguments(kind, resume)
     return this.platform === 'win32'
       ? windowsAgentSpec(resolved, logicalArgs, this.environment, this.candidateExists)
       : { file: resolved, args: logicalArgs }
