@@ -23,6 +23,7 @@ const createFakeApi = (): FakeApi => ({
   }),
   deleteSession: vi.fn(async (_sessionId: string): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
   submitFirstInput: vi.fn(async () => undefined),
+  setTheme: vi.fn(async (): Promise<void> => undefined),
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
   onStateChanged: vi.fn(() => () => undefined),

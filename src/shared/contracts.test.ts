@@ -9,6 +9,7 @@ import {
   reorderProjectsRequestSchema,
   sessionRecordSchema,
   sessionIdRequestSchema,
+  setThemeRequestSchema,
   terminalWriteRequestSchema,
   terminalResizeRequestSchema
 } from './contracts'
@@ -27,7 +28,8 @@ describe('shared contracts', () => {
       projectIdRequestSchema.safeParse({ projectId: 'p1', unexpected: true }).success,
       terminalWriteRequestSchema.safeParse({ sessionId: 's1', data: 'ls', unexpected: true }).success,
       terminalResizeRequestSchema.safeParse({ sessionId: 's1', cols: 80, rows: 24, unexpected: true }).success,
-      firstInputRequestSchema.safeParse({ sessionId: 's1', text: 'hello', unexpected: true }).success
+      firstInputRequestSchema.safeParse({ sessionId: 's1', text: 'hello', unexpected: true }).success,
+      setThemeRequestSchema.safeParse({ theme: 'dark', unexpected: true }).success
     ]) {
       expect(valid).toBe(false)
     }
@@ -164,6 +166,13 @@ describe('shared contracts', () => {
     expect(reorderProjectsRequestSchema.safeParse({ orderedProjectIds: ['p1'], extra: true }).success).toBe(false)
   })
 
+  it('accepts only dark/light theme requests', () => {
+    expect(setThemeRequestSchema.safeParse({ theme: 'dark' }).success).toBe(true)
+    expect(setThemeRequestSchema.safeParse({ theme: 'light' }).success).toBe(true)
+    expect(setThemeRequestSchema.safeParse({ theme: 'blue' }).success).toBe(false)
+    expect(setThemeRequestSchema.safeParse({}).success).toBe(false)
+  })
+
   it('defines every IPC channel once', () => {
     expect(IPC).toEqual({
       snapshotGet: 'snapshot:get',
@@ -175,6 +184,7 @@ describe('shared contracts', () => {
       sessionRestore: 'session:restore',
       sessionDelete: 'session:delete',
       sessionFirstInput: 'session:first-input',
+      themeSet: 'theme:set',
       terminalWrite: 'terminal:write',
       terminalResize: 'terminal:resize',
       stateChanged: 'state:changed',

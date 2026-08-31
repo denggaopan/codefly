@@ -21,7 +21,7 @@ import {
   type TitleProcessSpawner
 } from './services/title-service'
 import { WorktreeService } from './services/worktree-service'
-import { createMainWindow } from './window'
+import { applyWindowTheme, createMainWindow } from './window'
 
 const agentUnavailableDetail: Readonly<Record<'claude' | 'codex', string>> = {
   claude: 'Install the Claude Code CLI (claude) and sign in.',
@@ -141,7 +141,8 @@ app.whenReady().then(() => {
     coordinator,
     externalAppService,
     terminalService,
-    getSnapshot: buildGetSnapshot(coordinator, externalAppService, agentLocator, store)
+    getSnapshot: buildGetSnapshot(coordinator, externalAppService, agentLocator, store),
+    applyTheme: (theme) => applyWindowTheme(window, theme)
   })
 
   window.on('closed', () => {

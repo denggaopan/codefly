@@ -7,7 +7,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
 
-import type { SessionRecord } from '../../../shared/contracts'
+import type { SessionRecord, ThemePreference } from '../../../shared/contracts'
 import { BYPASS_WARNING_TEXT, isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
@@ -27,6 +27,14 @@ type TerminalEntry = {
 // so it cannot inherit the CSS custom property and needs the same Windows system font stack
 // spelled out here.
 const TERMINAL_FONT_FAMILY = '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
+
+// Like the font above, xterm renders to its own canvas and cannot read CSS custom
+// properties: these mirror the --color-canvas/--color-text tokens per theme in styles.css
+// (selection uses the accent purple at low alpha) so the terminal follows the app theme.
+const XTERM_THEMES: Record<ThemePreference, { background: string; foreground: string; cursor: string; selectionBackground: string }> = {
+  dark: { background: '#0b0f14', foreground: '#e7edf5', cursor: '#e7edf5', selectionBackground: 'rgba(148, 113, 199, 0.35)' },
+  light: { background: '#f5f7fa', foreground: '#1c2733', cursor: '#1c2733', selectionBackground: 'rgba(110, 84, 148, 0.25)' }
+}
 const MAX_PENDING_DATA_PER_SESSION = 65_536
 const MAX_PENDING_SESSIONS = 32
 
@@ -103,6 +111,7 @@ export default function TerminalWorkspace() {
   const sessions = useAppStore((state) => state.appState.sessions)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
   const restoreSession = useAppStore((state) => state.restoreSession)
+  const theme = useAppStore((state) => state.theme)
 
   const [mountedSessionIds, setMountedSessionIds] = useState<string[]>([])
   const entriesRef = useRef<Map<string, TerminalEntry>>(new Map())
@@ -139,7 +148,14 @@ export default function TerminalWorkspace() {
   const ensureEntry = (sessionId: string, element: HTMLDivElement): void => {
     if (entriesRef.current.has(sessionId)) return
 
-    const terminal = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: TERMINAL_FONT_FAMILY })
+    const terminal = new Terminal({
+      convertEol: true,
+      cursorBlink: true,
+      fontFamily: TERMINAL_FONT_FAMILY,
+      // Read via getState() rather than the subscribed `theme`: ensureEntry runs inside a
+      // stable ref callback, and the theme-change effect below re-themes live entries anyway.
+      theme: XTERM_THEMES[useAppStore.getState().theme]
+    })
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.open(element)
@@ -220,6 +236,14 @@ export default function TerminalWorkspace() {
     if (activeSessionStatus !== 'running') return
     entriesRef.current.get(activeSessionId)?.terminal.focus()
   }, [activeSessionId, activeSessionStatus, mountedSessionIds])
+
+  // Re-theme every live terminal when the app theme changes: xterm applies option updates
+  // to its canvas immediately, so existing scrollback repaints in the new palette.
+  useEffect(() => {
+    for (const entry of entriesRef.current.values()) {
+      entry.terminal.options.theme = XTERM_THEMES[theme]
+    }
+  }, [theme])
 
   // Dispose entries whose session no longer exists (deleted), and drop their pane.
   useEffect(() => {

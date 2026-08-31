@@ -93,11 +93,18 @@ export const firstInputRequestSchema = z.strictObject({
   text: z.string().min(1).max(65536)
 })
 
+export const themePreferenceSchema = z.enum(['dark', 'light'])
+
+export const setThemeRequestSchema = z.strictObject({
+  theme: themePreferenceSchema
+})
+
 export type AppState = z.infer<typeof appStateSchema>
 export type ProjectRecord = z.infer<typeof projectRecordSchema>
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
 export type SessionKind = z.infer<typeof sessionKindSchema>
 export type CapabilityState = z.infer<typeof capabilityStateSchema>
+export type ThemePreference = z.infer<typeof themePreferenceSchema>
 
 export type AppSnapshot = { state: AppState; capabilities: CapabilityState; recoveryWarning?: string }
 

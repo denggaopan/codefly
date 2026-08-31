@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { AppSnapshot, AppState, DeleteSessionResult, ProjectRecord, SessionKind, SessionRecord } from '../shared/contracts'
+import type { AppSnapshot, AppState, DeleteSessionResult, ProjectRecord, SessionKind, SessionRecord, ThemePreference } from '../shared/contracts'
 import { IPC } from '../shared/ipc'
 
 export type CodeFlyApi = {
@@ -13,6 +13,7 @@ export type CodeFlyApi = {
   restoreSession(sessionId: string): Promise<SessionRecord>
   deleteSession(sessionId: string): Promise<DeleteSessionResult>
   submitFirstInput(sessionId: string, text: string): Promise<void>
+  setTheme(theme: ThemePreference): Promise<void>
   writeTerminal(sessionId: string, data: string): void
   resizeTerminal(sessionId: string, cols: number, rows: number): void
   onStateChanged(listener: (state: AppState) => void): () => void
@@ -33,6 +34,7 @@ const api: CodeFlyApi = {
   restoreSession: (sessionId) => ipcRenderer.invoke(IPC.sessionRestore, { sessionId }),
   deleteSession: (sessionId) => ipcRenderer.invoke(IPC.sessionDelete, { sessionId }),
   submitFirstInput: (sessionId, text) => ipcRenderer.invoke(IPC.sessionFirstInput, { sessionId, text }),
+  setTheme: (theme) => ipcRenderer.invoke(IPC.themeSet, { theme }),
 
   writeTerminal: (sessionId, data) => {
     ipcRenderer.send(IPC.terminalWrite, { sessionId, data })

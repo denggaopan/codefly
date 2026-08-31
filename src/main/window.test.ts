@@ -4,6 +4,8 @@ const { mockApp, browserWindow, fakeWindow, mockMenu, mockNativeTheme } = vi.hoi
   const fakeWindow = {
     loadURL: vi.fn(async () => undefined),
     loadFile: vi.fn(async () => undefined),
+    setBackgroundColor: vi.fn(),
+    setTitleBarOverlay: vi.fn(),
     webContents: { setWindowOpenHandler: vi.fn() }
   }
   return {
@@ -19,7 +21,7 @@ const { mockApp, browserWindow, fakeWindow, mockMenu, mockNativeTheme } = vi.hoi
 
 vi.mock('electron', () => ({ app: mockApp, BrowserWindow: browserWindow, Menu: mockMenu, nativeTheme: mockNativeTheme }))
 
-import { createMainWindow } from './window'
+import { applyWindowTheme, createMainWindow, TITLE_BAR_HEIGHT } from './window'
 
 describe('createMainWindow', () => {
   beforeEach(() => {
@@ -27,6 +29,8 @@ describe('createMainWindow', () => {
     browserWindow.mockClear()
     fakeWindow.loadURL.mockClear()
     fakeWindow.loadFile.mockClear()
+    fakeWindow.setBackgroundColor.mockClear()
+    fakeWindow.setTitleBarOverlay.mockClear()
     fakeWindow.webContents.setWindowOpenHandler.mockClear()
   })
 
@@ -96,13 +100,40 @@ describe('createMainWindow', () => {
     expect(packagedOptions.icon).toBeUndefined()
   })
 
-  it('forces the dark native theme so the OS window title bar renders dark, with a dark startup background', () => {
+  it('starts dark: native theme, startup background, and caption-button overlay colors', () => {
     mockNativeTheme.themeSource = 'system'
 
     createMainWindow()
 
     expect(mockNativeTheme.themeSource).toBe('dark')
-    const [options] = browserWindow.mock.calls[0] as unknown as [{ backgroundColor?: string }]
+    const [options] = browserWindow.mock.calls[0] as unknown as [
+      { backgroundColor?: string; titleBarStyle?: string; titleBarOverlay?: { color: string; symbolColor: string; height: number } }
+    ]
     expect(options.backgroundColor).toBe('#0b0f14')
+    expect(options.titleBarStyle).toBe('hidden')
+    expect(options.titleBarOverlay).toEqual({ color: '#11161d', symbolColor: '#e7edf5', height: TITLE_BAR_HEIGHT })
+  })
+})
+
+describe('applyWindowTheme', () => {
+  beforeEach(() => {
+    fakeWindow.setBackgroundColor.mockClear()
+    fakeWindow.setTitleBarOverlay.mockClear()
+  })
+
+  it('applies the light theme to the native theme source, window background, and overlay', () => {
+    applyWindowTheme(fakeWindow as unknown as Electron.BrowserWindow, 'light')
+
+    expect(mockNativeTheme.themeSource).toBe('light')
+    expect(fakeWindow.setBackgroundColor).toHaveBeenCalledWith('#f5f7fa')
+    expect(fakeWindow.setTitleBarOverlay).toHaveBeenCalledWith({ color: '#ffffff', symbolColor: '#1c2733', height: TITLE_BAR_HEIGHT })
+  })
+
+  it('applies the dark theme back', () => {
+    applyWindowTheme(fakeWindow as unknown as Electron.BrowserWindow, 'dark')
+
+    expect(mockNativeTheme.themeSource).toBe('dark')
+    expect(fakeWindow.setBackgroundColor).toHaveBeenCalledWith('#0b0f14')
+    expect(fakeWindow.setTitleBarOverlay).toHaveBeenCalledWith({ color: '#11161d', symbolColor: '#e7edf5', height: TITLE_BAR_HEIGHT })
   })
 })

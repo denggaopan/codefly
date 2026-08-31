@@ -2,7 +2,37 @@ import { app, BrowserWindow, Menu, nativeTheme } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
+import type { ThemePreference } from '../shared/contracts'
+
 const currentDirectory = dirname(fileURLToPath(import.meta.url))
+
+/** Must match the .title-bar height in styles.css so the native caption buttons the
+ * titleBarOverlay draws line up exactly with the renderer's custom title-bar strip. */
+export const TITLE_BAR_HEIGHT = 36
+
+// Window-chrome colors per theme. These mirror the renderer's CSS tokens in styles.css
+// (--color-canvas for background, --color-panel/--color-text for the caption-button overlay)
+// because the overlay is drawn natively by Windows and cannot read CSS custom properties.
+const WINDOW_THEME_COLORS: Record<ThemePreference, { background: string; overlayColor: string; overlaySymbol: string }> = {
+  dark: { background: '#0b0f14', overlayColor: '#11161d', overlaySymbol: '#e7edf5' },
+  light: { background: '#f5f7fa', overlayColor: '#ffffff', overlaySymbol: '#1c2733' }
+}
+
+/**
+ * Applies a theme to everything the renderer's CSS cannot reach: the native theme source
+ * (native scrollbars/dialogs), the window background painted behind the renderer, and the
+ * native caption-button overlay colors. Called at startup implicitly via the window's
+ * creation defaults (dark) and afterwards from the theme:set IPC handler whenever the
+ * renderer applies its persisted preference or the user switches themes in Settings.
+ */
+export function applyWindowTheme(window: BrowserWindow, theme: ThemePreference): void {
+  const colors = WINDOW_THEME_COLORS[theme]
+  nativeTheme.themeSource = theme
+  window.setBackgroundColor(colors.background)
+  // Only valid because createMainWindow passes titleBarOverlay below — calling this on a
+  // window created without an overlay would throw.
+  window.setTitleBarOverlay({ color: colors.overlayColor, symbolColor: colors.overlaySymbol, height: TITLE_BAR_HEIGHT })
+}
 
 const safeDevelopmentRendererUrl = (value: string | undefined): string | undefined => {
   if (!value) return undefined
@@ -21,10 +51,11 @@ export function createMainWindow(): BrowserWindow {
   // that still attaches a default menu to the window.
   Menu.setApplicationMenu(null)
 
-  // CodeFly's UI is dark-only. Forcing the dark native theme makes Windows render the OS
-  // window title bar (and native scrollbars/dialogs) dark instead of following a light
-  // system theme; backgroundColor keeps the first painted frame dark instead of flashing
-  // white before the renderer loads. #0b0f14 mirrors --color-canvas in styles.css.
+  // CodeFly starts dark: the renderer re-applies its persisted theme preference over the
+  // theme:set IPC channel right after it loads (see use-app-store.ts initialize()), so a
+  // light-theme user sees at most one dark first frame. Forcing the native theme here (not
+  // 'system') keeps native scrollbars/dialogs consistent with the app theme; backgroundColor
+  // keeps the first painted frame dark instead of flashing white before the renderer loads.
   nativeTheme.themeSource = 'dark'
 
   const window = new BrowserWindow({
@@ -33,7 +64,17 @@ export function createMainWindow(): BrowserWindow {
     minWidth: 900,
     minHeight: 600,
     autoHideMenuBar: true,
-    backgroundColor: '#0b0f14',
+    backgroundColor: WINDOW_THEME_COLORS.dark.background,
+    // Hide the OS title bar but keep the native minimize/maximize/close buttons as an
+    // overlay in the top-right corner. The renderer draws its own .title-bar strip under
+    // that overlay (drag region + settings button, see TitleBar.tsx), which is what allows
+    // in-app controls to sit directly left of the native minimize button.
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: WINDOW_THEME_COLORS.dark.overlayColor,
+      symbolColor: WINDOW_THEME_COLORS.dark.overlaySymbol,
+      height: TITLE_BAR_HEIGHT
+    },
     // In a packaged build the window/taskbar icon comes from the exe (electron-builder
     // win.icon); build/icon.ico only exists in the repo, so it is wired up for dev runs.
     ...(app.isPackaged ? {} : { icon: join(currentDirectory, '../../build/icon.ico') }),

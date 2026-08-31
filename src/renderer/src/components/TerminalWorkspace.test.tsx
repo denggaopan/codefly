@@ -94,6 +94,7 @@ const createFakeApi = () => {
     }),
     deleteSession: vi.fn(async (): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
+    setTheme: vi.fn(async (): Promise<void> => undefined),
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
     onStateChanged: vi.fn(() => () => undefined),
@@ -229,6 +230,22 @@ describe('TerminalWorkspace', () => {
     expect(claudeHost.closest('.terminal-pane')).toHaveStyle({ display: 'none' })
     expect(psHost.closest('.terminal-pane')).toHaveStyle({ display: 'flex' })
     expect(FakeTerminal.instances[0].dispose).not.toHaveBeenCalled()
+  })
+
+  it('creates terminals with the current theme palette and re-themes live terminals on switch', async () => {
+    seedStore(runningClaudeSession)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    const terminal = FakeTerminal.instances[0]
+    expect(terminal.options.theme).toMatchObject({ background: '#0b0f14' })
+
+    act(() => useAppStore.setState({ theme: 'light' }))
+    expect(terminal.options.theme).toMatchObject({ background: '#f5f7fa' })
+
+    act(() => useAppStore.setState({ theme: 'dark' }))
+    expect(terminal.options.theme).toMatchObject({ background: '#0b0f14' })
   })
 
   it('focuses the terminal as soon as its session becomes active so typing works without clicking', async () => {

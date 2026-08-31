@@ -37,6 +37,27 @@
   font-family: var(--font-chrome);
 }
 
+/* Light theme: the same token contract with light values. use-app-store.ts stamps
+   html[data-theme] from the persisted preference (default dark), and window.ts mirrors the
+   canvas/panel/text values for the native caption-button overlay — keep them in sync. */
+:root[data-theme='light'] {
+  --color-canvas: #f5f7fa;
+  --color-panel: #ffffff;
+  --color-panel-elevated: #e9edf3;
+  --color-border: #d5dce5;
+
+  --color-text: #1c2733;
+  --color-text-muted: #5a6878;
+
+  /* The original phoenix-logo purple works unlightened on a light canvas; state colors are
+     darkened along their hues so pill text stays readable on the light tints behind it. */
+  --color-accent: #6e5494;
+  --color-state-running: #14855c;
+  --color-state-done: #6f47c5;
+  --color-state-warning: #9a6b0f;
+  --color-state-destructive: #c53236;
+}
+
 /* ==========================================================================
    Reset & base
    ========================================================================== */
@@ -137,9 +158,61 @@ input {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 1fr;
+  grid-template-rows: auto 1fr;
   height: 100vh;
   overflow: hidden;
+}
+
+/* ==========================================================================
+   Title bar: custom strip replacing the hidden OS title bar. Windows draws the native
+   minimize/maximize/close buttons as a titleBarOverlay ON TOP of this strip's right end
+   (window.ts keeps the overlay height/colors in sync with this rule); padding-right
+   reserves exactly that overlay width so the settings button — the last flex child —
+   lands directly left of the native minimize button. env() falls back to a plain
+   full-width 36px strip outside Electron (tests, plain browsers).
+   ========================================================================== */
+
+.title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: env(titlebar-area-height, 36px);
+  padding-left: 12px;
+  padding-right: calc(100% - env(titlebar-area-width, 100%));
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.title-bar-app-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.title-bar-settings {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 28px;
+  margin-right: 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+.title-bar-settings:hover {
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
 }
 
 .app-body {
@@ -164,6 +237,14 @@ input {
      obviously in the empty state before any session is opened. */
   background:
     radial-gradient(ellipse 900px 500px at 20% -10%, rgba(148, 113, 199, 0.16), transparent 60%),
+    var(--color-canvas);
+}
+
+/* Same layered highlight at lower alpha: 0.16 of the accent purple reads as a smudge on a
+   light canvas where it read as a glow on the dark one. */
+:root[data-theme='light'] .app-main {
+  background:
+    radial-gradient(ellipse 900px 500px at 20% -10%, rgba(110, 84, 148, 0.08), transparent 60%),
     var(--color-canvas);
 }
 
@@ -784,6 +865,94 @@ input {
   border-color: var(--color-state-destructive);
   background: var(--color-state-destructive);
   color: #fff;
+}
+
+/* ==========================================================================
+   Settings dialog
+   ========================================================================== */
+
+.settings-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 6, 9, 0.55);
+}
+
+.settings-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-panel-elevated);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.settings-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.settings-dialog-title {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.settings-dialog-close {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.settings-dialog-close:hover {
+  color: var(--color-text);
+}
+
+.settings-dialog-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-dialog-label {
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.settings-theme-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-panel);
+}
+
+.settings-theme-toggle button {
+  border: none;
+  border-radius: 6px;
+  padding: 5px 14px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.settings-theme-toggle button[aria-pressed='true'] {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.settings-theme-toggle button[aria-pressed='false']:hover {
+  background: var(--color-panel-elevated);
+  color: var(--color-text);
 }
 
 /* ==========================================================================

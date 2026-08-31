@@ -13,6 +13,7 @@ import { useAppStore } from './store/use-app-store'
 // inert stubs; these tests exercise navigation/session flows, not terminal rendering.
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
+    options: Record<string, unknown> = {}
     open = vi.fn()
     write = vi.fn()
     dispose = vi.fn()
@@ -57,6 +58,7 @@ const createFakeApi = (state: AppState, capabilities: CapabilityState) => {
     }),
     deleteSession: vi.fn(async (_sessionId: string): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
+    setTheme: vi.fn(async (): Promise<void> => undefined),
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
     onStateChanged: vi.fn((listener: (state: AppState) => void) => {
@@ -131,6 +133,10 @@ let api: FakeApi
 
 beforeEach(() => {
   useAppStore.getState().reset()
+  // Theme persistence and the html[data-theme] stamp outlive an unmount; clear both so a
+  // theme toggled in one test never leaks into the next.
+  window.localStorage.clear()
+  delete document.documentElement.dataset.theme
   api = createFakeApi(stateWith(), allAvailableCapabilities)
   window.codefly = api
 })
@@ -466,14 +472,47 @@ describe('App', () => {
     expect(document.querySelector('.agent-bypass-status')).toBeNull()
   })
 
-  it('renders no title bar at all — the sidebar and workspace fill the window', async () => {
+  it('renders the title bar with a settings control and no session tabs', async () => {
     api = createFakeApi(stateWith(runningClaudeSession), allAvailableCapabilities)
     window.codefly = api
     render(<App />)
 
     await screen.findByText(runningClaudeSession.title, { selector: 'span.session-title' })
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
-    expect(document.querySelector('.title-bar')).toBeNull()
+    expect(document.querySelector('.title-bar')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
+  })
+
+  it('opens Settings from the title bar and switches between light and dark themes', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: 'Settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Settings' })
+    expect(dialog).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Light' }))
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(window.localStorage.getItem('codefly.theme')).toBe('light')
+    expect(api.setTheme).toHaveBeenCalledWith('light')
+    expect(screen.getByRole('button', { name: 'Light' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Dark' })).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'Dark' }))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(api.setTheme).toHaveBeenLastCalledWith('dark')
+
+    await user.click(screen.getByRole('button', { name: 'Close settings' }))
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument()
+  })
+
+  it('applies the persisted light theme (DOM, storage, and main process) on startup', async () => {
+    window.localStorage.setItem('codefly.theme', 'light')
+
+    render(<App />)
+
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'))
+    expect(api.setTheme).toHaveBeenCalledWith('light')
   })
 
   it('creates a session in the project whose row-level New session button was clicked', async () => {

@@ -8,6 +8,7 @@ export const IPC = {
   sessionRestore: 'session:restore',
   sessionDelete: 'session:delete',
   sessionFirstInput: 'session:first-input',
+  themeSet: 'theme:set',
   terminalWrite: 'terminal:write',
   terminalResize: 'terminal:resize',
   stateChanged: 'state:changed',

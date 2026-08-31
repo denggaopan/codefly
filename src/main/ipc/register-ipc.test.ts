@@ -154,6 +154,7 @@ type Harness = {
   externalAppService: { openInVSCode: ReturnType<typeof vi.fn>; openInExplorer: ReturnType<typeof vi.fn> }
   terminalService: FakeTerminalService
   getSnapshot: ReturnType<typeof vi.fn>
+  applyTheme: ReturnType<typeof vi.fn>
   dispose: () => void
 }
 
@@ -169,6 +170,7 @@ const buildHarness = (options: {
   const externalAppService = { openInVSCode: vi.fn(async () => undefined), openInExplorer: vi.fn(async () => undefined) }
   const terminalService = new FakeTerminalService()
   const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ state: emptyState(), capabilities: capabilities() }))
+  const applyTheme = vi.fn()
 
   const dispose = registerIpc({
     ipcMain: ipcMain as unknown as Electron.IpcMain,
@@ -178,10 +180,11 @@ const buildHarness = (options: {
     coordinator: coordinator as unknown as SessionCoordinator,
     externalAppService: externalAppService as unknown as ExternalAppService,
     terminalService: terminalService as unknown as TerminalService,
-    getSnapshot
+    getSnapshot,
+    applyTheme
   })
 
-  return { ipcMain, window, dialog, projectService, coordinator, externalAppService, terminalService, getSnapshot, dispose }
+  return { ipcMain, window, dialog, projectService, coordinator, externalAppService, terminalService, getSnapshot, applyTheme, dispose }
 }
 
 describe('registerIpc: sender ownership', () => {
@@ -376,6 +379,28 @@ describe('registerIpc: session:first-input', () => {
   })
 })
 
+describe('registerIpc: theme:set', () => {
+  it('parses the request and delegates to applyTheme', async () => {
+    const { ipcMain, applyTheme } = buildHarness()
+
+    await ipcMain.invoke(IPC.themeSet, { theme: 'light' })
+    expect(applyTheme).toHaveBeenCalledWith('light')
+
+    await ipcMain.invoke(IPC.themeSet, { theme: 'dark' })
+    expect(applyTheme).toHaveBeenLastCalledWith('dark')
+  })
+
+  it.each([[{}], [{ theme: 'blue' }], [{ theme: 'light', extra: true }]])(
+    'rejects malformed payload %j without calling applyTheme',
+    async (payload) => {
+      const { ipcMain, applyTheme } = buildHarness()
+
+      await expect(ipcMain.invoke(IPC.themeSet, payload)).rejects.toBeInstanceOf(z.ZodError)
+      expect(applyTheme).not.toHaveBeenCalled()
+    }
+  )
+})
+
 describe('registerIpc: terminal:write (send-only)', () => {
   it('parses the payload and forwards it to TerminalService.write', () => {
     const { ipcMain, terminalService } = buildHarness()
@@ -500,7 +525,8 @@ describe('registerIpc: disposer', () => {
       IPC.sessionCreate,
       IPC.sessionRestore,
       IPC.sessionDelete,
-      IPC.sessionFirstInput
+      IPC.sessionFirstInput,
+      IPC.themeSet
     ]) {
       expect(ipcMain.handlers.has(channel)).toBe(false)
     }

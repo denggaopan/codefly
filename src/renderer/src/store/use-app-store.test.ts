@@ -40,6 +40,7 @@ const createFakeApi = () => {
   const dataListeners = new Set<(payload: { sessionId: string; data: string }) => void>()
   const exitListeners = new Set<(payload: { sessionId: string; exitCode: number }) => void>()
   return {
+    setTheme: vi.fn(async (): Promise<void> => undefined),
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state: seededState, capabilities: defaultCapabilities() })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
     openProjectInVSCode: vi.fn(async (): Promise<void> => undefined),

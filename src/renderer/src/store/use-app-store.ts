@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionKind, SessionRecord } from '../../../shared/contracts'
+import type { AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionKind, SessionRecord, ThemePreference } from '../../../shared/contracts'
 
 export type Notice = {
   message: string
@@ -17,9 +17,12 @@ export type AppStore = {
   notice: Notice | null
   /** Running Claude/Codex sessions whose PTY output has been quiet for AGENT_IDLE_MS. */
   idleAgentSessionIds: Record<string, true>
+  theme: ThemePreference
 
   initialize: () => () => void
   reset: () => void
+
+  setTheme: (theme: ThemePreference) => void
 
   addProject: () => Promise<void>
   reorderProjects: (orderedProjectIds: readonly string[]) => Promise<void>
@@ -48,6 +51,33 @@ const defaultCapabilities = (): CapabilityState => ({
 })
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : 'Something went wrong.')
+
+export const THEME_STORAGE_KEY = 'codefly.theme'
+
+// The theme preference is renderer-owned (localStorage), not part of the main process's
+// persisted AppState: it is pure presentation, and localStorage survives restarts without
+// widening the state-file schema. Anything unrecognized (including a missing key on first
+// launch) falls back to dark, the app's original and default look.
+const readStoredTheme = (): ThemePreference => {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
+
+// Applies a theme everywhere outside this store's own state: the CSS token switch
+// (styles.css keys off html[data-theme]), the persisted preference, and the main process
+// (native theme + window caption-button overlay colors, via theme:set).
+const applyThemeEffects = (theme: ThemePreference): void => {
+  document.documentElement.dataset.theme = theme
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+  } catch {
+    // localStorage unavailable: the preference just won't survive a restart.
+  }
+  window.codefly.setTheme(theme).catch(() => undefined)
+}
 
 /**
  * How long a running Claude/Codex session's PTY output must stay quiet before the session
@@ -130,8 +160,15 @@ export const useAppStore = create<AppStore>()((set, get) => {
     searchQuery: '',
     notice: null,
     idleAgentSessionIds: {},
+    theme: 'dark',
 
     initialize: () => {
+      const storedTheme = readStoredTheme()
+      set({ theme: storedTheme })
+      // Re-applied on every startup (even for the dark default) so the main process's
+      // nativeTheme/overlay colors always converge with the renderer preference.
+      applyThemeEffects(storedTheme)
+
       window.codefly
         .getSnapshot()
         .then((snapshot) => {
@@ -174,8 +211,14 @@ export const useAppStore = create<AppStore>()((set, get) => {
         launcherOpen: false,
         searchQuery: '',
         notice: null,
-        idleAgentSessionIds: {}
+        idleAgentSessionIds: {},
+        theme: 'dark'
       })
+    },
+
+    setTheme: (theme) => {
+      set({ theme })
+      applyThemeEffects(theme)
     },
 
     addProject: async () => {

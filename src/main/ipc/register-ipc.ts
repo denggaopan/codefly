@@ -1,12 +1,13 @@
 import type { BrowserWindow, Dialog, IpcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 
-import type { AppSnapshot, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../shared/contracts'
+import type { AppSnapshot, DeleteSessionResult, ProjectRecord, SessionRecord, ThemePreference } from '../../shared/contracts'
 import {
   createSessionRequestSchema,
   firstInputRequestSchema,
   projectIdRequestSchema,
   reorderProjectsRequestSchema,
   sessionIdRequestSchema,
+  setThemeRequestSchema,
   terminalResizeRequestSchema,
   terminalWriteRequestSchema
 } from '../../shared/contracts'
@@ -25,6 +26,7 @@ export type RegisterIpcDependencies = {
   externalAppService: ExternalAppService
   terminalService: TerminalService
   getSnapshot: () => Promise<AppSnapshot>
+  applyTheme: (theme: ThemePreference) => void
 }
 
 type InvokeHandler = (event: IpcMainInvokeEvent, payload?: unknown) => unknown
@@ -43,7 +45,7 @@ const publish = (window: BrowserWindow, channel: string, payload: unknown): void
  * disposer that removes every handler/listener registered by this call.
  */
 export function registerIpc(deps: RegisterIpcDependencies): () => void {
-  const { ipcMain, dialog, window, projectService, coordinator, externalAppService, terminalService, getSnapshot } = deps
+  const { ipcMain, dialog, window, projectService, coordinator, externalAppService, terminalService, getSnapshot, applyTheme } = deps
 
   const invokeHandlers: ReadonlyArray<readonly [string, InvokeHandler]> = [
     [IPC.snapshotGet, async (): Promise<AppSnapshot> => getSnapshot()],
@@ -113,6 +115,14 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
       async (_event, payload): Promise<void> => {
         const { sessionId, text } = firstInputRequestSchema.parse(payload)
         await coordinator.submitFirstInput(sessionId, text)
+      }
+    ],
+
+    [
+      IPC.themeSet,
+      async (_event, payload): Promise<void> => {
+        const { theme } = setThemeRequestSchema.parse(payload)
+        applyTheme(theme)
       }
     ]
   ]
