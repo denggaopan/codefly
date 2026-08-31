@@ -137,6 +137,15 @@ describe('ProjectSidebar', () => {
     expect(names).toEqual(['New session', 'Open project in VS Code', 'Open project folder'])
   })
 
+  it('renders the New session action as the session icon instead of a plus glyph', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const newSession = screen.getByRole('button', { name: 'New session' })
+    expect(newSession.querySelector('img.icon-session')).not.toBeNull()
+    expect(newSession.textContent).not.toContain('+')
+  })
+
   it('does not put the project-row label or session-row label inside a role="button" ancestor', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)

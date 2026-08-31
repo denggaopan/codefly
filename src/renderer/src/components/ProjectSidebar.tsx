@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
+import sessionIconUrl from '../assets/session.svg'
 import vscodeIconUrl from '../assets/vscode.svg'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { sessionKindIconUrl } from '../session-kind-icons'
@@ -284,7 +285,7 @@ export default function ProjectSidebar() {
                       openLauncher()
                     }}
                   >
-                    +
+                    <img src={sessionIconUrl} alt="" width={16} height={16} className="icon icon-session" />
                   </button>
                   <button
                     type="button"
