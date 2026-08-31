@@ -123,8 +123,10 @@ Projects and session metadata (not terminal scrollback, not PTY handles, not cre
 are stored in a versioned JSON file under Electron's `userData` directory. Every session is
 marked `stopped` the moment the app starts, regardless of its status when the app last
 closed; click a stopped session to restart the same terminal or agent type in its original
-directory. Restoring never passes a resume flag to Claude or Codex and does not promise to
-restore prior conversation context.
+directory. Restoring a Claude session passes `--continue` (continuing the most recent
+conversation recorded for that directory) and restoring a Codex session runs
+`codex resume --last`, so the prior agent conversation is reattached on a best-effort
+basis; shell sessions restart fresh.
 
 ## Testing
 
