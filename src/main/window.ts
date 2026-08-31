@@ -34,6 +34,9 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 600,
     autoHideMenuBar: true,
     backgroundColor: '#0b0f14',
+    // In a packaged build the window/taskbar icon comes from the exe (electron-builder
+    // win.icon); build/icon.ico only exists in the repo, so it is wired up for dev runs.
+    ...(app.isPackaged ? {} : { icon: join(currentDirectory, '../../build/icon.ico') }),
     webPreferences: {
       preload: join(currentDirectory, '../preload/index.js'),
       contextIsolation: true,

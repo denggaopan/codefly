@@ -84,6 +84,18 @@ describe('createMainWindow', () => {
     expect(options.autoHideMenuBar).toBe(true)
   })
 
+  it('sets the app icon on the window in development, deferring to the exe icon when packaged', () => {
+    createMainWindow()
+    const [devOptions] = browserWindow.mock.calls[0] as unknown as [{ icon?: string }]
+    expect(devOptions.icon).toMatch(/icon\.ico$/)
+
+    browserWindow.mockClear()
+    mockApp.isPackaged = true
+    createMainWindow()
+    const [packagedOptions] = browserWindow.mock.calls[0] as unknown as [{ icon?: string }]
+    expect(packagedOptions.icon).toBeUndefined()
+  })
+
   it('forces the dark native theme so the OS window title bar renders dark, with a dark startup background', () => {
     mockNativeTheme.themeSource = 'system'
 

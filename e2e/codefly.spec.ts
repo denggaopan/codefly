@@ -75,8 +75,8 @@ const launchApp = async (): Promise<{ app: ElectronApplication; page: Page }> =>
 
 const readJsonArgvLog = (path: string): unknown => JSON.parse(readFileSync(path, 'utf8'))
 
-const sessionRowByGlyph = (glyph: string) =>
-  window.locator('.session-row', { has: window.locator('.session-kind-icon', { hasText: glyph }) })
+const sessionRowByKind = (kind: 'powershell' | 'cmd' | 'claude' | 'codex') =>
+  window.locator('.session-row', { has: window.locator(`.session-kind-icon[data-kind="${kind}"]`) })
 
 // The bypass disclosure is a single compact badge in the active session's terminal header
 // (TerminalWorkspace.tsx's TerminalHeader). Every session that has ever been made active
@@ -111,7 +111,7 @@ test('adds the fixture project and creates a Claude session as the first worktre
   await window.getByRole('button', { name: 'New session' }).click()
   await window.locator('.session-launcher').getByRole('button', { name: 'Claude', exact: true }).click()
 
-  const claudeRow = sessionRowByGlyph('CL')
+  const claudeRow = sessionRowByKind('claude')
   await expect(claudeRow).toHaveCount(1, { timeout: 20_000 })
   await expect(claudeRow.locator('.session-secondary')).toHaveText(/^worktree-\d{6}-1$/)
   await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_E2E_FAKE_AGENT_READY', { timeout: 20_000 })
@@ -128,7 +128,7 @@ test('Claude receives exactly its bypass flag and the persistent warning is visi
 test('marks the running Claude session Done once its output has gone quiet', async () => {
   // The fake agent prints one ready marker and then stays silent, so after the renderer's
   // quiet window (AGENT_IDLE_MS) the sidebar row must flip from Running to Done.
-  const claudeRow = sessionRowByGlyph('CL')
+  const claudeRow = sessionRowByKind('claude')
   const status = claudeRow.locator('.session-status')
   await expect(status).toHaveText('Done', { timeout: 20_000 })
   await expect(status).toHaveAttribute('data-status', 'done')
@@ -171,7 +171,7 @@ test('keeps the terminal workflow usable at the 900 by 600 minimum window size',
 })
 
 test('submitting the first input replaces the title and never leaks a bypass flag to the title process', async () => {
-  const claudeRow = sessionRowByGlyph('CL')
+  const claudeRow = sessionRowByKind('claude')
   const originalTitle = await claudeRow.locator('.session-title').textContent()
 
   const terminalHost = window.locator('.terminal-pane:visible .terminal-instance-host')
@@ -194,7 +194,7 @@ test('creates a Codex session as the second worktree, receiving exactly its own 
   await window.getByRole('button', { name: 'New session' }).click()
   await window.locator('.session-launcher').getByRole('button', { name: 'Codex', exact: true }).click()
 
-  const codexRow = sessionRowByGlyph('CX')
+  const codexRow = sessionRowByKind('codex')
   await expect(codexRow).toHaveCount(1, { timeout: 20_000 })
   await expect(codexRow.locator('.session-secondary')).toHaveText(/^worktree-\d{6}-2$/)
 
@@ -208,7 +208,7 @@ test('creates a Codex session as the second worktree, receiving exactly its own 
 test('creates PowerShell and Command Prompt sessions with the bypass warning absent', async () => {
   await window.getByRole('button', { name: 'New session' }).click()
   await window.locator('.session-launcher').getByRole('button', { name: 'PowerShell', exact: true }).click()
-  const powershellRow = sessionRowByGlyph('PS')
+  const powershellRow = sessionRowByKind('powershell')
   await expect(powershellRow).toHaveCount(1, { timeout: 20_000 })
   await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
   await expect(visibleBypassWarnings()).toHaveCount(0)
@@ -233,7 +233,7 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
 
   await window.getByRole('button', { name: 'New session' }).click()
   await window.locator('.session-launcher').getByRole('button', { name: 'Command Prompt', exact: true }).click()
-  const cmdRow = sessionRowByGlyph('CMD')
+  const cmdRow = sessionRowByKind('cmd')
   await expect(cmdRow).toHaveCount(1, { timeout: 20_000 })
   await expect(cmdRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
   await expect(visibleBypassWarnings()).toHaveCount(0)
@@ -254,7 +254,7 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
     await expect(rows.nth(index).locator('.session-status')).toHaveText('Click to restore')
   }
 
-  const powershellRow = sessionRowByGlyph('PS')
+  const powershellRow = sessionRowByKind('powershell')
   await powershellRow.locator('.session-row-content').click()
   await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
   await expect(powershellRow.locator('.session-row-content')).toHaveAttribute('aria-current', 'true')
@@ -268,7 +268,8 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
 
 test('mocked VS Code and Explorer project-row actions do not toggle the row or change the active session', async () => {
   const activeRowBefore = window.locator('.session-row-content[aria-current="true"]')
-  const activeGlyphBefore = await activeRowBefore.locator('.session-kind-icon').textContent()
+  const activeKindBefore = await activeRowBefore.locator('.session-kind-icon').getAttribute('data-kind')
+  expect(activeKindBefore).not.toBeNull()
   // The expand control is gone (project groups are an accordion on activation): "not
   // toggling the row" now means the session list stays visible and the active session
   // unchanged after each project-row action.
@@ -278,16 +279,16 @@ test('mocked VS Code and Explorer project-row actions do not toggle the row or c
   await window.getByRole('button', { name: 'Open project in VS Code' }).click()
   await expect(window.locator('.sidebar-notice')).toHaveCount(0)
   await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
-  await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveText(activeGlyphBefore ?? '')
+  await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveAttribute('data-kind', activeKindBefore!)
 
   await window.getByRole('button', { name: 'Open project folder' }).click()
   await expect(window.locator('.sidebar-notice')).toHaveCount(0)
   await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
-  await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveText(activeGlyphBefore ?? '')
+  await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveAttribute('data-kind', activeKindBefore!)
 })
 
 test('blocks deleting a dirty worktree, then deletes cleanly and retains the branch', async () => {
-  const cmdRow = sessionRowByGlyph('CMD')
+  const cmdRow = sessionRowByKind('cmd')
   const worktreeName = (await cmdRow.locator('.session-secondary').textContent())?.trim()
   expect(worktreeName).toMatch(/^worktree-\d{6}-4$/)
   const worktreePath = join(repoPath, '.worktrees', worktreeName!)
@@ -302,7 +303,7 @@ test('blocks deleting a dirty worktree, then deletes cleanly and retains the bra
   await confirmDialog.getByRole('button', { name: 'Delete' }).click()
 
   await expect(window.locator('.sidebar-notice')).toContainText(/changed files/i, { timeout: 20_000 })
-  await expect(sessionRowByGlyph('CMD')).toHaveCount(1)
+  await expect(sessionRowByKind('cmd')).toHaveCount(1)
   expect(existsSync(worktreePath)).toBe(true)
 
   await window.getByRole('button', { name: 'Dismiss notice' }).click()
@@ -312,7 +313,7 @@ test('blocks deleting a dirty worktree, then deletes cleanly and retains the bra
   await expect(confirmDialog).toBeVisible()
   await confirmDialog.getByRole('button', { name: 'Delete' }).click()
 
-  await expect(sessionRowByGlyph('CMD')).toHaveCount(0, { timeout: 20_000 })
+  await expect(sessionRowByKind('cmd')).toHaveCount(0, { timeout: 20_000 })
   expect(existsSync(worktreePath)).toBe(false)
 
   const branches = execFileSync('git', ['-C', repoPath, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' })

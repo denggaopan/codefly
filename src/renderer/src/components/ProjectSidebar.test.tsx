@@ -240,6 +240,22 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText('Special P2 session')).toBeInTheDocument()
   })
 
+  it('renders an SVG brand icon per session kind instead of a text glyph', () => {
+    const cmdSession: SessionRecord = { ...stoppedSession, id: 'session-cmd', kind: 'cmd' }
+    const codexSession: SessionRecord = { ...runningWorktreeSession, id: 'session-codex', kind: 'codex' }
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession, cmdSession, runningWorktreeSession, codexSession] })
+    render(<ProjectSidebar />)
+
+    for (const kind of ['powershell', 'cmd', 'claude', 'codex']) {
+      const icon = document.querySelector(`.session-kind-icon[data-kind="${kind}"] img`)
+      expect(icon).not.toBeNull()
+    }
+    expect(screen.queryByText('PS')).not.toBeInTheDocument()
+    expect(screen.queryByText('CMD')).not.toBeInTheDocument()
+    expect(screen.queryByText('CL')).not.toBeInTheDocument()
+    expect(screen.queryByText('CX')).not.toBeInTheDocument()
+  })
+
   it('shows worktree name for a worktree session and "Ordinary session" for a fallback session', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession, runningWorktreeSession] })
     render(<ProjectSidebar />)

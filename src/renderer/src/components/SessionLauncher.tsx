@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import type { SessionKind } from '../../../shared/contracts'
+import { sessionKindIconUrl } from '../session-kind-icons'
 import { useAppStore } from '../store/use-app-store'
 
 type LauncherItem = {
@@ -78,6 +79,7 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
           return (
             <li key={item.kind} className="session-launcher-item" data-launcher-item>
               <button type="button" disabled={!info.available || pending} onClick={() => handleSelect(item.kind)}>
+                <img src={sessionKindIconUrl(item.kind)} alt="" width={16} height={16} className="session-launcher-icon" />
                 <span className="session-launcher-label">{item.label}</span>
                 {item.shortcut && (
                   <span className="session-launcher-shortcut" aria-hidden="true">

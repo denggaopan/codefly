@@ -3,24 +3,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { SessionRecord } from '../../../shared/contracts'
 import vscodeIconUrl from '../assets/vscode.svg'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
+import { sessionKindIconUrl } from '../session-kind-icons'
 import { useAppStore } from '../store/use-app-store'
 import ConfirmDialog from './ConfirmDialog'
 import SessionLauncher from './SessionLauncher'
-
-const sessionKindGlyph = (kind: SessionRecord['kind']): string => {
-  switch (kind) {
-    case 'powershell':
-      return 'PS'
-    case 'cmd':
-      return 'CMD'
-    case 'claude':
-      return 'CL'
-    case 'codex':
-      return 'CX'
-    default:
-      return '?'
-  }
-}
 
 const vscodeHintId = (projectId: string): string => `vscode-hint-${projectId}`
 
@@ -51,8 +37,8 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
   return (
     <li className="session-row">
       <button type="button" className="session-row-content" aria-current={active ? 'true' : undefined} onClick={onActivate}>
-        <span aria-hidden="true" className="session-kind-icon">
-          {sessionKindGlyph(session.kind)}
+        <span aria-hidden="true" className="session-kind-icon" data-kind={session.kind}>
+          <img src={sessionKindIconUrl(session.kind)} alt="" width={16} height={16} />
         </span>
         <span className="session-title" title={session.title}>
           {session.title}

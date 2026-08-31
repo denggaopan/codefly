@@ -9,6 +9,7 @@ files:
 asarUnpack:
   - node_modules/node-pty/**
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
