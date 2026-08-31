@@ -16,6 +16,7 @@
   /* Accent + state tokens */
   --color-accent-blue: #3b9eff;
   --color-state-running: #3ecf8e;
+  --color-state-done: #b18aff;
   --color-state-warning: #e0a940;
   --color-state-destructive: #e5484d;
 
@@ -425,6 +426,11 @@ input {
   color: var(--color-state-running);
 }
 
+.session-status[data-status='done'] {
+  background: rgba(177, 138, 255, 0.16);
+  color: var(--color-state-done);
+}
+
 .session-status[data-status='creating'] {
   background: rgba(59, 158, 255, 0.16);
   color: var(--color-accent-blue);
@@ -619,6 +625,11 @@ input {
 .terminal-header-status[data-status='running'] {
   background: rgba(62, 207, 142, 0.16);
   color: var(--color-state-running);
+}
+
+.terminal-header-status[data-status='done'] {
+  background: rgba(177, 138, 255, 0.16);
+  color: var(--color-state-done);
 }
 
 .terminal-header-status[data-status='creating'] {

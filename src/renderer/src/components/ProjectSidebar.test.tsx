@@ -274,6 +274,26 @@ describe('ProjectSidebar', () => {
     expect(useAppStore.getState().activeSessionId).toBe(runningWorktreeSession.id)
   })
 
+  it('shows "Done" with a done status tint for a running agent session whose output has gone quiet', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [runningWorktreeSession] })
+    useAppStore.setState({ idleAgentSessionIds: { [runningWorktreeSession.id]: true } })
+    render(<ProjectSidebar />)
+
+    const status = screen.getByText('Done')
+    expect(status).toHaveAttribute('data-status', 'done')
+    expect(screen.queryByText('Running')).not.toBeInTheDocument()
+  })
+
+  it('keeps "Running" for a quiet shell session even when it is marked idle', () => {
+    const runningShell: SessionRecord = { ...stoppedSession, id: 'session-shell', status: 'running' }
+    seedStore({ version: 1, projects: [project1], sessions: [runningShell] })
+    useAppStore.setState({ idleAgentSessionIds: { [runningShell.id]: true } })
+    render(<ProjectSidebar />)
+
+    expect(screen.getByText('Running')).toBeInTheDocument()
+    expect(screen.queryByText('Done')).not.toBeInTheDocument()
+  })
+
   it('stops propagation on the session delete button and opens a confirmation', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [runningWorktreeSession] })

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
 import vscodeIconUrl from '../assets/vscode.svg'
-import { isSessionRestartable, sessionStatusLabel } from '../session-status'
+import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import ConfirmDialog from './ConfirmDialog'
 import SessionLauncher from './SessionLauncher'
@@ -40,6 +40,7 @@ type SessionRowProps = {
 }
 
 function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRowProps) {
+  const agentIdle = useAppStore((state) => state.idleAgentSessionIds[session.id] === true)
   const secondary = session.mode === 'worktree' ? session.worktreeName : 'Ordinary session'
 
   // The row is a plain <li>: its label and delete action are SIBLING <button> elements
@@ -59,8 +60,8 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
         <span className="session-secondary" title={secondary}>
           {secondary}
         </span>
-        <span className="session-status" data-status={session.status}>
-          {sessionStatusLabel(session)}
+        <span className="session-status" data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}>
+          {sessionStatusLabel(session, agentIdle)}
         </span>
       </button>
       <button

@@ -557,6 +557,15 @@ describe('TerminalWorkspace', () => {
     expect(await screen.findByText('Running')).toHaveAttribute('data-status', 'running')
   })
 
+  it('shows "Done" in the header when the active agent session output has gone quiet', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id, idleAgentSessionIds: { [runningClaudeSession.id]: true } })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText('Done')).toHaveAttribute('data-status', 'done')
+    expect(screen.queryByText('Running')).not.toBeInTheDocument()
+  })
+
   it('hides the bypass warning text in a running PowerShell header', async () => {
     seedStore(runningPowerShellSession)
     useAppStore.setState({ activeSessionId: runningPowerShellSession.id })

@@ -125,6 +125,15 @@ test('Claude receives exactly its bypass flag and the persistent warning is visi
   await expect(visibleBypassWarnings()).toHaveText([BYPASS_WARNING_TEXT])
 })
 
+test('marks the running Claude session Done once its output has gone quiet', async () => {
+  // The fake agent prints one ready marker and then stays silent, so after the renderer's
+  // quiet window (AGENT_IDLE_MS) the sidebar row must flip from Running to Done.
+  const claudeRow = sessionRowByGlyph('CL')
+  const status = claudeRow.locator('.session-status')
+  await expect(status).toHaveText('Done', { timeout: 20_000 })
+  await expect(status).toHaveAttribute('data-status', 'done')
+})
+
 test('keeps the terminal workflow usable at the 900 by 600 minimum window size', async () => {
   const size = await electronApp.evaluate(({ BrowserWindow }) => {
     const mainWindow = BrowserWindow.getAllWindows()[0]

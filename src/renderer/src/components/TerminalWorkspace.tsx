@@ -8,7 +8,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
-import { BYPASS_WARNING_TEXT, isSessionRestartable, sessionStatusLabel } from '../session-status'
+import { BYPASS_WARNING_TEXT, isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
 
@@ -51,6 +51,7 @@ type TerminalHeaderProps = {
 }
 
 function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
+  const agentIdle = useAppStore((state) => state.idleAgentSessionIds[session.id] === true)
   const running = session.status === 'running'
   const showBypass = running && (session.kind === 'claude' || session.kind === 'codex')
   const canRestart = isSessionRestartable(session)
@@ -62,8 +63,8 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
           {session.title}
         </span>
         <span className="terminal-header-kind">{sessionKindLabel(session.kind)}</span>
-        <span className="terminal-header-status" data-status={session.status}>
-          {sessionStatusLabel(session)}
+        <span className="terminal-header-status" data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}>
+          {sessionStatusLabel(session, agentIdle)}
         </span>
         {showBypass && (
           <span
