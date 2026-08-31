@@ -13,8 +13,10 @@
   --color-text: #e7edf5;
   --color-text-muted: #8b98a9;
 
-  /* Accent + state tokens */
-  --color-accent-blue: #3b9eff;
+  /* Accent + state tokens. The accent is the phoenix-logo purple (#6e5494, see
+     build/icon.svg) lightened along the same hue so small text and outlines stay
+     readable on the dark canvas. */
+  --color-accent: #9471c7;
   --color-state-running: #3ecf8e;
   --color-state-done: #b18aff;
   --color-state-warning: #e0a940;
@@ -78,7 +80,7 @@ input {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-accent-blue);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 
@@ -161,7 +163,7 @@ input {
      transparent), so the highlight is actually visible in the main workspace area, most
      obviously in the empty state before any session is opened. */
   background:
-    radial-gradient(ellipse 900px 500px at 20% -10%, rgba(59, 158, 255, 0.16), transparent 60%),
+    radial-gradient(ellipse 900px 500px at 20% -10%, rgba(148, 113, 199, 0.16), transparent 60%),
     var(--color-canvas);
 }
 
@@ -251,8 +253,8 @@ input {
 }
 
 .add-project-fab:hover {
-  border-color: var(--color-accent-blue);
-  color: var(--color-accent-blue);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 .project-group {
@@ -271,7 +273,7 @@ input {
 
 .project-row[aria-current='true'] {
   background: var(--color-panel-elevated);
-  border-left-color: var(--color-accent-blue);
+  border-left-color: var(--color-accent);
 }
 
 .project-row-label {
@@ -379,7 +381,7 @@ input {
 
 .session-row-content[aria-current='true'] {
   background: var(--color-panel-elevated);
-  border-left-color: var(--color-accent-blue);
+  border-left-color: var(--color-accent);
 }
 
 .session-kind-icon {
@@ -437,8 +439,8 @@ input {
 }
 
 .session-status[data-status='creating'] {
-  background: rgba(59, 158, 255, 0.16);
-  color: var(--color-accent-blue);
+  background: rgba(148, 113, 199, 0.16);
+  color: var(--color-accent);
 }
 
 .session-status[data-status='missing'] {
@@ -648,8 +650,8 @@ input {
 }
 
 .terminal-header-status[data-status='creating'] {
-  background: rgba(59, 158, 255, 0.16);
-  color: var(--color-accent-blue);
+  background: rgba(148, 113, 199, 0.16);
+  color: var(--color-accent);
 }
 
 .terminal-header-status[data-status='missing'] {
@@ -673,7 +675,7 @@ input {
 }
 
 .terminal-restart-button:hover {
-  border-color: var(--color-accent-blue);
+  border-color: var(--color-accent);
 }
 
 .terminal-header-path {
