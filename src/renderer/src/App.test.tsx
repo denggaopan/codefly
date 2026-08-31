@@ -46,6 +46,7 @@ const createFakeApi = (state: AppState, capabilities: CapabilityState) => {
   return {
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state, capabilities })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
+    reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
     openProjectInVSCode: vi.fn(async (_projectId: string): Promise<void> => undefined),
     openProjectFolder: vi.fn(async (_projectId: string): Promise<void> => undefined),
     createSession: vi.fn(async (_projectId: string, _kind: SessionKind): Promise<SessionRecord> => {

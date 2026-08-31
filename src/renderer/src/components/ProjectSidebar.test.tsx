@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,6 +12,7 @@ type FakeApi = Window['codefly']
 const createFakeApi = (): FakeApi => ({
   getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state: { version: 1, projects: [], sessions: [] }, capabilities: defaultCapabilities() })),
   addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
+  reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
   openProjectInVSCode: vi.fn(async (_projectId: string): Promise<void> => undefined),
   openProjectFolder: vi.fn(async (_projectId: string): Promise<void> => undefined),
   createSession: vi.fn(async () => {
@@ -238,6 +239,58 @@ describe('ProjectSidebar', () => {
     render(<ProjectSidebar />)
 
     expect(screen.getByText('Special P2 session')).toBeInTheDocument()
+  })
+
+  describe('project drag reordering', () => {
+    const project2: ProjectRecord = { ...project1, id: 'project-2', name: 'other-app', path: 'C:\\work\\other-app' }
+    const dataTransfer = () => ({ setData: vi.fn(), getData: vi.fn(() => ''), effectAllowed: '', dropEffect: '' })
+
+    const projectRows = (): HTMLElement[] => Array.from(document.querySelectorAll('.project-row'))
+
+    it('marks project rows draggable and calls reorderProjects with the dropped order', async () => {
+      seedStore({ version: 1, projects: [project1, project2], sessions: [] })
+      api.reorderProjects = vi.fn(async () => [project2, project1])
+      window.codefly = api
+      render(<ProjectSidebar />)
+
+      const [firstRow, secondRow] = projectRows()
+      expect(firstRow).toHaveAttribute('draggable', 'true')
+
+      const transfer = dataTransfer()
+      fireEvent.dragStart(firstRow!, { dataTransfer: transfer })
+      // jsdom rects are all zeros, so clientY 0 is not above the midpoint: position is 'after'.
+      fireEvent.dragOver(secondRow!, { dataTransfer: transfer, clientY: 0 })
+      expect(secondRow).toHaveAttribute('data-drop', 'after')
+      fireEvent.drop(secondRow!, { dataTransfer: transfer })
+
+      await waitFor(() => expect(api.reorderProjects).toHaveBeenCalledWith(['project-2', 'project-1']))
+      expect(secondRow).not.toHaveAttribute('data-drop')
+    })
+
+    it('does not call reorderProjects when the row is dropped back onto itself', () => {
+      seedStore({ version: 1, projects: [project1, project2], sessions: [] })
+      render(<ProjectSidebar />)
+
+      const [firstRow] = projectRows()
+      const transfer = dataTransfer()
+      fireEvent.dragStart(firstRow!, { dataTransfer: transfer })
+      fireEvent.dragOver(firstRow!, { dataTransfer: transfer, clientY: 0 })
+      fireEvent.drop(firstRow!, { dataTransfer: transfer })
+
+      expect(api.reorderProjects).not.toHaveBeenCalled()
+    })
+
+    it('disables dragging while a search filter is active', async () => {
+      const user = userEvent.setup()
+      seedStore({ version: 1, projects: [project1, project2], sessions: [] })
+      render(<ProjectSidebar />)
+
+      await user.type(screen.getByRole('searchbox', { name: 'Search sessions' }), 'x')
+
+      for (const row of projectRows()) {
+        expect(row).toHaveAttribute('draggable', 'false')
+      }
+    })
   })
 
   it('renders an SVG brand icon per session kind instead of a text glyph', () => {

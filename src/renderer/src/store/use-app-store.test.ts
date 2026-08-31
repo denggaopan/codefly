@@ -46,6 +46,7 @@ const createFakeApi = () => {
     openProjectFolder: vi.fn(async (): Promise<void> => undefined),
     createSession: vi.fn(async (): Promise<SessionRecord> => claudeSession),
     restoreSession: vi.fn(async (): Promise<SessionRecord> => claudeSession),
+    reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
     deleteSession: vi.fn(async (): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
     writeTerminal: vi.fn(),
@@ -93,6 +94,30 @@ beforeEach(async () => {
 afterEach(() => {
   dispose()
   vi.useRealTimers()
+})
+
+describe('useAppStore.reorderProjects', () => {
+  const projectAt = (id: string): ProjectRecord => ({ id, name: id, path: `C:\\${id}`, createdAt: '2026-08-20T00:00:00.000Z' })
+
+  it('sends the order over IPC and applies the returned authoritative project list', async () => {
+    const reordered = [projectAt('p2'), projectAt('p1')]
+    api.reorderProjects.mockResolvedValue(reordered)
+
+    await useAppStore.getState().reorderProjects(['p2', 'p1'])
+
+    expect(api.reorderProjects).toHaveBeenCalledWith(['p2', 'p1'])
+    expect(useAppStore.getState().appState.projects).toEqual(reordered)
+  })
+
+  it('surfaces a notice and keeps the current order when the reorder rejects', async () => {
+    const before = useAppStore.getState().appState.projects
+    api.reorderProjects.mockRejectedValue(new Error('Project not found: ghost'))
+
+    await useAppStore.getState().reorderProjects(['ghost'])
+
+    expect(useAppStore.getState().appState.projects).toEqual(before)
+    expect(useAppStore.getState().notice).toEqual({ message: 'Project not found: ghost', tone: 'error' })
+  })
 })
 
 describe('useAppStore agent idle tracking', () => {

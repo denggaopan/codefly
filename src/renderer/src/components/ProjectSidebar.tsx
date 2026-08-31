@@ -84,6 +84,7 @@ export default function ProjectSidebar() {
   const setSearchQuery = useAppStore((state) => state.setSearchQuery)
   const addProject = useAppStore((state) => state.addProject)
   const setActiveProject = useAppStore((state) => state.setActiveProject)
+  const reorderProjects = useAppStore((state) => state.reorderProjects)
   const setActiveSession = useAppStore((state) => state.setActiveSession)
   const restoreSession = useAppStore((state) => state.restoreSession)
   const deleteSession = useAppStore((state) => state.deleteSession)
@@ -95,6 +96,12 @@ export default function ProjectSidebar() {
   const closeLauncher = useAppStore((state) => state.closeLauncher)
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
+
+  // Project drag-reordering: the whole project row is the drag handle (action buttons
+  // excluded via stopRowDrag). Dragging is disabled while a search filter is active — the
+  // filtered view hides rows, so a drop position would be ambiguous.
+  const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ projectId: string; position: 'before' | 'after' } | null>(null)
 
   // Focus restoration for the launcher: whichever project-row "+" trigger opened it gets
   // keyboard/screen-reader focus back when the launcher closes (close button, Escape, or a
@@ -148,6 +155,53 @@ export default function ProjectSidebar() {
   }
 
   const normalizedQuery = searchQuery.trim().toLowerCase()
+  const dragEnabled = normalizedQuery === ''
+
+  const clearDragState = (): void => {
+    setDraggingProjectId(null)
+    setDropTarget(null)
+  }
+
+  const handleRowDragStart = (event: React.DragEvent<HTMLDivElement>, projectId: string): void => {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', projectId)
+    setDraggingProjectId(projectId)
+  }
+
+  const handleRowDragOver = (event: React.DragEvent<HTMLDivElement>, projectId: string): void => {
+    if (!draggingProjectId || draggingProjectId === projectId) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const rect = event.currentTarget.getBoundingClientRect()
+    const position = event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+    if (dropTarget?.projectId !== projectId || dropTarget.position !== position) {
+      setDropTarget({ projectId, position })
+    }
+  }
+
+  const handleRowDrop = (event: React.DragEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    if (!draggingProjectId || !dropTarget) {
+      clearDragState()
+      return
+    }
+    const orderedIds = appState.projects.map((project) => project.id).filter((id) => id !== draggingProjectId)
+    const targetIndex = orderedIds.indexOf(dropTarget.projectId)
+    if (targetIndex === -1) {
+      clearDragState()
+      return
+    }
+    orderedIds.splice(dropTarget.position === 'before' ? targetIndex : targetIndex + 1, 0, draggingProjectId)
+    const changed = orderedIds.some((id, index) => appState.projects[index]?.id !== id)
+    if (changed) void reorderProjects(orderedIds)
+    clearDragState()
+  }
+
+  // Action buttons (and the launcher) inside a draggable row must never start a row drag.
+  const stopRowDrag = (event: React.DragEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+  }
 
   return (
     <aside className="project-sidebar">
@@ -193,7 +247,18 @@ export default function ProjectSidebar() {
                 stops where the accessible tree advertises one), so the label itself is a
                 native <button> here and gets keyboard (Enter/Space) activation for free.
               */}
-              <div className="project-row" data-project-row aria-current={project.id === activeProjectId ? 'true' : undefined}>
+              <div
+                className="project-row"
+                data-project-row
+                aria-current={project.id === activeProjectId ? 'true' : undefined}
+                draggable={dragEnabled}
+                data-dragging={draggingProjectId === project.id ? 'true' : undefined}
+                data-drop={dropTarget?.projectId === project.id ? dropTarget.position : undefined}
+                onDragStart={(event) => handleRowDragStart(event, project.id)}
+                onDragOver={(event) => handleRowDragOver(event, project.id)}
+                onDrop={handleRowDrop}
+                onDragEnd={clearDragState}
+              >
                 <button type="button" className="project-row-label" onClick={() => setActiveProject(project.id)}>
                   <span className="project-name" title={project.name}>
                     {project.name}
@@ -202,7 +267,7 @@ export default function ProjectSidebar() {
                     {project.path}
                   </span>
                 </button>
-                <div className="project-actions" data-project-actions>
+                <div className="project-actions" data-project-actions onDragStart={stopRowDrag}>
                   <button
                     type="button"
                     aria-label="New session"

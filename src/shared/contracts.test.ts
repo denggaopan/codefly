@@ -6,6 +6,7 @@ import {
   createSessionRequestSchema,
   firstInputRequestSchema,
   projectIdRequestSchema,
+  reorderProjectsRequestSchema,
   sessionRecordSchema,
   sessionIdRequestSchema,
   terminalWriteRequestSchema,
@@ -155,12 +156,21 @@ describe('shared contracts', () => {
     }
   })
 
+  it('accepts only a non-empty list of non-empty project ids for project reordering', () => {
+    expect(reorderProjectsRequestSchema.safeParse({ orderedProjectIds: ['p1', 'p2'] }).success).toBe(true)
+    expect(reorderProjectsRequestSchema.safeParse({ orderedProjectIds: [] }).success).toBe(false)
+    expect(reorderProjectsRequestSchema.safeParse({ orderedProjectIds: ['p1', ''] }).success).toBe(false)
+    expect(reorderProjectsRequestSchema.safeParse({}).success).toBe(false)
+    expect(reorderProjectsRequestSchema.safeParse({ orderedProjectIds: ['p1'], extra: true }).success).toBe(false)
+  })
+
   it('defines every IPC channel once', () => {
     expect(IPC).toEqual({
       snapshotGet: 'snapshot:get',
       projectAdd: 'project:add',
       projectOpenVSCode: 'project:open-vscode',
       projectOpenFolder: 'project:open-folder',
+      projectReorder: 'project:reorder',
       sessionCreate: 'session:create',
       sessionRestore: 'session:restore',
       sessionDelete: 'session:delete',

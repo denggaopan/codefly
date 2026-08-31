@@ -6,6 +6,7 @@ import { IPC } from '../shared/ipc'
 export type CodeFlyApi = {
   getSnapshot(): Promise<AppSnapshot>
   addProject(): Promise<ProjectRecord | null>
+  reorderProjects(orderedProjectIds: readonly string[]): Promise<ProjectRecord[]>
   openProjectInVSCode(projectId: string): Promise<void>
   openProjectFolder(projectId: string): Promise<void>
   createSession(projectId: string, kind: SessionKind): Promise<SessionRecord>
@@ -25,6 +26,7 @@ export type CodeFlyApi = {
 const api: CodeFlyApi = {
   getSnapshot: () => ipcRenderer.invoke(IPC.snapshotGet),
   addProject: () => ipcRenderer.invoke(IPC.projectAdd),
+  reorderProjects: (orderedProjectIds) => ipcRenderer.invoke(IPC.projectReorder, { orderedProjectIds: [...orderedProjectIds] }),
   openProjectInVSCode: (projectId) => ipcRenderer.invoke(IPC.projectOpenVSCode, { projectId }),
   openProjectFolder: (projectId) => ipcRenderer.invoke(IPC.projectOpenFolder, { projectId }),
   createSession: (projectId, kind) => ipcRenderer.invoke(IPC.sessionCreate, { projectId, kind }),

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppState, ProjectRecord } from '../../shared/contracts'
 import type { CommandRunner } from '../infrastructure/command-runner'
 import { SessionStore } from './session-store'
-import { InvalidProjectPathError, ProjectNotFoundError, ProjectService } from './project-service'
+import { InvalidProjectPathError, ProjectNotFoundError, ProjectOrderMismatchError, ProjectService } from './project-service'
 
 const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
 const fsFor = (realPath = 'C:\\Projects\\My App', directory = true) => ({
@@ -106,5 +106,54 @@ describe('ProjectService', () => {
     await expect(service.register('C:\\selected')).resolves.toBe(existing)
     expect(run).not.toHaveBeenCalled()
     expect(store.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('ProjectService.reorder', () => {
+  const projectAt = (id: string): ProjectRecord => ({ id, name: id, path: `C:\\${id}`, createdAt: '2026-08-26T00:00:00.000Z' })
+
+  const storeWith = (projects: ProjectRecord[]) => {
+    let state: AppState = { ...emptyState(), projects }
+    return {
+      state: () => state,
+      store: {
+        load: vi.fn(async () => structuredClone(state)),
+        update: vi.fn(async (mutator: (state: AppState) => AppState | Promise<AppState>) => {
+          state = await mutator(structuredClone(state))
+          return structuredClone(state)
+        })
+      } as unknown as SessionStore
+    }
+  }
+
+  it('persists the requested order and returns the reordered records', async () => {
+    const { store, state } = storeWith([projectAt('p1'), projectAt('p2'), projectAt('p3')])
+    const service = new ProjectService(store)
+
+    const reordered = await service.reorder(['p3', 'p1', 'p2'])
+
+    expect(reordered.map((project) => project.id)).toEqual(['p3', 'p1', 'p2'])
+    expect(state().projects.map((project) => project.id)).toEqual(['p3', 'p1', 'p2'])
+  })
+
+  it.each([
+    ['a missing project id', ['p1']],
+    ['an unknown project id', ['p1', 'ghost']],
+    ['a duplicated project id', ['p1', 'p1']]
+  ])('rejects %s without persisting', async (_label, orderedIds) => {
+    const { store, state } = storeWith([projectAt('p1'), projectAt('p2')])
+    const service = new ProjectService(store)
+
+    await expect(service.reorder(orderedIds)).rejects.toBeInstanceOf(ProjectOrderMismatchError)
+    expect(state().projects.map((project) => project.id)).toEqual(['p1', 'p2'])
+  })
+
+  it('validates against the latest persisted state inside the update transaction', async () => {
+    // A project registered between the renderer reading the list and dropping the row must
+    // not be silently discarded by the stale order.
+    const { store } = storeWith([projectAt('p1'), projectAt('p2'), projectAt('late')])
+    const service = new ProjectService(store)
+
+    await expect(service.reorder(['p2', 'p1'])).rejects.toBeInstanceOf(ProjectOrderMismatchError)
   })
 })

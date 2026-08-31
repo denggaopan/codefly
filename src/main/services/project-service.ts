@@ -22,6 +22,13 @@ export class ProjectNotFoundError extends Error {
   }
 }
 
+export class ProjectOrderMismatchError extends Error {
+  constructor() {
+    super('The requested project order does not match the current set of projects. Refresh and try again.')
+    this.name = 'ProjectOrderMismatchError'
+  }
+}
+
 export class InvalidProjectPathError extends Error {
   readonly selectedPath: string
 
@@ -95,6 +102,28 @@ export class ProjectService {
       return { ...latest, projects: [...latest.projects, project] }
     })
     return persisted
+  }
+
+  /**
+   * Persists a new display order for the projects. The order must be an exact permutation
+   * of the projects persisted at commit time — validated inside the update transaction so a
+   * project registered concurrently (after the renderer read its stale list) is never
+   * silently dropped. Returns the reordered records.
+   */
+  async reorder(orderedProjectIds: readonly string[]): Promise<ProjectRecord[]> {
+    let reordered: ProjectRecord[] = []
+    await this.store.update((latest) => {
+      const byId = new Map(latest.projects.map((project) => [project.id, project]))
+      const isPermutation =
+        orderedProjectIds.length === byId.size &&
+        new Set(orderedProjectIds).size === orderedProjectIds.length &&
+        orderedProjectIds.every((id) => byId.has(id))
+      if (!isPermutation) throw new ProjectOrderMismatchError()
+
+      reordered = orderedProjectIds.map((id) => byId.get(id)!)
+      return { ...latest, projects: reordered }
+    })
+    return reordered
   }
 
   async get(projectId: string): Promise<ProjectRecord> {

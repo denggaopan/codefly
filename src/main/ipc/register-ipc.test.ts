@@ -149,7 +149,7 @@ type Harness = {
   ipcMain: FakeIpcMain
   window: ReturnType<typeof fakeWindow>
   dialog: ReturnType<typeof fakeDialog>
-  projectService: { register: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn> }
+  projectService: { register: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; reorder: ReturnType<typeof vi.fn> }
   coordinator: FakeCoordinator
   externalAppService: { openInVSCode: ReturnType<typeof vi.fn>; openInExplorer: ReturnType<typeof vi.fn> }
   terminalService: FakeTerminalService
@@ -164,7 +164,7 @@ const buildHarness = (options: {
   const window = fakeWindow(options.windowDestroyed ?? false)
   const ipcMain = new FakeIpcMain(window.webContents)
   const dialog = fakeDialog(options.dialogResult ?? { canceled: true, filePaths: [] })
-  const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project) }
+  const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project), reorder: vi.fn(async () => [project]) }
   const coordinator = new FakeCoordinator()
   const externalAppService = { openInVSCode: vi.fn(async () => undefined), openInExplorer: vi.fn(async () => undefined) }
   const terminalService = new FakeTerminalService()
@@ -237,6 +237,27 @@ describe('registerIpc: project:add', () => {
     expect(dialog.showOpenDialog).toHaveBeenCalledWith({ properties: ['openDirectory'] })
     expect(projectService.register).toHaveBeenCalledWith('C:\\Projects\\App')
   })
+})
+
+describe('registerIpc: project:reorder', () => {
+  it('parses the ordered id list and returns the reordered projects', async () => {
+    const { ipcMain, projectService } = buildHarness()
+    const reordered = [{ ...project, id: 'project-2' }, project]
+    projectService.reorder.mockResolvedValue(reordered)
+
+    await expect(ipcMain.invoke(IPC.projectReorder, { orderedProjectIds: ['project-2', 'project-1'] })).resolves.toEqual(reordered)
+    expect(projectService.reorder).toHaveBeenCalledWith(['project-2', 'project-1'])
+  })
+
+  it.each([[{}], [{ orderedProjectIds: [] }], [{ orderedProjectIds: ['p1', 1] }]])(
+    'rejects malformed payload %j with a ZodError before touching the service',
+    async (payload) => {
+      const { ipcMain, projectService } = buildHarness()
+
+      await expect(ipcMain.invoke(IPC.projectReorder, payload)).rejects.toBeInstanceOf(z.ZodError)
+      expect(projectService.reorder).not.toHaveBeenCalled()
+    }
+  )
 })
 
 describe('registerIpc: project:open-vscode', () => {
@@ -473,6 +494,7 @@ describe('registerIpc: disposer', () => {
     for (const channel of [
       IPC.snapshotGet,
       IPC.projectAdd,
+      IPC.projectReorder,
       IPC.projectOpenVSCode,
       IPC.projectOpenFolder,
       IPC.sessionCreate,

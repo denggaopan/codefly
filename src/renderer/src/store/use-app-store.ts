@@ -22,6 +22,7 @@ export type AppStore = {
   reset: () => void
 
   addProject: () => Promise<void>
+  reorderProjects: (orderedProjectIds: readonly string[]) => Promise<void>
   openProjectInVSCode: (projectId: string) => Promise<void>
   openProjectFolder: (projectId: string) => Promise<void>
 
@@ -182,6 +183,15 @@ export const useAppStore = create<AppStore>()((set, get) => {
         const project = await window.codefly.addProject()
         if (!project) return
         set((state) => ({ appState: upsertProject(state.appState, project), activeProjectId: project.id }))
+      } catch (error) {
+        set({ notice: { message: errorMessage(error), tone: 'error' } })
+      }
+    },
+
+    reorderProjects: async (orderedProjectIds) => {
+      try {
+        const projects = await window.codefly.reorderProjects(orderedProjectIds)
+        set((state) => ({ appState: { ...state.appState, projects } }))
       } catch (error) {
         set({ notice: { message: errorMessage(error), tone: 'error' } })
       }

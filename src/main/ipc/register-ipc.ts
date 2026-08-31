@@ -5,6 +5,7 @@ import {
   createSessionRequestSchema,
   firstInputRequestSchema,
   projectIdRequestSchema,
+  reorderProjectsRequestSchema,
   sessionIdRequestSchema,
   terminalResizeRequestSchema,
   terminalWriteRequestSchema
@@ -54,6 +55,14 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
         const selectedPath = result.filePaths[0]
         if (result.canceled || !selectedPath) return null
         return projectService.register(selectedPath)
+      }
+    ],
+
+    [
+      IPC.projectReorder,
+      async (_event, payload): Promise<ProjectRecord[]> => {
+        const { orderedProjectIds } = reorderProjectsRequestSchema.parse(payload)
+        return projectService.reorder(orderedProjectIds)
       }
     ],
 
