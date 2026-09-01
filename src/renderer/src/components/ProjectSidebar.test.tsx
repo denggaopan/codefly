@@ -357,13 +357,13 @@ describe('ProjectSidebar', () => {
     expect(trigger).not.toHaveFocus()
   })
 
-  it('closes the menu when a laid-out scrollport collapses to zero height', async () => {
+  it('closes the menu when a laid-out scrollport collapses around its trigger', async () => {
     const user = userEvent.setup()
     const state = {
-      rowTop: 80,
-      rowBottom: 112,
-      triggerTop: 84,
-      triggerBottom: 108,
+      rowTop: 20,
+      rowBottom: 52,
+      triggerTop: 32,
+      triggerBottom: 48,
       scrollportTop: 40,
       scrollportBottom: 300,
       menuHeight: 100

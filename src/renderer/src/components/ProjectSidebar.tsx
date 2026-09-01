@@ -183,7 +183,10 @@ export default function ProjectSidebar() {
       // A zero-height browser layout has no visible anchor; a layoutless test DOM has no
       // client rect at all and cannot provide meaningful visibility geometry.
       const scrollportHasLayout = scrollport.getClientRects().length > 0
-      if (scrollportHasLayout && (triggerRect.bottom <= scrollportRect.top || triggerRect.top >= scrollportRect.bottom)) {
+      if (
+        scrollportHasLayout &&
+        (scrollportRect.height <= 0 || triggerRect.bottom <= scrollportRect.top || triggerRect.top >= scrollportRect.bottom)
+      ) {
         // The trigger is no longer visible, so leave focus alone rather than restoring it to
         // an offscreen row while dismissing the clipped menu.
         setOpenOptionsProjectId(null)
