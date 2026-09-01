@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
+import optionsIconUrl from '../assets/options.svg'
 import sessionIconUrl from '../assets/session.svg'
 import vscodeIconUrl from '../assets/vscode.svg'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
@@ -69,10 +70,9 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
 /**
  * Left navigation: session search, project groups with their sessions, and a round
  * Add Project action docked at the bottom-left.
- * Each row's label and its trailing action button(s) are SIBLING <button> elements (never
- * one button nested inside another interactively-roled element), so every stopPropagation()
- * call below is defensive rather than load-bearing: it keeps a click on VS Code/folder/
- * expand/delete from ever being interpreted as also activating the row, even if the DOM
+ * Each project label and options trigger are sibling buttons, with menu and launcher sibling
+ * popovers. Every stopPropagation() call is defensive rather than load-bearing: it keeps a
+ * click on an action from ever being interpreted as also activating the row, even if the DOM
  * nesting changes later.
  */
 export default function ProjectSidebar() {
@@ -94,17 +94,18 @@ export default function ProjectSidebar() {
   const dismissNotice = useAppStore((state) => state.dismissNotice)
   const launcherOpen = useAppStore((state) => state.launcherOpen)
   const openLauncher = useAppStore((state) => state.openLauncher)
-  const closeLauncher = useAppStore((state) => state.closeLauncher)
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
+  const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
+  const optionsTriggerRef = useRef<HTMLButtonElement | null>(null)
 
-  // Project drag-reordering: the whole project row is the drag handle (action buttons
-  // excluded via stopRowDrag). Dragging is disabled while a search filter is active — the
-  // filtered view hides rows, so a drop position would be ambiguous.
+  // Project drag-reordering: the whole project row is the drag handle, excluding the options
+  // trigger, menu, and launcher via stopRowDrag. Dragging is disabled while a search filter is
+  // active — the filtered view hides rows, so a drop position would be ambiguous.
   const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ projectId: string; position: 'before' | 'after' } | null>(null)
 
-  // Focus restoration for the launcher: whichever project-row "+" trigger opened it gets
+  // Focus restoration for the launcher: the project options trigger that opened it gets
   // keyboard/screen-reader focus back when the launcher closes (close button, Escape, or a
   // successful creation collapsing it), instead of focus being dropped to <body>.
   const launcherTriggerRef = useRef<HTMLButtonElement | null>(null)
@@ -198,7 +199,7 @@ export default function ProjectSidebar() {
     clearDragState()
   }
 
-  // Action buttons (and the launcher) inside a draggable row must never start a row drag.
+  // The options trigger, menu, and launcher inside a draggable row must never start a row drag.
   const stopRowDrag = (event: React.DragEvent<HTMLDivElement>): void => {
     event.preventDefault()
     event.stopPropagation()
@@ -228,8 +229,8 @@ export default function ProjectSidebar() {
 
       <div className="project-groups">
         {appState.projects.map((project) => {
-          // Accordion: activating a project (clicking its row, its "+" action, or one of its
-          // sessions) expands it and collapses every other project. Before anything is
+          // Accordion: activating a project (clicking its row, creating a session, or one of
+          // its sessions) expands it and collapses every other project. Before anything is
           // active, every group shows. An active search overrides collapse so matches in
           // every project stay discoverable.
           const expanded = activeProjectId === null || project.id === activeProjectId || normalizedQuery !== ''
@@ -241,10 +242,10 @@ export default function ProjectSidebar() {
           return (
             <section key={project.id} className="project-group">
               {/*
-                Plain container: the selectable label and the action buttons are SIBLING
-                <button> elements rather than three real buttons nested inside a
+                Plain container: the selectable label and options trigger are SIBLING
+                <button> elements rather than real buttons nested inside a
                 role="button" div. A role="button" element must not have focusable
-                descendants (screen readers flatten/misreport that, and it produces four tab
+                descendants (screen readers flatten/misreport that, and it produces two tab
                 stops where the accessible tree advertises one), so the label itself is a
                 native <button> here and gets keyboard (Enter/Space) activation for free.
               */}
@@ -271,46 +272,73 @@ export default function ProjectSidebar() {
                 <div className="project-actions" data-project-actions onDragStart={stopRowDrag}>
                   <button
                     type="button"
-                    aria-label="New session"
-                    aria-haspopup="true"
-                    aria-expanded={launcherOpen && project.id === activeProjectId}
+                    className="project-options-trigger"
+                    aria-label={`Project options for ${project.name}`}
+                    aria-haspopup="menu"
+                    aria-expanded={openOptionsProjectId === project.id}
                     onClick={(event) => {
                       event.stopPropagation()
-                      if (launcherOpen && activeProjectId === project.id) {
-                        closeLauncher()
-                        return
-                      }
-                      launcherTriggerRef.current = event.currentTarget
-                      setActiveProject(project.id)
-                      openLauncher()
+                      optionsTriggerRef.current = event.currentTarget
+                      setOpenOptionsProjectId((currentProjectId) => (currentProjectId === project.id ? null : project.id))
                     }}
                   >
-                    <img src={sessionIconUrl} alt="" width={16} height={16} className="icon icon-session" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Open project in VS Code"
-                    title={capabilities.vscode.available ? undefined : capabilities.vscode.detail}
-                    aria-describedby={capabilities.vscode.available ? undefined : vscodeHintId(project.id)}
-                    disabled={!capabilities.vscode.available}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      void openProjectInVSCode(project.id)
-                    }}
-                  >
-                    <img src={vscodeIconUrl} alt="" width={16} height={16} className="icon icon-vscode" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Open project folder"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      void openProjectFolder(project.id)
-                    }}
-                  >
-                    <FolderGlyph />
+                    <img src={optionsIconUrl} alt="" width={16} height={16} className="icon icon-options" />
                   </button>
                 </div>
+                {openOptionsProjectId === project.id && (
+                  <div
+                    className="project-options-menu"
+                    role="menu"
+                    aria-label={`Project options for ${project.name}`}
+                    onClick={(event) => event.stopPropagation()}
+                    onDragStart={stopRowDrag}
+                  >
+                    <button
+                      type="button"
+                      className="project-options-menu-item"
+                      role="menuitem"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        launcherTriggerRef.current = optionsTriggerRef.current
+                        setOpenOptionsProjectId(null)
+                        setActiveProject(project.id)
+                        openLauncher()
+                      }}
+                    >
+                      <img src={sessionIconUrl} alt="" width={16} height={16} className="icon icon-session" />
+                      New session
+                    </button>
+                    <button
+                      type="button"
+                      className="project-options-menu-item"
+                      role="menuitem"
+                      title={capabilities.vscode.available ? undefined : capabilities.vscode.detail}
+                      aria-describedby={capabilities.vscode.available ? undefined : vscodeHintId(project.id)}
+                      disabled={!capabilities.vscode.available}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setOpenOptionsProjectId(null)
+                        void openProjectInVSCode(project.id)
+                      }}
+                    >
+                      <img src={vscodeIconUrl} alt="" width={16} height={16} className="icon icon-vscode" />
+                      Open project in VS Code
+                    </button>
+                    <button
+                      type="button"
+                      className="project-options-menu-item"
+                      role="menuitem"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setOpenOptionsProjectId(null)
+                        void openProjectFolder(project.id)
+                      }}
+                    >
+                      <FolderGlyph />
+                      Open project folder
+                    </button>
+                  </div>
+                )}
                 {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} />}
               </div>
 

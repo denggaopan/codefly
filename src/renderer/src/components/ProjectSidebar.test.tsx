@@ -83,6 +83,16 @@ beforeEach(() => {
   window.codefly = api
 })
 
+const projectOptionsName = (projectName: string): string => `Project options for ${projectName}`
+
+const openProjectOptions = async (
+  user: ReturnType<typeof userEvent.setup>,
+  projectName = project1.name
+): Promise<HTMLElement> => {
+  await user.click(screen.getByRole('button', { name: projectOptionsName(projectName) }))
+  return screen.getByRole('menu', { name: projectOptionsName(projectName) })
+}
+
 describe('ProjectSidebar', () => {
   it('renders Add Project, search, and the project group', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
@@ -126,25 +136,39 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
   })
 
-  it('orders project row actions as New session, VS Code, then folder', () => {
-    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
-    render(<ProjectSidebar />)
-
-    const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
-    const actions = row.querySelector('[data-project-actions]') as HTMLElement
-    const buttons = within(actions).getAllByRole('button')
-    const names = buttons.map((button) => button.getAttribute('aria-label'))
-
-    expect(names).toEqual(['New session', 'Open project in VS Code', 'Open project folder'])
-  })
-
-  it('renders the New session action as the session icon instead of a plus glyph', () => {
+  it('collapses the three project actions into one labelled options menu', async () => {
+    const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
 
-    const newSession = screen.getByRole('button', { name: 'New session' })
-    expect(newSession.querySelector('img.icon-session')).not.toBeNull()
-    expect(newSession.textContent).not.toContain('+')
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument()
+
+    const menu = await openProjectOptions(user)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
+      'New session',
+      'Open project in VS Code',
+      'Open project folder'
+    ])
+
+    await user.click(trigger)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('renders the supplied options SVG as a decorative trigger icon', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    const icon = trigger.querySelector('img.icon-options') as HTMLImageElement | null
+    expect(icon).not.toBeNull()
+    expect(icon).toHaveAttribute('src')
+    expect(icon).toHaveAttribute('alt', '')
   })
 
   it('does not put the project-row label or session-row label inside a role="button" ancestor', () => {
@@ -190,12 +214,14 @@ describe('ProjectSidebar', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
-    await user.click(screen.getByRole('button', { name: 'Open project in VS Code' }))
+    await openProjectOptions(user)
+    await user.click(screen.getByRole('menuitem', { name: 'Open project in VS Code' }))
 
     expect(api.openProjectInVSCode).toHaveBeenCalledWith('project-1')
     expect(api.restoreSession).not.toHaveBeenCalled()
     expect(useAppStore.getState().activeProjectId).toBeNull()
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
   it('does not toggle the project row or restore a session when opening the folder', async () => {
@@ -203,11 +229,28 @@ describe('ProjectSidebar', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
-    await user.click(screen.getByRole('button', { name: 'Open project folder' }))
+    await openProjectOptions(user)
+    await user.click(screen.getByRole('menuitem', { name: 'Open project folder' }))
 
     expect(api.openProjectFolder).toHaveBeenCalledWith('project-1')
     expect(api.restoreSession).not.toHaveBeenCalled()
     expect(useAppStore.getState().activeProjectId).toBeNull()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('does not start a project drag from the options trigger or menu', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const transfer = { setData: vi.fn(), getData: vi.fn(() => ''), effectAllowed: '', dropEffect: '' }
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    fireEvent.dragStart(trigger, { dataTransfer: transfer })
+
+    const menu = await openProjectOptions(user)
+    fireEvent.dragStart(menu, { dataTransfer: transfer })
+
+    expect(transfer.setData).not.toHaveBeenCalled()
   })
 
   it('sets the active project when the project row itself is clicked', async () => {
@@ -446,31 +489,26 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
   })
 
-  it('disables the VS Code action when unavailable and exposes the reason as a tooltip', () => {
+  it('keeps an unavailable VS Code menu item disabled with an accessible visible detail', async () => {
+    const user = userEvent.setup()
+    const detail = 'Install VS Code or the code command.'
     seedStore(
       { version: 1, projects: [project1], sessions: [] },
-      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail: 'Install VS Code or the code command.' } }
+      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail } }
     )
     render(<ProjectSidebar />)
 
-    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
-    expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', 'Install VS Code or the code command.')
-  })
-
-  it('also shows the disabled VS Code reason as visible text, not only a hover tooltip', () => {
-    seedStore(
-      { version: 1, projects: [project1], sessions: [] },
-      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail: 'Install VS Code or the code command.' } }
-    )
-    render(<ProjectSidebar />)
-
-    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
-    const hint = screen.getByText('Install VS Code or the code command.')
+    const menu = await openProjectOptions(user)
+    const item = within(menu).getByRole('menuitem', { name: 'Open project in VS Code' })
+    const hint = screen.getByText(detail)
+    expect(item).toBeDisabled()
+    expect(item).toHaveAttribute('title', detail)
     expect(hint).toBeVisible()
-    // The visible hint is programmatically associated with the button too, so screen
-    // reader users who tab to it (never having "hovered") still get the explanation.
-    expect(button).toHaveAttribute('aria-describedby', hint.id)
+    expect(item).toHaveAttribute('aria-describedby', hint.id)
+
+    await user.click(item)
+    expect(api.openProjectInVSCode).not.toHaveBeenCalled()
+    expect(screen.getByRole('menu', { name: projectOptionsName(project1.name) })).toBeInTheDocument()
   })
 
   it('does not render a visible VS Code hint when the capability is available', () => {
@@ -480,15 +518,16 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByText(/install vs code/i)).not.toBeInTheDocument()
   })
 
-  it('renders the bundled VS Code SVG asset (not the old inline placeholder) inside the action button', () => {
+  it('renders the bundled VS Code SVG asset inside the menu item', async () => {
+    const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
 
-    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
-    const icon = button.querySelector('img.icon-vscode') as HTMLImageElement | null
+    const menu = await openProjectOptions(user)
+    const item = within(menu).getByRole('menuitem', { name: 'Open project in VS Code' })
+    const icon = item.querySelector('img.icon-vscode') as HTMLImageElement | null
     expect(icon).not.toBeNull()
     expect(icon).toHaveAttribute('src')
-    // Decorative: the button's own aria-label is the accessible name, not the image.
     expect(icon).toHaveAttribute('alt', '')
   })
 
@@ -500,16 +539,12 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText(runningWorktreeSession.worktreeName as string)).toHaveAttribute('title', runningWorktreeSession.worktreeName)
   })
 
-  it('exposes an accessible name for every icon-only button in a project row', () => {
+  it('exposes a non-empty accessible name for the sole icon-only project action', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
-    const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
-    const actions = row.querySelector('[data-project-actions]') as HTMLElement
-    for (const button of within(actions).getAllByRole('button')) {
-      const accessibleName = button.getAttribute('aria-label')
-      expect(accessibleName).toBeTruthy()
-    }
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    expect(trigger.getAttribute('aria-label')).toBeTruthy()
 
     const deleteButton = screen.getByRole('button', { name: `Delete ${stoppedSession.title}` })
     expect(deleteButton.getAttribute('aria-label')).toBeTruthy()
