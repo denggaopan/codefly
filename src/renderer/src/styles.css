@@ -22,6 +22,11 @@
   --color-state-warning: #e0a940;
   --color-state-destructive: #e5484d;
 
+  /* Scrollbar thumb, one value per theme so the grey stays legible against the panel
+     it sits on (see .project-groups::-webkit-scrollbar). */
+  --color-scrollbar-thumb: #4a5563;
+  --color-scrollbar-thumb-hover: #5f6b7a;
+
   /* Fonts: both are Windows system fonts, never fetched over the network. Bahnschrift is
      the application-chrome typeface; Cascadia Mono is used for terminal metadata and is
      also handed to xterm's own `fontFamily` option (see TerminalWorkspace.tsx). */
@@ -56,6 +61,10 @@
   --color-state-done: #6f47c5;
   --color-state-warning: #9a6b0f;
   --color-state-destructive: #c53236;
+
+  /* Darker greys so the thumb reads against the white panel. */
+  --color-scrollbar-thumb: #9aa5b3;
+  --color-scrollbar-thumb-hover: #6b7684;
 }
 
 /* ==========================================================================
@@ -316,6 +325,34 @@ input {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* The project list is the sidebar's only scroll region. Styled with the -webkit-
+   pseudo-elements rather than `scrollbar-color`: setting that property makes Chromium
+   fall back to its non-styleable scrollbar and drop these rules entirely.
+
+   The track and the bar itself both need an explicit fill: styling ::-webkit-scrollbar
+   opts out of the native scrollbar, and the legacy one it falls back to paints a white
+   gutter by default (the document declares no `color-scheme`), which glares against the
+   dark panel. `transparent` is not enough — it just lets that white show through. */
+.project-groups::-webkit-scrollbar {
+  width: 10px;
+  background: var(--color-panel);
+}
+
+.project-groups::-webkit-scrollbar-track {
+  background: var(--color-panel);
+}
+
+.project-groups::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  /* padding-box keeps that border transparent, insetting the thumb into a slim pill. */
+  background: var(--color-scrollbar-thumb) padding-box;
+  border-radius: 999px;
+}
+
+.project-groups::-webkit-scrollbar-thumb:hover {
+  background: var(--color-scrollbar-thumb-hover) padding-box;
 }
 
 .project-sidebar-footer {
