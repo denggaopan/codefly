@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   AppInfo,
@@ -98,6 +98,82 @@ beforeEach(() => {
   window.codefly = api
 })
 
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+const projectOptionsName = (projectName: string): string => `Project options for ${projectName}`
+
+const openProjectOptions = async (
+  user: ReturnType<typeof userEvent.setup>,
+  projectName = project1.name
+): Promise<HTMLElement> => {
+  await user.click(screen.getByRole('button', { name: projectOptionsName(projectName) }))
+  return screen.getByRole('menu', { name: projectOptionsName(projectName) })
+}
+
+const geometry = (top: number, bottom: number, left = 0, right = 300): DOMRect =>
+  ({
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+    top,
+    right,
+    bottom,
+    left,
+    toJSON: () => ({})
+  }) as DOMRect
+
+const controlProjectOptionsGeometry = (state: {
+  rowTop: number
+  rowBottom: number
+  triggerTop?: number
+  triggerBottom?: number
+  scrollportTop: number
+  scrollportBottom: number
+  menuHeight: number
+  menuRectHeight?: number
+  clampedMenuRectHeight?: number
+  menuBorderTop?: number
+  menuBorderBottom?: number
+}): void => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.classList.contains('project-groups')) return geometry(state.scrollportTop, state.scrollportBottom)
+    if (this.hasAttribute('data-project-row')) return geometry(state.rowTop, state.rowBottom)
+    if (this.classList.contains('project-options-trigger')) {
+      return geometry(state.triggerTop ?? state.rowTop, state.triggerBottom ?? state.rowBottom)
+    }
+    if (this.classList.contains('project-options-menu')) {
+      const clamped = this.style.getPropertyValue('--project-options-menu-max-height') !== ''
+      const height = clamped ? state.clampedMenuRectHeight ?? state.menuRectHeight ?? 0 : state.menuRectHeight ?? 0
+      return geometry(0, height)
+    }
+    return geometry(0, 0)
+  })
+  vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('project-groups')
+      ? ([geometry(state.scrollportTop, state.scrollportBottom)] as unknown as DOMRectList)
+      : ([] as unknown as DOMRectList)
+  })
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('project-options-menu') ? state.menuHeight : 0
+  })
+  const originalGetComputedStyle = window.getComputedStyle.bind(window)
+  vi.spyOn(window, 'getComputedStyle').mockImplementation((element) => {
+    if (!element.classList.contains('project-options-menu')) return originalGetComputedStyle(element)
+    const style = originalGetComputedStyle(element)
+    return new Proxy(style, {
+      get(target, property) {
+        if (property === 'borderTopWidth') return `${state.menuBorderTop ?? 0}px`
+        if (property === 'borderBottomWidth') return `${state.menuBorderBottom ?? 0}px`
+        const value = Reflect.get(target, property, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    })
+  })
+}
+
 describe('ProjectSidebar', () => {
   it('renders Add Project, search, and the project group', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
@@ -141,25 +217,475 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
   })
 
-  it('orders project row actions as New session, VS Code, then folder', () => {
-    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
-    render(<ProjectSidebar />)
-
-    const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
-    const actions = row.querySelector('[data-project-actions]') as HTMLElement
-    const buttons = within(actions).getAllByRole('button')
-    const names = buttons.map((button) => button.getAttribute('aria-label'))
-
-    expect(names).toEqual(['New session', 'Open project in VS Code', 'Open project folder'])
-  })
-
-  it('renders the New session action as the session icon instead of a plus glyph', () => {
+  it('collapses the three project actions into one labelled options menu', async () => {
+    const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
 
-    const newSession = screen.getByRole('button', { name: 'New session' })
-    expect(newSession.querySelector('img.icon-session')).not.toBeNull()
-    expect(newSession.textContent).not.toContain('+')
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument()
+
+    const menu = await openProjectOptions(user)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
+      'New session',
+      'Open project in VS Code',
+      'Open project folder'
+    ])
+
+    await user.click(trigger)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
+  it('translates the project options trigger and menu items when the locale changes', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    useAppStore.getState().setLocale('zh-CN')
+    render(<ProjectSidebar />)
+
+    const menuName = `${project1.name} 的项目选项`
+    await user.click(screen.getByRole('button', { name: menuName }))
+
+    const menu = screen.getByRole('menu', { name: menuName })
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
+      '新建会话',
+      '在 VS Code 中打开项目',
+      '打开项目文件夹'
+    ])
+  })
+
+  it('places the options menu below its row when the scrollport has room', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+
+    expect(menu).toHaveAttribute('data-placement', 'below')
+    expect(menu).toHaveAttribute('data-clamped', 'false')
+  })
+
+  it('places the options menu above a lower row when below space is insufficient', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 240, rowBottom: 272, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+
+    expect(menu).toHaveAttribute('data-placement', 'above')
+    expect(menu).toHaveAttribute('data-clamped', 'false')
+  })
+
+  it('clamps the menu to the roomier side and keeps keyboard navigation available when neither side fits', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 160, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const newSession = within(menu).getByRole('menuitem', { name: 'New session' })
+    const vscode = within(menu).getByRole('menuitem', { name: 'Open project in VS Code' })
+
+    expect(menu).toHaveAttribute('data-placement', 'below')
+    expect(menu).toHaveAttribute('data-clamped', 'true')
+    expect(menu.style.getPropertyValue('--project-options-menu-max-height')).toBe('42px')
+    await user.keyboard('{ArrowDown}')
+    expect(vscode).toHaveFocus()
+    expect(newSession).not.toHaveFocus()
+  })
+
+  it('clamps the menu above its row when above has more room than below', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 100, rowBottom: 132, scrollportTop: 40, scrollportBottom: 160, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+
+    expect(menu).toHaveAttribute('data-placement', 'above')
+    expect(menu).toHaveAttribute('data-clamped', 'true')
+    expect(menu.style.getPropertyValue('--project-options-menu-max-height')).toBe('54px')
+  })
+
+  it('recomputes placement while open after scroll and resize geometry changes', async () => {
+    const user = userEvent.setup()
+    const state = { rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 }
+    controlProjectOptionsGeometry(state)
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    expect(menu).toHaveAttribute('data-placement', 'below')
+
+    state.rowTop = 240
+    state.rowBottom = 272
+    fireEvent.scroll(scrollport)
+    expect(menu).toHaveAttribute('data-placement', 'above')
+
+    state.rowTop = 80
+    state.rowBottom = 112
+    fireEvent(window, new Event('resize'))
+    expect(menu).toHaveAttribute('data-placement', 'below')
+  })
+
+  it('keeps a border-box menu clamped across consecutive scroll and resize measurements', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({
+      rowTop: 80,
+      rowBottom: 112,
+      scrollportTop: 40,
+      scrollportBottom: 158,
+      menuHeight: 40,
+      menuRectHeight: 42,
+      clampedMenuRectHeight: 40,
+      menuBorderTop: 1,
+      menuBorderBottom: 1
+    })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    expect(menu).toHaveAttribute('data-clamped', 'true')
+    expect(menu.style.getPropertyValue('--project-options-menu-max-height')).toBe('40px')
+
+    fireEvent.scroll(scrollport)
+    expect(menu).toHaveAttribute('data-clamped', 'true')
+    expect(menu.style.getPropertyValue('--project-options-menu-max-height')).toBe('40px')
+    fireEvent(window, new Event('resize'))
+
+    expect(menu).toHaveAttribute('data-clamped', 'true')
+    expect(menu.style.getPropertyValue('--project-options-menu-max-height')).toBe('40px')
+  })
+
+  it.each([
+    ['above', 0, 32],
+    ['below', 320, 352]
+  ])('closes the menu without restoring focus when its row scrolls fully %s the scrollport', async (_direction, rowTop, rowBottom) => {
+    const user = userEvent.setup()
+    const state = { rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 }
+    controlProjectOptionsGeometry(state)
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    const menu = await openProjectOptions(user)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    expect(menu).toBeInTheDocument()
+
+    state.rowTop = rowTop
+    state.rowBottom = rowBottom
+    fireEvent.scroll(scrollport)
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    expect(trigger).not.toHaveFocus()
+  })
+
+  it('closes the menu when a laid-out scrollport collapses around its trigger', async () => {
+    const user = userEvent.setup()
+    const state = {
+      rowTop: 20,
+      rowBottom: 52,
+      triggerTop: 32,
+      triggerBottom: 48,
+      scrollportTop: 40,
+      scrollportBottom: 300,
+      menuHeight: 100
+    }
+    controlProjectOptionsGeometry(state)
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    state.scrollportBottom = state.scrollportTop
+    fireEvent.scroll(scrollport)
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+  })
+
+  it.each([
+    ['above', 20, 52, 8, 32],
+    ['below', 288, 320, 308, 332]
+  ])(
+    'closes the menu when its trigger scrolls fully %s the scrollport while its row still intersects',
+    async (_direction, rowTop, rowBottom, triggerTop, triggerBottom) => {
+      const user = userEvent.setup()
+      const state = {
+        rowTop: 80,
+        rowBottom: 112,
+        triggerTop: 84,
+        triggerBottom: 108,
+        scrollportTop: 40,
+        scrollportBottom: 300,
+        menuHeight: 100
+      }
+      controlProjectOptionsGeometry(state)
+      seedStore({ version: 1, projects: [project1], sessions: [] })
+      render(<ProjectSidebar />)
+
+      const menu = await openProjectOptions(user)
+      const scrollport = document.querySelector('.project-groups') as HTMLElement
+      expect(menu).toBeInTheDocument()
+
+      Object.assign(state, { rowTop, rowBottom, triggerTop, triggerBottom })
+      fireEvent.scroll(scrollport)
+
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    }
+  )
+
+  it('keeps the menu open and places it when its trigger remains partially visible in the scrollport', async () => {
+    const user = userEvent.setup()
+    const state = {
+      rowTop: 80,
+      rowBottom: 112,
+      triggerTop: 84,
+      triggerBottom: 108,
+      scrollportTop: 40,
+      scrollportBottom: 300,
+      menuHeight: 100
+    }
+    controlProjectOptionsGeometry(state)
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    state.rowTop = 20
+    state.rowBottom = 52
+    state.triggerTop = 28
+    state.triggerBottom = 52
+    fireEvent.scroll(scrollport)
+
+    expect(menu).toBeInTheDocument()
+    expect(menu).toHaveAttribute('data-placement', 'below')
+  })
+
+  it('keeps one scroll and resize listener while open, then removes them on close and unmount', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    const view = render(<ProjectSidebar />)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    const addScroll = vi.spyOn(scrollport, 'addEventListener')
+    const removeScroll = vi.spyOn(scrollport, 'removeEventListener')
+    const addResize = vi.spyOn(window, 'addEventListener')
+    const removeResize = vi.spyOn(window, 'removeEventListener')
+
+    await openProjectOptions(user)
+    expect(addScroll).toHaveBeenCalledWith('scroll', expect.any(Function))
+    expect(addResize).toHaveBeenCalledWith('resize', expect.any(Function))
+    const scrollListenerCount = addScroll.mock.calls.filter(([type]) => type === 'scroll').length
+    const resizeListenerCount = addResize.mock.calls.filter(([type]) => type === 'resize').length
+
+    fireEvent.scroll(scrollport)
+    fireEvent(window, new Event('resize'))
+    expect(addScroll.mock.calls.filter(([type]) => type === 'scroll')).toHaveLength(scrollListenerCount)
+    expect(addResize.mock.calls.filter(([type]) => type === 'resize')).toHaveLength(resizeListenerCount)
+
+    await user.keyboard('{Escape}')
+    expect(removeScroll).toHaveBeenCalledWith('scroll', expect.any(Function))
+    expect(removeResize).toHaveBeenCalledWith('resize', expect.any(Function))
+
+    await openProjectOptions(user)
+    view.unmount()
+    expect(removeScroll.mock.calls.filter(([type]) => type === 'scroll')).toHaveLength(2)
+    expect(removeResize.mock.calls.filter(([type]) => type === 'resize')).toHaveLength(2)
+  })
+
+  it('replaces scroll and resize listeners when the open menu switches projects', async () => {
+    const user = userEvent.setup()
+    const project2: ProjectRecord = { ...project1, id: 'project-2', name: 'second-project', path: 'C:\\work\\second' }
+    controlProjectOptionsGeometry({ rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1, project2], sessions: [] })
+    const view = render(<ProjectSidebar />)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    const addScroll = vi.spyOn(scrollport, 'addEventListener')
+    const removeScroll = vi.spyOn(scrollport, 'removeEventListener')
+    const addResize = vi.spyOn(window, 'addEventListener')
+    const removeResize = vi.spyOn(window, 'removeEventListener')
+
+    await openProjectOptions(user, project1.name)
+    await openProjectOptions(user, project2.name)
+
+    expect(addScroll.mock.calls.filter(([type]) => type === 'scroll')).toHaveLength(2)
+    expect(removeScroll.mock.calls.filter(([type]) => type === 'scroll')).toHaveLength(1)
+    expect(addResize.mock.calls.filter(([type]) => type === 'resize')).toHaveLength(2)
+    expect(removeResize.mock.calls.filter(([type]) => type === 'resize')).toHaveLength(1)
+
+    view.unmount()
+    expect(removeScroll.mock.calls.filter(([type]) => type === 'scroll')).toHaveLength(2)
+    expect(removeResize.mock.calls.filter(([type]) => type === 'resize')).toHaveLength(2)
+  })
+
+  it('focuses the first enabled menu item and supports wrapping keyboard navigation', async () => {
+    const user = userEvent.setup()
+    seedStore(
+      { version: 1, projects: [project1], sessions: [] },
+      {
+        claude: { available: true, detail: '' },
+        codex: { available: true, detail: '' },
+        vscode: { available: false, detail: 'Install VS Code or the code command.' }
+      }
+    )
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const newSession = within(menu).getByRole('menuitem', { name: 'New session' })
+    const folder = within(menu).getByRole('menuitem', { name: 'Open project folder' })
+    expect(newSession).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+    expect(folder).toHaveFocus()
+    await user.keyboard('{ArrowDown}')
+    expect(newSession).toHaveFocus()
+    await user.keyboard('{End}')
+    expect(folder).toHaveFocus()
+    await user.keyboard('{Home}')
+    expect(newSession).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(folder).toHaveFocus()
+  })
+
+  it('closes on Escape and restores focus to the options trigger', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    await openProjectOptions(user)
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('closes on outside click and Tab without stealing the destination focus', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user)
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    await user.click(search)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(search).toHaveFocus()
+
+    await openProjectOptions(user)
+    await user.tab()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add Project' })).toHaveFocus()
+
+    await openProjectOptions(user)
+    await user.tab({ shift: true })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: projectOptionsName(project1.name) })).toHaveFocus()
+  })
+
+  it('keeps only one project menu open and clears stale state when a project disappears', async () => {
+    const user = userEvent.setup()
+    const project2: ProjectRecord = {
+      id: 'project-2',
+      name: 'second-project',
+      path: 'C:\\work\\second',
+      createdAt: '2026-08-21T00:00:00.000Z'
+    }
+    const state = { version: 1 as const, projects: [project1, project2], sessions: [] }
+    seedStore(state)
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user, project1.name)
+    await openProjectOptions(user, project2.name)
+    expect(screen.getAllByRole('menu')).toHaveLength(1)
+    expect(screen.getByRole('menu', { name: projectOptionsName(project2.name) })).toBeInTheDocument()
+
+    act(() => useAppStore.setState({ appState: { ...state, projects: [project1] } }))
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    act(() => useAppStore.setState({ appState: state }))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('returns focus to the options trigger after a folder action and after closing the launcher', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    let menu = await openProjectOptions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: 'Open project folder' }))
+    expect(trigger).toHaveFocus()
+
+    menu = await openProjectOptions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: 'New session' }))
+    expect(screen.getByLabelText('Create session')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Close launcher' }))
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('moves keyboard focus into the launcher and restores it after launcher Escape', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    await openProjectOptions(user)
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByLabelText('Create session')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument())
+    expect(trigger).toHaveFocus()
+  })
+
+  it('refocuses the newly selected project launcher when New session is reopened', async () => {
+    const user = userEvent.setup()
+    const project2: ProjectRecord = {
+      id: 'project-2',
+      name: 'second-project',
+      path: 'C:\\work\\second',
+      createdAt: '2026-08-21T00:00:00.000Z'
+    }
+    seedStore({ version: 1, projects: [project1, project2], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user, project1.name)
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+
+    await openProjectOptions(user, project1.name)
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+
+    const project2Trigger = screen.getByRole('button', { name: projectOptionsName(project2.name) })
+    await openProjectOptions(user, project2.name)
+    await user.keyboard('{Enter}')
+
+    expect(useAppStore.getState().activeProjectId).toBe(project2.id)
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument())
+    expect(project2Trigger).toHaveFocus()
+  })
+
+  it('renders the supplied options SVG as a decorative trigger icon', () => {
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    const icon = trigger.querySelector('img.icon-options') as HTMLImageElement | null
+    expect(icon).not.toBeNull()
+    expect(icon).toHaveAttribute('src')
+    expect(icon).toHaveAttribute('alt', '')
   })
 
   it('does not put the project-row label or session-row label inside a role="button" ancestor', () => {
@@ -205,12 +731,16 @@ describe('ProjectSidebar', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
-    await user.click(screen.getByRole('button', { name: 'Open project in VS Code' }))
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    await openProjectOptions(user)
+    await user.click(screen.getByRole('menuitem', { name: 'Open project in VS Code' }))
 
     expect(api.openProjectInVSCode).toHaveBeenCalledWith('project-1')
     expect(api.restoreSession).not.toHaveBeenCalled()
     expect(useAppStore.getState().activeProjectId).toBeNull()
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 
   it('does not toggle the project row or restore a session when opening the folder', async () => {
@@ -218,11 +748,38 @@ describe('ProjectSidebar', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
-    await user.click(screen.getByRole('button', { name: 'Open project folder' }))
+    await openProjectOptions(user)
+    await user.click(screen.getByRole('menuitem', { name: 'Open project folder' }))
 
     expect(api.openProjectFolder).toHaveBeenCalledWith('project-1')
     expect(api.restoreSession).not.toHaveBeenCalled()
     expect(useAppStore.getState().activeProjectId).toBeNull()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('does not start a project drag from the options trigger, menu, or launcher', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const transfer = { setData: vi.fn(), getData: vi.fn(() => ''), effectAllowed: '', dropEffect: '' }
+    const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    fireEvent.pointerDown(trigger)
+    fireEvent.dragStart(row, { dataTransfer: transfer })
+
+    const menu = await openProjectOptions(user)
+    const newSession = within(menu).getByRole('menuitem', { name: 'New session' })
+    fireEvent.pointerDown(newSession)
+    fireEvent.dragStart(row, { dataTransfer: transfer })
+    fireEvent.pointerUp(newSession)
+
+    await user.click(newSession)
+    const launcherAction = screen.getByRole('button', { name: 'PowerShell' })
+    fireEvent.pointerDown(launcherAction)
+    fireEvent.dragStart(row, { dataTransfer: transfer })
+
+    expect(transfer.setData).not.toHaveBeenCalled()
   })
 
   it('sets the active project when the project row itself is clicked', async () => {
@@ -461,31 +1018,26 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
   })
 
-  it('disables the VS Code action when unavailable and exposes the reason as a tooltip', () => {
+  it('keeps an unavailable VS Code menu item disabled with an accessible visible detail', async () => {
+    const user = userEvent.setup()
+    const detail = 'Install VS Code or the code command.'
     seedStore(
       { version: 1, projects: [project1], sessions: [] },
-      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail: 'Install VS Code or the code command.' } }
+      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail } }
     )
     render(<ProjectSidebar />)
 
-    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
-    expect(button).toBeDisabled()
-    expect(button).toHaveAttribute('title', 'Install VS Code or the code command.')
-  })
-
-  it('also shows the disabled VS Code reason as visible text, not only a hover tooltip', () => {
-    seedStore(
-      { version: 1, projects: [project1], sessions: [] },
-      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail: 'Install VS Code or the code command.' } }
-    )
-    render(<ProjectSidebar />)
-
-    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
-    const hint = screen.getByText('Install VS Code or the code command.')
+    const menu = await openProjectOptions(user)
+    const item = within(menu).getByRole('menuitem', { name: 'Open project in VS Code' })
+    const hint = screen.getByText(detail)
+    expect(item).toBeDisabled()
+    expect(item).toHaveAttribute('title', detail)
     expect(hint).toBeVisible()
-    // The visible hint is programmatically associated with the button too, so screen
-    // reader users who tab to it (never having "hovered") still get the explanation.
-    expect(button).toHaveAttribute('aria-describedby', hint.id)
+    expect(item).toHaveAttribute('aria-describedby', hint.id)
+
+    await user.click(item)
+    expect(api.openProjectInVSCode).not.toHaveBeenCalled()
+    expect(screen.getByRole('menu', { name: projectOptionsName(project1.name) })).toBeInTheDocument()
   })
 
   it('does not render a visible VS Code hint when the capability is available', () => {
@@ -495,15 +1047,16 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByText(/install vs code/i)).not.toBeInTheDocument()
   })
 
-  it('renders the bundled VS Code SVG asset (not the old inline placeholder) inside the action button', () => {
+  it('renders the bundled VS Code SVG asset inside the menu item', async () => {
+    const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
 
-    const button = screen.getByRole('button', { name: 'Open project in VS Code' })
-    const icon = button.querySelector('img.icon-vscode') as HTMLImageElement | null
+    const menu = await openProjectOptions(user)
+    const item = within(menu).getByRole('menuitem', { name: 'Open project in VS Code' })
+    const icon = item.querySelector('img.icon-vscode') as HTMLImageElement | null
     expect(icon).not.toBeNull()
     expect(icon).toHaveAttribute('src')
-    // Decorative: the button's own aria-label is the accessible name, not the image.
     expect(icon).toHaveAttribute('alt', '')
   })
 
@@ -515,16 +1068,12 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText(runningWorktreeSession.worktreeName as string)).toHaveAttribute('title', runningWorktreeSession.worktreeName)
   })
 
-  it('exposes an accessible name for every icon-only button in a project row', () => {
+  it('exposes a non-empty accessible name for the sole icon-only project action', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
-    const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
-    const actions = row.querySelector('[data-project-actions]') as HTMLElement
-    for (const button of within(actions).getAllByRole('button')) {
-      const accessibleName = button.getAttribute('aria-label')
-      expect(accessibleName).toBeTruthy()
-    }
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    expect(trigger.getAttribute('aria-label')).toBeTruthy()
 
     const deleteButton = screen.getByRole('button', { name: `Delete ${stoppedSession.title}` })
     expect(deleteButton.getAttribute('aria-label')).toBeTruthy()

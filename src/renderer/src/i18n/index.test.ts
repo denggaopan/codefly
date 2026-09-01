@@ -43,6 +43,11 @@ describe('translate', () => {
     expect(translate('zh-CN', 'notice.dirtyWorktree', { count: 3 })).toContain('3')
   })
 
+  it('translates the project options label with its project-name placeholder', () => {
+    expect(translate('en', 'sidebar.projectOptions', { project: 'demo-project' })).toBe('Project options for demo-project')
+    expect(translate('zh-CN', 'sidebar.projectOptions', { project: 'demo-project' })).toBe('demo-project 的项目选项')
+  })
+
   it('leaves an unmatched placeholder visible rather than blanking it', () => {
     expect(translate('en', 'settings.updateAvailable', {})).toBe('Version {version} is available.')
   })

@@ -14,6 +14,7 @@ export const zhCN: Translations = {
 
   'sidebar.searchSessions': '搜索会话',
   'sidebar.dismissNotice': '关闭提示',
+  'sidebar.projectOptions': '{project} 的项目选项',
   'sidebar.newSession': '新建会话',
   'sidebar.openInVSCode': '在 VS Code 中打开项目',
   'sidebar.openProjectFolder': '打开项目文件夹',

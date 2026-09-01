@@ -13,6 +13,7 @@ export const en = {
 
   'sidebar.searchSessions': 'Search sessions',
   'sidebar.dismissNotice': 'Dismiss notice',
+  'sidebar.projectOptions': 'Project options for {project}',
   'sidebar.newSession': 'New session',
   'sidebar.openInVSCode': 'Open project in VS Code',
   'sidebar.openProjectFolder': 'Open project folder',

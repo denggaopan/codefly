@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -147,6 +147,25 @@ const stateWith = (...sessions: SessionRecord[]): AppState => ({ version: 1, pro
 
 let api: FakeApi
 
+const projectOptionsName = (projectName: string): string => `Project options for ${projectName}`
+
+const openProjectOptions = async (
+  user: ReturnType<typeof userEvent.setup>,
+  projectName = project1.name
+): Promise<HTMLElement> => {
+  await user.click(await screen.findByRole('button', { name: projectOptionsName(projectName) }))
+  return screen.getByRole('menu', { name: projectOptionsName(projectName) })
+}
+
+const openNewSessionLauncher = async (
+  user: ReturnType<typeof userEvent.setup>,
+  projectName = project1.name
+): Promise<HTMLElement> => {
+  const menu = await openProjectOptions(user, projectName)
+  await user.click(within(menu).getByRole('menuitem', { name: 'New session' }))
+  return screen.getByLabelText('Create session')
+}
+
 beforeEach(() => {
   useAppStore.getState().reset()
   // Theme persistence and the html[data-theme] stamp outlive an unmount; clear both so a
@@ -245,7 +264,7 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByText(project1.name)
-    await user.click(await screen.findByRole('button', { name: 'New session' }))
+    await openNewSessionLauncher(user)
     await user.click(await screen.findByRole('button', { name: label }))
 
     expect(api.createSession).toHaveBeenCalledWith('project-1', kind)
@@ -253,13 +272,13 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
   })
 
-  it('returns focus to the New session trigger after closing the launcher with its close button', async () => {
+  it('returns focus to the project options trigger after closing the launcher with its close button', async () => {
     const user = userEvent.setup()
     render(<App />)
 
     await screen.findByText(project1.name)
-    const trigger = await screen.findByRole('button', { name: 'New session' })
-    await user.click(trigger)
+    const trigger = await screen.findByRole('button', { name: projectOptionsName(project1.name) })
+    await openNewSessionLauncher(user)
     await screen.findByRole('button', { name: 'PowerShell' })
 
     await user.click(screen.getByRole('button', { name: 'Close launcher' }))
@@ -268,13 +287,13 @@ describe('App', () => {
     expect(trigger).toHaveFocus()
   })
 
-  it('returns focus to the New session trigger after closing the launcher with Escape', async () => {
+  it('returns focus to the project options trigger after closing the launcher with Escape', async () => {
     const user = userEvent.setup()
     render(<App />)
 
     await screen.findByText(project1.name)
-    const trigger = await screen.findByRole('button', { name: 'New session' })
-    await user.click(trigger)
+    const trigger = await screen.findByRole('button', { name: projectOptionsName(project1.name) })
+    await openNewSessionLauncher(user)
     await screen.findByRole('button', { name: 'PowerShell' })
 
     await user.keyboard('{Escape}')
@@ -300,11 +319,11 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByText(project1.name)
-    const trigger = await screen.findByRole('button', { name: 'New session' })
-    await user.click(trigger)
+    const trigger = await screen.findByRole('button', { name: projectOptionsName(project1.name) })
+    await openNewSessionLauncher(user)
 
     const powershellButton = await screen.findByRole('button', { name: 'PowerShell' })
-    powershellButton.focus()
+    expect(powershellButton).toHaveFocus()
     await user.keyboard('{Enter}')
 
     expect(api.createSession).toHaveBeenCalledWith('project-1', 'powershell')
@@ -316,7 +335,7 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByText(project1.name)
-    await user.click(await screen.findByRole('button', { name: 'New session' }))
+    await openNewSessionLauncher(user)
 
     const powershellButton = await screen.findByRole('button', { name: 'PowerShell' })
     const container = powershellButton.closest('[data-launcher-item]') ?? powershellButton.parentElement!
@@ -330,7 +349,7 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByText(project1.name)
-    await user.click(await screen.findByRole('button', { name: 'New session' }))
+    await openNewSessionLauncher(user)
 
     const claudeButton = await screen.findByRole('button', { name: 'Claude' })
     expect(claudeButton).toBeDisabled()
@@ -412,7 +431,8 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: 'Open project in VS Code' }))
+    const menu = await openProjectOptions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: 'Open project in VS Code' }))
 
     expect(api.openProjectInVSCode).toHaveBeenCalledWith('project-1')
     expect(api.restoreSession).not.toHaveBeenCalled()
@@ -422,7 +442,8 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
 
-    await user.click(await screen.findByRole('button', { name: 'Open project folder' }))
+    const menu = await openProjectOptions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: 'Open project folder' }))
 
     expect(api.openProjectFolder).toHaveBeenCalledWith('project-1')
     expect(api.restoreSession).not.toHaveBeenCalled()
@@ -551,7 +572,7 @@ describe('App', () => {
     expect(api.setTheme).toHaveBeenCalledWith('light')
   })
 
-  it('creates a session in the project whose row-level New session button was clicked', async () => {
+  it('creates a session in the project whose options menu New session action was clicked', async () => {
     const user = userEvent.setup()
     const project2: ProjectRecord = {
       id: 'project-2',
@@ -576,9 +597,7 @@ describe('App', () => {
     render(<App />)
 
     await screen.findByText(project2.name)
-    const triggers = await screen.findAllByRole('button', { name: 'New session' })
-    expect(triggers).toHaveLength(2)
-    await user.click(triggers[1])
+    await openNewSessionLauncher(user, project2.name)
     await user.click(await screen.findByRole('button', { name: 'PowerShell' }))
 
     expect(api.createSession).toHaveBeenCalledWith('project-2', 'powershell')
