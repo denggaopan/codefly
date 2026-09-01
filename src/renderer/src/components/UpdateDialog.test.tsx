@@ -98,19 +98,35 @@ describe('UpdateDialog', () => {
     expect(screen.getByRole('alertdialog')).toHaveTextContent('4.0 KB downloaded')
   })
 
-  it('cancels the download from the button and from Escape, never silently backgrounding it', async () => {
+  it('cancels the download only from its own button, never from a stray click or Escape', async () => {
     const user = userEvent.setup()
     const api = renderDialog({ phase: 'downloading', version: '2.0.0', receivedBytes: 0, totalBytes: 100 })
 
+    // Throwing away a large transfer is far too destructive for a full-window click target.
     expect(screen.queryByRole('button', { name: 'Later' })).toBeNull()
+    await user.keyboard('{Escape}')
+    await user.click(document.querySelector('.update-dialog-backdrop') as HTMLElement)
+    expect(api.cancelUpdateDownload).not.toHaveBeenCalled()
+
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(api.cancelUpdateDownload).toHaveBeenCalledTimes(1)
-
-    await user.keyboard('{Escape}')
-    expect(api.cancelUpdateDownload).toHaveBeenCalledTimes(2)
   })
 
-  it('installs on demand once the installer is on disk', async () => {
+  it('offers nothing at all while the installer is being launched', async () => {
+    const user = userEvent.setup()
+    const api = renderDialog({ phase: 'installing', version: '2.0.0' })
+
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('Starting the installer for version 2.0.0')
+    expect(screen.queryByRole('button')).toBeNull()
+
+    // The app is already quitting: neither gesture may leave this phase.
+    await user.keyboard('{Escape}')
+    await user.click(document.querySelector('.update-dialog-backdrop') as HTMLElement)
+    expect(phase()).toBe('installing')
+    expect(api.installUpdate).not.toHaveBeenCalled()
+  })
+
+  it('installs on demand once the installer is on disk, and stops offering the button', async () => {
     const user = userEvent.setup()
     const api = renderDialog({ phase: 'ready', version: '2.0.0' })
 
@@ -119,6 +135,8 @@ describe('UpdateDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Install now' }))
 
     expect(api.installUpdate).toHaveBeenCalledTimes(1)
+    // Quitting is not instant, so the button must not survive to be clicked a second time.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Install now' })).toBeNull())
   })
 
   it('keeps the downloaded installer when the user postpones the install', async () => {

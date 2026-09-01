@@ -31,6 +31,7 @@ export type UpdaterState =
   | { phase: 'available'; version: string; downloadable: boolean }
   | { phase: 'downloading'; version: string; receivedBytes: number; totalBytes: number }
   | { phase: 'ready'; version: string }
+  | { phase: 'installing'; version: string }
   | { phase: 'error'; version: string; message: string }
 
 export type AppStore = {
@@ -301,12 +302,15 @@ export const useAppStore = create<AppStore>()((set, get) => {
       const disposeExit = window.codefly.onTerminalExit(({ sessionId }) => {
         unmarkIdle(sessionId)
       })
-      // Progress is only merged while this store still believes that exact version is
-      // downloading, so an event that arrives after a cancel, a failure, or a completion
-      // cannot drag the dialog back into the downloading phase.
+      // Merged only while a download is actually in progress, so an event arriving after a
+      // cancel, a failure, or a completion cannot drag the dialog back into the downloading
+      // phase. The version comes from the event rather than being matched against the stored
+      // one: the main process re-resolves the release when the download starts, so a release
+      // published between the check and the click legitimately reports a newer version, and
+      // dropping those frames would freeze the progress bar at 0 for the whole transfer.
       const disposeUpdateProgress = window.codefly.onUpdateProgress((progress) => {
         set((state) =>
-          state.updater.phase === 'downloading' && state.updater.version === progress.version
+          state.updater.phase === 'downloading'
             ? {
                 updater: {
                   phase: 'downloading',
@@ -369,9 +373,10 @@ export const useAppStore = create<AppStore>()((set, get) => {
 
     startUpdateDownload: async () => {
       const current = get().updater
-      // Nothing to download from a resting dialog, and a second call while bytes are already
-      // moving would only reset the progress the main process is still reporting.
-      if (current.phase === 'idle' || current.phase === 'downloading') return
+      // Nothing to download from a resting dialog; a second call while bytes are already
+      // moving would only reset the progress the main process is still reporting; and an
+      // install already handed to the OS must not be undercut by a fresh download.
+      if (current.phase === 'idle' || current.phase === 'downloading' || current.phase === 'installing') return
       const { version } = current
 
       set({ updater: { phase: 'downloading', version, receivedBytes: 0, totalBytes: 0 } })
@@ -399,14 +404,20 @@ export const useAppStore = create<AppStore>()((set, get) => {
       }
     },
 
+    // Quitting is not instant — the main process still has to tear down every PTY before the
+    // app actually exits (see shutdown-controller) — so the dialog moves to `installing` and
+    // stops offering the button. Two NSIS wizards racing on the same install directory is a
+    // real outcome of a double click, and UpdaterService.install() is idempotent for the same
+    // reason; this is the half the user can see.
     installUpdate: async () => {
       const current = get().updater
-      if (current.phase === 'idle') return
+      if (current.phase === 'idle' || current.phase === 'installing') return
       const { version } = current
 
+      set({ updater: { phase: 'installing', version } })
       try {
         const result = await window.codefly.installUpdate()
-        // `launched` means the app is already quitting: leaving the dialog as it is avoids a
+        // `launched` means the app is already quitting: staying on `installing` avoids a
         // flash of some other state during teardown.
         if (result.status === 'error') set({ updater: { phase: 'error', version, message: result.message } })
       } catch (error) {

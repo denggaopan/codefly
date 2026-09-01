@@ -18,8 +18,12 @@ export const REQUEST_HEADERS: Readonly<Record<string, string>> = {
 }
 
 // The asset endpoint answers with the binary itself, not JSON, so it asks for the raw bytes.
+// `identity` matters: undici would otherwise offer gzip/br and transparently decompress the
+// body while Content-Length still describes the *compressed* size, so the completeness check
+// would compare decompressed bytes against a compressed count and fail every download.
 export const DOWNLOAD_HEADERS: Readonly<Record<string, string>> = {
   Accept: 'application/octet-stream',
+  'Accept-Encoding': 'identity',
   'User-Agent': 'CodeFly'
 }
 

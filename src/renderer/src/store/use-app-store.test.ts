@@ -384,11 +384,13 @@ describe('useAppStore updater', () => {
     expect(useAppStore.getState().updater).toEqual({ phase: 'idle' })
   })
 
-  it('leaves the dialog alone when the installer launches, and reports it when it does not', async () => {
+  it('holds the installing phase while the app quits, and reports a failure to launch', async () => {
     useAppStore.setState({ updater: { phase: 'ready', version: '2.0.0' } })
     await useAppStore.getState().installUpdate()
-    expect(useAppStore.getState().updater).toEqual({ phase: 'ready', version: '2.0.0' })
+    // The app is on its way out; staying here avoids a flash of another state during teardown.
+    expect(useAppStore.getState().updater).toEqual({ phase: 'installing', version: '2.0.0' })
 
+    useAppStore.setState({ updater: { phase: 'ready', version: '2.0.0' } })
     api.installUpdate.mockResolvedValueOnce({ status: 'error', message: 'The downloaded installer is missing.' })
     await useAppStore.getState().installUpdate()
     expect(useAppStore.getState().updater).toEqual({
@@ -396,6 +398,26 @@ describe('useAppStore updater', () => {
       version: '2.0.0',
       message: 'The downloaded installer is missing.'
     })
+  })
+
+  it('refuses a second install once one is already handed to the OS', async () => {
+    useAppStore.setState({ updater: { phase: 'ready', version: '2.0.0' } })
+
+    // Quitting is not instant, so the user has a real window in which to click twice.
+    await useAppStore.getState().installUpdate()
+    await useAppStore.getState().installUpdate()
+
+    expect(api.installUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('adopts the version a progress event reports rather than dropping the frame', () => {
+    useAppStore.setState({ updater: { phase: 'downloading', version: '2.0.0', receivedBytes: 0, totalBytes: 0 } })
+
+    // The main process re-resolves the release when the download starts, so a release
+    // published between the check and the click legitimately reports a newer version.
+    api.emitUpdateProgress({ version: '2.1.0', receivedBytes: 64, totalBytes: 512 })
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'downloading', version: '2.1.0', receivedBytes: 64, totalBytes: 512 })
   })
 
   it('asks the main process to cancel without pre-empting the download result', async () => {

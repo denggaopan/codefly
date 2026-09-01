@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import type { UpdateDownloadProgress } from '../../shared/contracts'
 import {
@@ -91,7 +91,14 @@ class FakeFileSystem implements UpdaterFileSystem {
   readonly opened: string[] = []
   readonly removed: string[] = []
   readonly renamed: Array<{ from: string; to: string }> = []
-  readonly failures: { ensureDirectory?: Error; openWriteStream?: Error; write?: Error; rename?: Error } = {}
+  readonly failures: {
+    ensureDirectory?: Error
+    openWriteStream?: Error
+    write?: Error
+    rename?: Error
+    fileSize?: Error
+    listFiles?: Error
+  } = {}
 
   async ensureDirectory(directory: string): Promise<void> {
     if (this.failures.ensureDirectory) throw this.failures.ensureDirectory
@@ -99,6 +106,9 @@ class FakeFileSystem implements UpdaterFileSystem {
   }
 
   async fileSize(filePath: string): Promise<number | undefined> {
+    // Contract says never throw; a test can break that on purpose to prove the service still
+    // folds it into a result rather than rejecting across IPC.
+    if (this.failures.fileSize) throw this.failures.fileSize
     return this.files.get(filePath)
   }
 
@@ -132,6 +142,14 @@ class FakeFileSystem implements UpdaterFileSystem {
     this.removed.push(filePath)
     this.files.delete(filePath)
   }
+
+  async listFiles(directory: string): Promise<readonly string[]> {
+    if (this.failures.listFiles) throw this.failures.listFiles
+    const prefix = `${directory}\\`
+    return [...this.files.keys()]
+      .filter((filePath) => filePath.startsWith(prefix) && !filePath.slice(prefix.length).includes('\\'))
+      .map((filePath) => filePath.slice(prefix.length))
+  }
 }
 
 type HarnessOptions = {
@@ -140,6 +158,8 @@ type HarnessOptions = {
   releasePayload?: unknown
   releaseUnreadable?: boolean
   releaseFails?: unknown
+  /** Metadata request that never answers until aborted; receives the signal it was given. */
+  releaseHangs?: (signal: AbortSignal | undefined) => void
   assetStatus?: number
   assetFails?: unknown
   assetBody?: AsyncIterable<Uint8Array> | null
@@ -150,6 +170,10 @@ type HarnessOptions = {
   fileSystem?: FakeFileSystem
   clockStepMs?: number
   spawnFails?: Error
+  /** Emitted asynchronously by the fake child, the way a real ENOENT/blocked spawn reports. */
+  spawnEmitsError?: Error
+  /** A child that announces nothing at all, so the confirmation timeout is what resolves it. */
+  spawnNeverSettles?: boolean
 }
 
 type Harness = {
@@ -182,6 +206,13 @@ const buildHarness = (options: HarnessOptions = {}): Harness => {
 
     if (url === RELEASE_URL) {
       if (options.releaseFails) throw options.releaseFails
+      if (options.releaseHangs) {
+        options.releaseHangs(init.signal)
+        // Mirrors fetch: a hung request only settles when its signal aborts, and then rejects.
+        return new Promise<UpdaterHttpResponse>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'AbortError')))
+        })
+      }
       return {
         ok: releaseStatus >= 200 && releaseStatus < 300,
         status: releaseStatus,
@@ -203,14 +234,34 @@ const buildHarness = (options: HarnessOptions = {}): Harness => {
     } satisfies UpdaterHttpResponse
   }
 
+  // Models a real ChildProcess closely enough to matter: spawn() returns synchronously and
+  // the outcome ('spawn' or 'error') only arrives on a later tick.
   const spawnInstaller: InstallerSpawner = (file, args, spawnOptions) => {
     spawns.push({ file, args, options: spawnOptions })
     if (options.spawnFails) throw options.spawnFails
+
+    const errorListeners: Array<(error: Error) => void> = []
+    const spawnListeners: Array<() => void> = []
+
+    if (!options.spawnNeverSettles) {
+      queueMicrotask(() => {
+        if (options.spawnEmitsError) {
+          for (const listener of errorListeners) listener(options.spawnEmitsError)
+          return
+        }
+        for (const listener of spawnListeners) listener()
+      })
+    }
+
     return {
       unref: () => {
         calls.unrefs += 1
+      },
+      on: (event: 'error' | 'spawn', listener: (error?: Error) => void) => {
+        if (event === 'error') errorListeners.push(listener as (error: Error) => void)
+        else spawnListeners.push(listener as () => void)
       }
-    }
+    } as ReturnType<InstallerSpawner>
   }
 
   // A clock the test drives: frozen by default, so only the byte threshold can trigger a
@@ -269,11 +320,18 @@ describe('UpdaterService.download: happy path', () => {
 
     expect(harness.requests.map((request) => request.url)).toEqual([RELEASE_URL, INSTALLER_URL])
     expect(harness.requests[0]!.headers).toEqual({ Accept: 'application/vnd.github+json', 'User-Agent': 'CodeFly' })
-    expect(harness.requests[1]!.headers).toEqual({ Accept: 'application/octet-stream', 'User-Agent': 'CodeFly' })
+    // identity encoding: undici would otherwise decompress the body while Content-Length
+    // still described the compressed size, failing the completeness check on every download.
+    expect(harness.requests[1]!.headers).toEqual({
+      Accept: 'application/octet-stream',
+      'Accept-Encoding': 'identity',
+      'User-Agent': 'CodeFly'
+    })
     // Only the metadata request is time-boxed; a large installer legitimately takes minutes,
-    // so the asset request carries the cancellation signal instead.
+    // so the asset request carries the cancellation signal alone. Both requests are
+    // cancellable — a hung metadata call must not outlive a Cancel click.
     expect(harness.timeouts).toEqual([10_000])
-    expect(harness.requests[0]!.signal).toBeUndefined()
+    expect(harness.requests[0]!.signal).toBeInstanceOf(AbortSignal)
     expect(harness.requests[1]!.signal).toBeInstanceOf(AbortSignal)
   })
 })
@@ -742,5 +800,151 @@ describe('UpdaterService.install', () => {
 
     await expect(harness.service.install()).resolves.toEqual({ status: 'launched' })
     expect(harness.spawns[0]!.file).toBe(INSTALLER_PATH)
+  })
+})
+
+/**
+ * Regressions from an adversarial review of the first implementation. Each case here is a
+ * failure the original code shipped: a spawn that never happened reported as launched, an
+ * unverifiable transfer accepted as ready, an updates directory that only ever grew, and a
+ * second install racing the first.
+ */
+describe('UpdaterService: hardening', () => {
+  it('does not quit when the installer process fails asynchronously', async () => {
+    // spawn() does not throw for a quarantined, blocked, or deleted executable: it returns a
+    // process that emits 'error' on a later tick. Reporting success here would close the app
+    // with no installer running, and the unheard 'error' would crash the main process.
+    const harness = buildHarness({ spawnEmitsError: new Error('spawn ENOENT') })
+    await harness.service.download()
+
+    await expect(harness.service.install()).resolves.toEqual({
+      status: 'error',
+      message: 'Could not start the installer: spawn ENOENT'
+    })
+    expect(harness.calls.quits).toBe(0)
+    expect(harness.calls.unrefs).toBe(0)
+  })
+
+  it('does not quit when the installer never confirms it started', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = buildHarness({ spawnNeverSettles: true })
+      await harness.service.download()
+
+      const install = harness.service.install()
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      await expect(install).resolves.toEqual({
+        status: 'error',
+        message: 'Could not start the installer: the installer did not start in time'
+      })
+      expect(harness.calls.quits).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('spawns only once however many times install is called', async () => {
+    // Quitting is not instant — every PTY is torn down first — so the user really can click
+    // twice, and two NSIS wizards would then race over the same install directory.
+    const harness = buildHarness()
+    await harness.service.download()
+
+    await expect(harness.service.install()).resolves.toEqual({ status: 'launched' })
+    await expect(harness.service.install()).resolves.toEqual({ status: 'launched' })
+
+    expect(harness.spawns).toHaveLength(1)
+    expect(harness.calls.quits).toBe(1)
+  })
+
+  it('refuses an empty download that no declared size could have caught', async () => {
+    // No asset size and no Content-Length means nothing to verify against, so an empty or
+    // truncated body would otherwise be renamed to .exe and offered as ready to install.
+    const harness = buildHarness({
+      releasePayload: releasePayload({ assets: [releaseAsset({ size: undefined })] }),
+      contentLength: null,
+      chunks: []
+    })
+
+    await expect(harness.service.download()).resolves.toEqual({
+      status: 'error',
+      message: 'The installer download arrived empty. Try again, or download it from the releases page.'
+    })
+    expect(harness.fileSystem.files.has(INSTALLER_PATH)).toBe(false)
+    expect(harness.fileSystem.removed).toContain(PART_PATH)
+  })
+
+  it('still accepts an unverifiable download that actually delivered bytes', async () => {
+    const harness = buildHarness({
+      releasePayload: releasePayload({ assets: [releaseAsset({ size: undefined })] }),
+      contentLength: null,
+      chunks: [chunk(64), chunk(64)]
+    })
+
+    await expect(harness.service.download()).resolves.toMatchObject({ status: 'ready' })
+    expect(harness.fileSystem.files.get(INSTALLER_PATH)).toBe(128)
+  })
+
+  it('sweeps superseded installers and orphaned part files once a download lands', async () => {
+    // Without this the directory grows by one ~80 MB installer per update, forever, inside
+    // the user's roaming profile; a crash mid-download leaves a .part behind on top of that.
+    const harness = buildHarness({
+      existingFiles: {
+        [join(UPDATES_DIRECTORY, 'CodeFly-Setup-0.4.0-win-x64.exe')]: 900,
+        [join(UPDATES_DIRECTORY, 'CodeFly-Setup-0.3.0-win-x64.exe.part')]: 17
+      }
+    })
+
+    await expect(harness.service.download()).resolves.toMatchObject({ status: 'ready' })
+
+    expect([...harness.fileSystem.files.keys()]).toEqual([INSTALLER_PATH])
+  })
+
+  it('keeps a successful download successful when the sweep fails', async () => {
+    const harness = buildHarness({ existingFiles: { [join(UPDATES_DIRECTORY, 'stale.exe')]: 5 } })
+    harness.fileSystem.failures.listFiles = new Error('EPERM: operation not permitted')
+
+    await expect(harness.service.download()).resolves.toMatchObject({ status: 'ready' })
+  })
+
+  it('sweeps too when the installer already on disk is reused', async () => {
+    const harness = buildHarness({
+      existingFiles: {
+        [INSTALLER_PATH]: 900,
+        [join(UPDATES_DIRECTORY, 'CodeFly-Setup-0.4.0-win-x64.exe')]: 800
+      }
+    })
+
+    await expect(harness.service.download()).resolves.toMatchObject({ status: 'ready' })
+
+    expect([...harness.fileSystem.files.keys()]).toEqual([INSTALLER_PATH])
+  })
+
+  it('cancels a hung release-metadata request instead of waiting out its timeout', async () => {
+    // The metadata request used to carry only the timeout signal, so Cancel left the dialog
+    // frozen on "0 B" until the full 10s elapsed.
+    let releaseSignal: AbortSignal | undefined
+    const harness = buildHarness({
+      releaseHangs: (signal) => {
+        releaseSignal = signal
+      }
+    })
+
+    const download = harness.service.download()
+    await Promise.resolve()
+    await harness.service.cancel()
+
+    expect(releaseSignal?.aborted).toBe(true)
+    await expect(download).resolves.toEqual({ status: 'cancelled' })
+  })
+
+  it('never rejects, even when the injected filesystem breaks its never-throw contract', async () => {
+    const harness = buildHarness()
+    harness.fileSystem.failures.fileSize = new Error('EBUSY: resource busy or locked')
+
+    // download() reads sizes to decide about reuse and completeness; install() reads one to
+    // confirm the installer is still there. Neither may surface as a rejected IPC call.
+    await expect(harness.service.download()).resolves.toMatchObject({ status: expect.any(String) })
+    await expect(harness.service.install()).resolves.toMatchObject({ status: 'error' })
   })
 })

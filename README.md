@@ -173,11 +173,20 @@ version, a dialog offers **Update now** or **Later**.
 
 **Update now** downloads that release's Windows installer inside the app, with a progress
 bar and a **Cancel** button, into an `updates` folder under Electron's `userData` directory.
+While bytes are moving, **Cancel** is the only way out — clicking the backdrop or pressing
+Escape does nothing, so a stray click cannot throw away a download that is nearly finished.
+
 When the download finishes CodeFly asks again: **Install now** quits the app and launches the
 installer (it has to quit — the installer replaces files the running app holds open), while
 **Later** simply closes the dialog and leaves the downloaded installer on disk, so choosing
 **Update now** again later finds it already there and skips straight to the install prompt.
-The same flow is reachable on demand from **Check for updates** in Settings.
+Only that one installer is kept: every superseded installer and every `.part` file orphaned
+by a crash mid-download is swept away as soon as a new download lands. The same flow is
+reachable on demand from **Check for updates** in Settings.
+
+CodeFly only quits once the operating system confirms the installer process actually started.
+A blocked, quarantined, or missing installer leaves the app open with an explanation rather
+than closing it and leaving nothing behind.
 
 The renderer never names what gets downloaded or executed: the download, cancel, and install
 IPC commands take no arguments, and the main process re-resolves the release asset itself and

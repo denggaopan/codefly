@@ -94,6 +94,8 @@ export const en = {
   'update.readyTitle': 'Version {version} is ready to install',
   'update.readyBody': 'CodeFly will close and run the installer. Save your work in any running session first.',
   'update.installNow': 'Install now',
+  'update.installingTitle': 'Starting the installer for version {version}',
+  'update.installingBody': 'CodeFly is closing its sessions and handing over to the installer.',
   'update.failedTitle': 'The update could not be downloaded',
   'update.tryAgain': 'Try again'
 } as const

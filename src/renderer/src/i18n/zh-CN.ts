@@ -95,6 +95,8 @@ export const zhCN: Translations = {
   'update.readyTitle': '版本 {version} 已可安装',
   'update.readyBody': 'CodeFly 将关闭并运行安装程序。请先保存正在运行的会话中的工作。',
   'update.installNow': '立即安装',
+  'update.installingTitle': '正在启动版本 {version} 的安装程序',
+  'update.installingBody': 'CodeFly 正在关闭会话并交由安装程序接管。',
   'update.failedTitle': '更新下载失败',
   'update.tryAgain': '重试'
 }

@@ -206,15 +206,29 @@ const buildE2EUpdaterService = (fixture: E2EReleaseFixture | undefined): Updater
       throw new Error('The E2E updater never writes to disk.')
     },
     rename: async () => undefined,
-    remove: async () => undefined
+    remove: async () => undefined,
+    listFiles: async () => []
   }
 
   // Records the installer path the service would have executed. The real spawn is the one
   // thing this flow cannot rehearse — running an installer would modify the machine — so it
-  // is replaced by the smallest possible observable side effect.
+  // is replaced by the smallest possible observable side effect. It still has to behave like
+  // a ChildProcess and announce 'spawn', because the service (rightly) refuses to quit until
+  // the OS confirms the installer actually started.
   const recordingSpawner: InstallerSpawner = (file) => {
     if (fixture?.installLog) writeFileSync(fixture.installLog, file, 'utf8')
-    return { unref: () => undefined }
+
+    const spawnListeners: Array<() => void> = []
+    queueMicrotask(() => {
+      for (const listener of spawnListeners) listener()
+    })
+
+    return {
+      unref: () => undefined,
+      on: (event: 'error' | 'spawn', listener: (error?: Error) => void) => {
+        if (event === 'spawn') spawnListeners.push(listener as () => void)
+      }
+    } as ReturnType<InstallerSpawner>
   }
 
   return new UpdaterService(

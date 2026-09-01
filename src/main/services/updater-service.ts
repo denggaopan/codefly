@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdir, open, rename, stat, unlink } from 'node:fs/promises'
+import { mkdir, open, readdir, rename, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { app } from 'electron'
@@ -34,6 +34,11 @@ const PART_SUFFIX = '.part'
 const PROGRESS_INTERVAL_MS = 200
 const PROGRESS_BYTES = 256 * 1024
 
+// How long to wait for the OS to confirm the installer process actually started. Generous,
+// because it is only ever hit when something is badly wrong: a healthy spawn confirms in
+// milliseconds, and the cost of waiting is only that the app has not quit yet.
+const SPAWN_CONFIRMATION_TIMEOUT_MS = 5_000
+
 export type UpdaterHttpHeaders = { get(name: string): string | null }
 
 // The slice of the fetch Response this service uses. `body` is iterated chunk by chunk, so
@@ -57,18 +62,34 @@ export type InstallerWriteStream = {
 }
 
 // Narrow filesystem surface so tests can run the whole download in memory and never write a
-// real installer into a real userData directory.
+// real installer into a real userData directory. `fileSize`, `remove` and `listFiles` are
+// interrogative or best-effort and MUST NOT reject — the service treats their answers as
+// facts and folds every real failure into a result, so a rejection here would escape as an
+// unhandled IPC error. `ensureDirectory`, `openWriteStream` and `rename` may reject; those
+// calls are guarded.
 export type UpdaterFileSystem = {
   ensureDirectory(directory: string): Promise<void>
-  /** Byte size of an existing file, or undefined when it is missing or is not a file. */
+  /** Byte size of an existing file, or undefined when it is missing, unreadable, or not a file. */
   fileSize(filePath: string): Promise<number | undefined>
   openWriteStream(filePath: string): Promise<InstallerWriteStream>
   rename(from: string, to: string): Promise<void>
   /** Best-effort delete: a file that is already gone is not an error. */
   remove(filePath: string): Promise<void>
+  /** File names directly inside `directory`; an empty list when it cannot be read. */
+  listFiles(directory: string): Promise<readonly string[]>
 }
 
-export type SpawnedInstaller = { unref(): void }
+/**
+ * The slice of ChildProcess the install needs. `on` matters as much as `unref`: spawn does
+ * NOT throw for a missing, quarantined, or blocked executable — it returns a process that
+ * emits `'error'` on a later tick, which is both the failure this service has to report and,
+ * with no listener attached, an unhandled event that would take the main process down.
+ */
+export type SpawnedInstaller = {
+  unref(): void
+  on(event: 'error', listener: (error: Error) => void): void
+  on(event: 'spawn', listener: () => void): void
+}
 
 export type InstallerSpawner = (
   file: string,
@@ -122,6 +143,15 @@ const defaultFileSystem: UpdaterFileSystem = {
     } catch {
       // Nothing to clean up: the partial file was never created, or is already gone.
     }
+  },
+  listFiles: async (directory) => {
+    try {
+      const entries = await readdir(directory, { withFileTypes: true })
+      return entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+    } catch {
+      // No updates directory yet, or it cannot be read: there is nothing to sweep.
+      return []
+    }
   }
 }
 
@@ -142,6 +172,11 @@ const describeRequestFailure = (error: unknown): string =>
 
 const describeFailure = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : String(error)
+
+// The timeout factory is injectable and may answer undefined (a test that wants no timeout),
+// so the cancel signal has to survive on its own.
+const combineSignals = (cancel: AbortSignal, timeout: AbortSignal | undefined): AbortSignal =>
+  timeout ? AbortSignal.any([cancel, timeout]) : cancel
 
 const UNREADABLE_RESPONSE = 'GitHub returned a response CodeFly could not read.'
 
@@ -164,6 +199,8 @@ export class UpdaterService {
   private inFlight: Promise<UpdateDownloadResult> | undefined
   private controller: AbortController | undefined
   private ready: ReadyInstaller | undefined
+  /** Set once an installer process has been confirmed started; makes install() idempotent. */
+  private launched = false
 
   constructor(
     private readonly getVersion: GetVersion = defaultGetVersion,
@@ -215,22 +252,24 @@ export class UpdaterService {
   }
 
   async install(): Promise<UpdateInstallResult> {
+    // Quitting is not instant — the app still tears down every PTY first — so the user has a
+    // real window in which to click again. A second NSIS wizard racing the first over the
+    // same install directory is worth guarding against here as well as in the renderer.
+    if (this.launched) return { status: 'launched' }
+
     const ready = this.ready
     if (!ready) return { status: 'error', message: 'No installer has been downloaded yet. Download the update first.' }
 
-    if ((await this.fileSystem.fileSize(ready.filePath)) === undefined) {
+    if ((await this.fileSize(ready.filePath)) === undefined) {
       return { status: 'error', message: 'The downloaded installer is no longer on disk. Download the update again.' }
     }
 
-    try {
-      // Detached and unref'd so the installer outlives the quit below; it is the installer,
-      // not CodeFly, that owns the rest of the flow from here.
-      this.spawnInstaller(ready.filePath, [], { detached: true, stdio: 'ignore' }).unref()
-    } catch (error) {
-      // CodeFly stays open on failure: quitting would leave the user with neither a running
-      // app nor a running installer.
-      return { status: 'error', message: `Could not start the installer: ${describeFailure(error)}` }
-    }
+    const launch = await this.launchInstaller(ready.filePath)
+    // CodeFly stays open on failure: quitting would leave the user with neither a running app
+    // nor a running installer, and no idea that anything went wrong.
+    if (!launch.ok) return { status: 'error', message: `Could not start the installer: ${launch.reason}` }
+
+    this.launched = true
 
     // The installer overwrites files this process holds open, so CodeFly has to exit for it
     // to succeed. A failure to quit is not worth reporting — the installer is already up.
@@ -242,6 +281,85 @@ export class UpdaterService {
     return { status: 'launched' }
   }
 
+  /**
+   * Starts the installer and waits for the OS to confirm it. `spawn` resolves synchronously
+   * for a file that can never run — a quarantined, blocked, or deleted installer surfaces as
+   * an `'error'` event on a later tick — so returning as soon as spawn returns would report
+   * success for a launch that never happened, quit the app, and leave the unhandled `'error'`
+   * event to crash the main process on its way out.
+   */
+  private launchInstaller(filePath: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    let installer: SpawnedInstaller
+    try {
+      installer = this.spawnInstaller(filePath, [], { detached: true, stdio: 'ignore' })
+    } catch (error) {
+      return Promise.resolve({ ok: false, reason: describeFailure(error) })
+    }
+
+    return new Promise((resolve) => {
+      let settled = false
+      const settle = (result: { ok: true } | { ok: false; reason: string }): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(result)
+      }
+
+      // A process that reports neither outcome must not hang the invoke forever; the app
+      // stays open, which is the same safe answer as an explicit failure.
+      const timer = setTimeout(() => {
+        settle({ ok: false, reason: 'the installer did not start in time' })
+      }, SPAWN_CONFIRMATION_TIMEOUT_MS)
+      // Node keeps the process alive for a pending timer; this one must never delay a quit.
+      timer.unref?.()
+
+      // Attached before anything else: an 'error' with no listener is a hard crash.
+      installer.on('error', (error) => {
+        settle({ ok: false, reason: describeFailure(error) })
+      })
+      installer.on('spawn', () => {
+        // Only now is the child real enough to outlive this process.
+        installer.unref()
+        settle({ ok: true })
+      })
+    })
+  }
+
+  /**
+   * `UpdaterFileSystem.fileSize` is documented as never rejecting, but this class promises
+   * callers something stronger — that nothing here ever rejects — and an injected filesystem
+   * is not this class's to trust. An unreadable file is indistinguishable from a missing one
+   * for every decision made from this answer.
+   */
+  private async fileSize(filePath: string): Promise<number | undefined> {
+    try {
+      return await this.fileSystem.fileSize(filePath)
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Deletes everything in the updates directory except the installer just downloaded —
+   * superseded installers from earlier updates, and `.part` files orphaned by a crash or a
+   * kill mid-download (every ordinary exit path removes its own). Without this the directory
+   * grows by an installer per update, forever, inside the user's roaming profile.
+   *
+   * Best-effort by design: a successful download must not be reported as a failure because
+   * housekeeping could not delete a file someone else has open.
+   */
+  private async sweepSupersededInstallers(directory: string, keepFileName: string): Promise<void> {
+    try {
+      const names = await this.fileSystem.listFiles(directory)
+      for (const name of names) {
+        if (name === keepFileName) continue
+        await this.fileSystem.remove(join(directory, name))
+      }
+    } catch (error) {
+      console.error('UpdaterService: failed to clean up superseded installers.', error)
+    }
+  }
+
   private async runDownload(signal: AbortSignal): Promise<UpdateDownloadResult> {
     const currentVersion = this.getVersion()
 
@@ -250,10 +368,15 @@ export class UpdaterService {
       response = await this.fetch(LATEST_RELEASE_URL, {
         headers: { ...REQUEST_HEADERS },
         // The metadata request keeps the same short timeout as the update check; the asset
-        // request below must not, because a large installer legitimately takes minutes.
-        signal: this.createTimeoutSignal(REQUEST_TIMEOUT_MS)
+        // request below must not, because a large installer legitimately takes minutes. The
+        // cancel signal is combined in so that hitting Cancel against a hung api.github.com
+        // lands immediately instead of leaving the dialog frozen for the whole timeout.
+        signal: combineSignals(signal, this.createTimeoutSignal(REQUEST_TIMEOUT_MS))
       })
     } catch (error) {
+      // Aborting this request is now how Cancel lands during the metadata round trip, so the
+      // abort has to read as the user's own choice rather than as a network failure.
+      if (signal.aborted) return { status: 'cancelled' }
       return { status: 'error', message: describeRequestFailure(error) }
     }
 
@@ -313,8 +436,9 @@ export class UpdaterService {
     // A complete installer of the expected size is reused as-is: the user may have picked
     // "install later" and reopened CodeFly, and downloading it again would be pure waste.
     // There is no resume — a file of any other size is replaced by a fresh download.
-    const existingBytes = await this.fileSystem.fileSize(targetPath)
+    const existingBytes = await this.fileSize(targetPath)
     if (installer.size > 0 && existingBytes === installer.size) {
+      await this.sweepSupersededInstallers(directory, installer.fileName)
       this.ready = { filePath: targetPath, fileName: installer.fileName, version }
       return { status: 'ready', version, fileName: installer.fileName }
     }
@@ -373,13 +497,20 @@ export class UpdaterService {
       })
     }
 
-    const writtenBytes = await this.fileSystem.fileSize(partPath)
+    const writtenBytes = await this.fileSize(partPath)
     if (totalBytes > 0 && writtenBytes !== totalBytes) {
       await this.fileSystem.remove(partPath)
       return {
         status: 'error',
         message: `The downloaded installer is incomplete: expected ${totalBytes} bytes but got ${writtenBytes ?? receivedBytes}.`
       }
+    }
+    // With no declared size there is nothing to verify against, so an empty or unreadable
+    // result is the only thing that can still be caught — and it must be, because this file
+    // is about to be renamed to `.exe`, offered as "ready to install", and executed.
+    if (totalBytes === 0 && !writtenBytes) {
+      await this.fileSystem.remove(partPath)
+      return { status: 'error', message: 'The installer download arrived empty. Try again, or download it from the releases page.' }
     }
 
     try {
@@ -391,6 +522,8 @@ export class UpdaterService {
       await this.fileSystem.remove(partPath)
       return { status: 'error', message: `Could not save the installer: ${describeFailure(error)}` }
     }
+
+    await this.sweepSupersededInstallers(directory, installer.fileName)
 
     // The throttle can swallow the last chunk's frame, so completion is always reported once
     // the bytes are verified and in place.

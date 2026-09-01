@@ -22,9 +22,10 @@ export const formatBytes = (bytes: number): string => {
  *
  * Modal conventions follow ConfirmDialog: a fixed full-window backdrop that dismisses on
  * click, Escape to dismiss, and clicks inside the panel that never reach the backdrop. Both
- * dismissal gestures mean "Later" — except while downloading, where they cancel the
- * download instead, since silently leaving a download running behind a closed dialog would
- * give the user no way back to it.
+ * dismissal gestures mean "Later" — but neither is wired up while a download or an install
+ * is running: the backdrop covers the whole window, and throwing away 90 MB at 85% (or
+ * abandoning a dialog whose app is already quitting) is far too destructive for a stray
+ * click. Cancel is then the only way to stop the download, and it says so.
  */
 export default function UpdateDialog() {
   const { t } = useTranslation()
@@ -35,17 +36,15 @@ export default function UpdateDialog() {
   const dismissUpdate = useAppStore((state) => state.dismissUpdate)
 
   const downloading = updater.phase === 'downloading'
+  // A phase with work in flight owns the dialog: only its own explicit button can leave it.
+  const busy = downloading || updater.phase === 'installing'
 
   useEffect(() => {
-    if (updater.phase === 'idle') return undefined
+    if (updater.phase === 'idle' || busy) return undefined
 
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       event.preventDefault()
-      if (downloading) {
-        void cancelUpdateDownload()
-        return
-      }
       dismissUpdate()
     }
 
@@ -53,7 +52,7 @@ export default function UpdateDialog() {
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [updater.phase, downloading, cancelUpdateDownload, dismissUpdate])
+  }, [updater.phase, busy, dismissUpdate])
 
   if (updater.phase === 'idle') return null
 
@@ -63,10 +62,7 @@ export default function UpdateDialog() {
   }
 
   const dismiss = (): void => {
-    if (downloading) {
-      void cancelUpdateDownload()
-      return
-    }
+    if (busy) return
     dismissUpdate()
   }
 
@@ -78,6 +74,8 @@ export default function UpdateDialog() {
         return t('update.downloadingTitle', { version: updater.version })
       case 'ready':
         return t('update.readyTitle', { version: updater.version })
+      case 'installing':
+        return t('update.installingTitle', { version: updater.version })
       case 'error':
         return t('update.failedTitle')
     }
@@ -100,6 +98,7 @@ export default function UpdateDialog() {
           <p className="update-dialog-description">{updater.downloadable ? t('update.availableBody') : t('update.noInstallerBody')}</p>
         )}
         {updater.phase === 'ready' && <p className="update-dialog-description">{t('update.readyBody')}</p>}
+        {updater.phase === 'installing' && <p className="update-dialog-description">{t('update.installingBody')}</p>}
         {updater.phase === 'error' && (
           <p className="update-dialog-description update-dialog-error" role="alert">
             {updater.message}
@@ -136,11 +135,14 @@ export default function UpdateDialog() {
         )}
 
         <div className="update-dialog-actions">
-          {updater.phase === 'downloading' ? (
+          {updater.phase === 'downloading' && (
             <button type="button" className="update-dialog-secondary" onClick={() => void cancelUpdateDownload()}>
               {t('update.cancelDownload')}
             </button>
-          ) : (
+          )}
+          {/* The installing phase offers nothing: the installer is already with the OS and
+              the app is on its way out, so there is no action left that could still matter. */}
+          {!busy && (
             <button type="button" className="update-dialog-secondary" onClick={dismissUpdate}>
               {t('update.later')}
             </button>
