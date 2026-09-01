@@ -1152,8 +1152,9 @@ input {
   text-decoration: underline;
 }
 
-/* About: the full URL is shown under each label (not only in the tooltip) so a user can see
-   where a click will take them before taking it — the pages open in the system browser. */
+/* About: each row reads as a hyperlink — label plus a chain glyph marking it as a link out.
+   The destination stays in the tooltip only, so the list keeps to one tidy line per entry;
+   the pages open in the system browser. */
 .settings-dialog-about {
   margin-top: 16px;
   padding-top: 14px;
@@ -1171,8 +1172,8 @@ input {
 
 .settings-link {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   border: none;
   border-radius: 6px;
@@ -1190,16 +1191,15 @@ input {
   font-size: 0.82rem;
 }
 
-.settings-link-url {
-  overflow: hidden;
+/* Sits right after the label rather than at the row's far edge, so the glyph reads as part
+   of the link text instead of as a separate control. */
+.settings-link-icon {
+  flex: none;
   color: var(--color-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.settings-link:hover .settings-link-label {
+.settings-link:hover .settings-link-label,
+.settings-link:hover .settings-link-icon {
   color: var(--color-accent);
 }
 
