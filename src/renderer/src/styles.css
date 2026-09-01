@@ -749,6 +749,14 @@ input {
   font-size: 0.72rem;
 }
 
+.session-launcher-empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 .session-launcher-detail {
   margin: 0 10px 6px;
   padding: 4px 8px;
@@ -1025,6 +1033,47 @@ input {
 
 .settings-dialog-label {
   font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+/* A settings block whose control is a LIST rather than a single trailing widget: the label
+   and its hint stack above the rows instead of sitting opposite one control. */
+.settings-dialog-group {
+  margin-top: 14px;
+}
+
+.settings-kind-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 4px 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-panel);
+}
+
+/* One grid per row rather than one grid for the whole list, so the two switch columns line
+   up with the captions above them while each row keeps its own vertical centring. */
+.settings-kind-row {
+  display: grid;
+  grid-template-columns: 1fr 84px 104px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+}
+
+.settings-kind-row .settings-switch {
+  justify-self: center;
+}
+
+.settings-kind-head {
+  padding-bottom: 2px;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.settings-kind-name {
+  font-size: 0.8rem;
   color: var(--color-text);
 }
 

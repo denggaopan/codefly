@@ -45,6 +45,15 @@ const buildLocationFields = (
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 /**
+ * Per-creation options. `worktree: false` (the default) launches straight in the project
+ * directory without asking WorktreeService for anything, so no branch, directory, or
+ * `.git/info/exclude` entry is created for a session that did not ask for one.
+ */
+export type CreateSessionOptions = {
+  worktree?: boolean
+}
+
+/**
  * Orchestrates the full lifecycle of a persistent session (create, restore, first-input
  * titling, stop, and delete) across SessionStore, ProjectService, WorktreeService,
  * TerminalService, and TitleService. State changes are only announced to subscribers
@@ -71,11 +80,16 @@ export class SessionCoordinator {
     return this.store.load()
   }
 
-  async create(projectId: string, kind: SessionKind): Promise<SessionRecord> {
+  async create(projectId: string, kind: SessionKind, options: CreateSessionOptions = {}): Promise<SessionRecord> {
     return this.withLock(`project:${projectId}`, async () => {
       const project = await this.projectService.get(projectId)
       const current = await this.store.load()
-      const location = await this.worktreeService.create(project, current.sessions)
+      // WorktreeService is only consulted when a worktree was actually requested; it can
+      // still answer 'ordinary' (non-Git project, no commit yet), which is why the record's
+      // mode always comes from the returned location rather than from the request.
+      const location: SessionLocation = options.worktree
+        ? await this.worktreeService.create(project, current.sessions)
+        : { mode: 'ordinary', launchPath: project.path }
 
       const record: SessionRecord = {
         id: this.createId(),

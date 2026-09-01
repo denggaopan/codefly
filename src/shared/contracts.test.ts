@@ -10,6 +10,8 @@ import {
   sessionRecordSchema,
   sessionIdRequestSchema,
   openExternalLinkRequestSchema,
+  storedSessionKindPreferencesSchema,
+  DEFAULT_SESSION_KIND_PREFERENCES,
   setAutoLaunchRequestSchema,
   setThemeRequestSchema,
   terminalWriteRequestSchema,
@@ -21,6 +23,31 @@ import { IPC } from './ipc'
 describe('shared contracts', () => {
   it('rejects a create-session request without a valid session kind', () => {
     expect(createSessionRequestSchema.safeParse({ projectId: 'p1', kind: 'bash' }).success).toBe(false)
+  })
+
+  it('treats an omitted worktree flag as "run in the project directory"', () => {
+    const parsed = createSessionRequestSchema.parse({ projectId: 'p1', kind: 'claude' })
+    expect(parsed.worktree).toBe(false)
+    expect(createSessionRequestSchema.parse({ projectId: 'p1', kind: 'claude', worktree: true }).worktree).toBe(true)
+    expect(createSessionRequestSchema.safeParse({ projectId: 'p1', kind: 'claude', worktree: 'yes' }).success).toBe(false)
+  })
+
+  it('offers every session kind by default, with worktrees off for the shells and on for the agents', () => {
+    expect(DEFAULT_SESSION_KIND_PREFERENCES).toEqual({
+      powershell: { enabled: true, worktree: false },
+      cmd: { enabled: true, worktree: false },
+      claude: { enabled: true, worktree: true },
+      codex: { enabled: true, worktree: true }
+    })
+  })
+
+  it('reads stored session-kind preferences leniently so a partial or foreign value still merges', () => {
+    expect(storedSessionKindPreferencesSchema.parse({ claude: { worktree: false } })).toEqual({ claude: { worktree: false } })
+    // Keys this build does not know about are dropped rather than failing the whole read.
+    expect(storedSessionKindPreferencesSchema.parse({ cmd: { enabled: false, bash: true }, zsh: {} })).toEqual({
+      cmd: { enabled: false }
+    })
+    expect(storedSessionKindPreferencesSchema.safeParse({ claude: { worktree: 'yes' } }).success).toBe(false)
   })
 
   it('rejects unknown fields in every IPC request', () => {

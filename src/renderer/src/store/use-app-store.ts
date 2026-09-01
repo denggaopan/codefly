@@ -1,6 +1,17 @@
 import { create } from 'zustand'
 
-import type { AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionKind, SessionRecord, ThemePreference } from '../../../shared/contracts'
+import type {
+  AppState,
+  CapabilityState,
+  DeleteSessionResult,
+  ProjectRecord,
+  SessionKind,
+  SessionRecord,
+  SessionKindPreference,
+  SessionKindPreferences,
+  ThemePreference
+} from '../../../shared/contracts'
+import { DEFAULT_SESSION_KIND_PREFERENCES, storedSessionKindPreferencesSchema } from '../../../shared/contracts'
 import { DEFAULT_LOCALE, isLocale, translate, type Locale } from '../i18n'
 
 export type Notice = {
@@ -20,12 +31,15 @@ export type AppStore = {
   idleAgentSessionIds: Record<string, true>
   theme: ThemePreference
   locale: Locale
+  /** Which kinds the New session launcher lists, and which of them offer a worktree entry. */
+  sessionKindPreferences: SessionKindPreferences
 
   initialize: () => () => void
   reset: () => void
 
   setTheme: (theme: ThemePreference) => void
   setLocale: (locale: Locale) => void
+  setSessionKindPreference: (kind: SessionKind, change: Partial<SessionKindPreference>) => void
 
   addProject: () => Promise<void>
   reorderProjects: (orderedProjectIds: readonly string[]) => Promise<void>
@@ -34,7 +48,7 @@ export type AppStore = {
 
   openLauncher: () => void
   closeLauncher: () => void
-  createSession: (projectId: string, kind: SessionKind) => Promise<void>
+  createSession: (projectId: string, kind: SessionKind, worktree: boolean) => Promise<void>
 
   setActiveProject: (projectId: string) => void
   setActiveSession: (sessionId: string, projectId?: string) => void
@@ -58,6 +72,7 @@ const errorMessage = (error: unknown, locale: Locale): string =>
 
 export const THEME_STORAGE_KEY = 'codefly.theme'
 export const LOCALE_STORAGE_KEY = 'codefly.locale'
+export const SESSION_KINDS_STORAGE_KEY = 'codefly.sessionKinds'
 
 // The theme preference is renderer-owned (localStorage), not part of the main process's
 // persisted AppState: it is pure presentation, and localStorage survives restarts without
@@ -103,6 +118,39 @@ const applyLocaleEffects = (locale: Locale): void => {
   document.documentElement.lang = locale
   try {
     window.localStorage.setItem(LOCALE_STORAGE_KEY, locale)
+  } catch {
+    // localStorage unavailable: the preference just won't survive a restart.
+  }
+}
+
+// The per-kind launcher preferences are renderer-owned (localStorage) for the same reasons as
+// the theme and locale: they configure the launcher menu rather than any persisted session,
+// and the actual worktree decision crosses IPC explicitly with every create request. Stored
+// values are merged over the defaults field by field, so anything unreadable or partial
+// degrades to the documented defaults instead of an empty or half-filled record.
+const mergeStoredSessionKinds = (stored: unknown): SessionKindPreferences => {
+  const parsed = storedSessionKindPreferencesSchema.safeParse(stored)
+  if (!parsed.success) return DEFAULT_SESSION_KIND_PREFERENCES
+  const merged = { ...DEFAULT_SESSION_KIND_PREFERENCES }
+  for (const kind of Object.keys(merged) as SessionKind[]) {
+    merged[kind] = { ...merged[kind], ...parsed.data[kind] }
+  }
+  return merged
+}
+
+const readStoredSessionKindPreferences = (): SessionKindPreferences => {
+  try {
+    const stored = window.localStorage.getItem(SESSION_KINDS_STORAGE_KEY)
+    if (stored === null) return DEFAULT_SESSION_KIND_PREFERENCES
+    return mergeStoredSessionKinds(JSON.parse(stored))
+  } catch {
+    return DEFAULT_SESSION_KIND_PREFERENCES
+  }
+}
+
+const persistSessionKindPreferences = (preferences: SessionKindPreferences): void => {
+  try {
+    window.localStorage.setItem(SESSION_KINDS_STORAGE_KEY, JSON.stringify(preferences))
   } catch {
     // localStorage unavailable: the preference just won't survive a restart.
   }
@@ -191,8 +239,11 @@ export const useAppStore = create<AppStore>()((set, get) => {
     idleAgentSessionIds: {},
     theme: 'dark',
     locale: DEFAULT_LOCALE,
+    sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES,
 
     initialize: () => {
+      set({ sessionKindPreferences: readStoredSessionKindPreferences() })
+
       const storedLocale = readStoredLocale()
       set({ locale: storedLocale })
       applyLocaleEffects(storedLocale)
@@ -247,7 +298,8 @@ export const useAppStore = create<AppStore>()((set, get) => {
         notice: null,
         idleAgentSessionIds: {},
         theme: 'dark',
-        locale: DEFAULT_LOCALE
+        locale: DEFAULT_LOCALE,
+        sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES
       })
     },
 
@@ -259,6 +311,13 @@ export const useAppStore = create<AppStore>()((set, get) => {
     setLocale: (locale) => {
       set({ locale })
       applyLocaleEffects(locale)
+    },
+
+    setSessionKindPreference: (kind, change) => {
+      const current = get().sessionKindPreferences
+      const next = { ...current, [kind]: { ...current[kind], ...change } }
+      set({ sessionKindPreferences: next })
+      persistSessionKindPreferences(next)
     },
 
     addProject: async () => {
@@ -299,9 +358,9 @@ export const useAppStore = create<AppStore>()((set, get) => {
     openLauncher: () => set({ launcherOpen: true }),
     closeLauncher: () => set({ launcherOpen: false }),
 
-    createSession: async (projectId, kind) => {
+    createSession: async (projectId, kind, worktree) => {
       try {
-        const session = await window.codefly.createSession(projectId, kind)
+        const session = await window.codefly.createSession(projectId, kind, worktree)
         set((state) => ({
           appState: upsertSession(state.appState, session),
           activeProjectId: session.projectId,

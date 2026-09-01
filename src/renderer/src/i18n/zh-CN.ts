@@ -27,6 +27,8 @@ export const zhCN: Translations = {
   'launcher.createSession': '创建会话',
   'launcher.newSession': '新建会话',
   'launcher.close': '关闭启动器',
+  'launcher.worktreeVariant': '{kind}（新建 worktree）',
+  'launcher.allKindsDisabled': '所有会话类型都已在设置中关闭。',
 
   'sessionKind.powershell': 'PowerShell',
   'sessionKind.cmd': '命令提示符',
@@ -53,6 +55,13 @@ export const zhCN: Translations = {
   'settings.close': '关闭设置',
   'settings.launchAtLogin': '开机自动启动',
   'settings.launchAtLoginFailed': '无法修改开机启动设置：{reason}',
+  'settings.sessionKinds': '会话类型',
+  'settings.sessionKindsHint':
+    '关闭的会话类型不会出现在“新建会话”菜单中。开启“新建 worktree”后，该类型会额外提供一个选项，让会话运行在独立的 Git worktree 与同名分支中。',
+  'settings.columnEnabled': '启用',
+  'settings.columnWorktree': '新建 worktree',
+  'settings.enableKind': '启用 {kind}',
+  'settings.worktreeForKind': '为 {kind} 新建 worktree',
   'settings.appearance': '外观',
   'settings.themeDark': '深色',
   'settings.themeLight': '浅色',

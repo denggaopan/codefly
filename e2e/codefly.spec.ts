@@ -17,7 +17,7 @@ import { createRepo } from './create-repo'
  * file, worktree lifecycle) is the real production implementation. Production builds
  * without CODEFLY_E2E never exercise any of this file's env-driven wiring.
  *
- * The 12 tests below run in one serial journey against one fixture repository/project so
+ * The 13 tests below run in one serial journey against one fixture repository/project so
  * that worktree sequence numbers, title generation, restart persistence, and deletion all
  * build on realistic prior state, the same way a user would experience them. Test 6
  * (relaunch) closes and re-opens the Electron app in the middle of the journey while
@@ -38,6 +38,13 @@ import { createRepo } from './create-repo'
  *   9  Mocked VS Code/Explorer actions don't toggle the row    -> test 7
  *  10  Dirty worktree blocks delete                            -> test 8
  *  11  Clean delete removes the directory, retains the branch  -> test 8
+ *
+ * Session kinds are configured per kind in Settings (enabled, and whether the launcher also
+ * offers a "(new worktree)" entry). The defaults are the ones asserted here: all four kinds
+ * enabled, worktrees on for Claude/Codex and off for the shells — so the Claude and Codex
+ * sessions below are created from their worktree entries, PowerShell runs ordinary in the
+ * project directory, and Command Prompt only becomes a worktree session after its switch is
+ * turned on in Settings.
  */
 
 test.describe.configure({ mode: 'serial' })
@@ -168,6 +175,13 @@ test('exposes the startup toggle, version check, About links, and language switc
   await startup.click()
   await expect(startup).toHaveAttribute('aria-checked', 'false')
 
+  // Every kind is offered by default; only the agents default to also offering a worktree.
+  for (const kind of ['PowerShell', 'Command Prompt', 'Claude', 'Codex']) {
+    await expect(dialog.getByRole('switch', { name: `Enable ${kind}` })).toHaveAttribute('aria-checked', 'true')
+  }
+  await expect(dialog.getByRole('switch', { name: 'New worktree for PowerShell' })).toHaveAttribute('aria-checked', 'false')
+  await expect(dialog.getByRole('switch', { name: 'New worktree for Claude' })).toHaveAttribute('aria-checked', 'true')
+
   // Comes from app.getVersion(), so assert the shape rather than pinning a version number.
   await expect(dialog.locator('.settings-version-value')).toHaveText(/^\d+\.\d+\.\d+/)
 
@@ -208,7 +222,9 @@ test('adds the fixture project and creates a Claude session as the first worktre
   await expect(window.locator('[data-project-row]')).toHaveCount(1, { timeout: 20_000 })
 
   const launcher = await openNewSessionLauncher()
-  await launcher.getByRole('button', { name: 'Claude', exact: true }).click()
+  // Both Claude entries are offered by default; this journey wants the worktree one.
+  await expect(launcher.getByRole('button', { name: 'Claude', exact: true })).toBeVisible()
+  await launcher.getByRole('button', { name: 'Claude (new worktree)', exact: true }).click()
 
   const claudeRow = sessionRowByKind('claude')
   await expect(claudeRow).toHaveCount(1, { timeout: 20_000 })
@@ -399,7 +415,7 @@ test('submitting the first input replaces the title and never leaks a bypass fla
 
 test('creates a Codex session as the second worktree, receiving exactly its own bypass flag', async () => {
   const launcher = await openNewSessionLauncher()
-  await launcher.getByRole('button', { name: 'Codex', exact: true }).click()
+  await launcher.getByRole('button', { name: 'Codex (new worktree)', exact: true }).click()
 
   const codexRow = sessionRowByKind('codex')
   await expect(codexRow).toHaveCount(1, { timeout: 20_000 })
@@ -414,10 +430,14 @@ test('creates a Codex session as the second worktree, receiving exactly its own 
 
 test('creates PowerShell and Command Prompt sessions with the bypass warning absent', async () => {
   const powershellLauncher = await openNewSessionLauncher()
+  // A shell defaults to worktrees off, so it has exactly one entry and runs in the project
+  // directory itself — no branch is created for a quick terminal.
+  await expect(powershellLauncher.getByRole('button', { name: /^PowerShell/ })).toHaveCount(1)
   await powershellLauncher.getByRole('button', { name: 'PowerShell', exact: true }).click()
   const powershellRow = sessionRowByKind('powershell')
   await expect(powershellRow).toHaveCount(1, { timeout: 20_000 })
   await expect(powershellRow.locator('.session-status-dot')).toHaveAttribute('data-status', 'running', { timeout: 20_000 })
+  await expect(powershellRow.locator('.session-secondary')).toHaveText('Ordinary session')
   await expect(visibleBypassWarnings()).toHaveCount(0)
 
   // Regression guard: a freshly created session's terminal must own keyboard focus, so
@@ -438,12 +458,51 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   expect(Math.abs(screenBox!.y - hostBox!.y)).toBeLessThan(16)
   expect(screenBox!.y + screenBox!.height).toBeLessThanOrEqual(hostBox!.y + hostBox!.height + 2)
 
+  // Turning Command Prompt's worktree switch on adds its second launcher entry; the delete
+  // test further down needs a real worktree session to work with.
+  const settingsTrigger = window.getByRole('button', { name: 'Settings' })
+  const settingsDialog = window.getByRole('dialog', { name: 'Settings' })
+  await settingsTrigger.click()
+  await settingsDialog.getByRole('switch', { name: 'New worktree for Command Prompt' }).click()
+  await settingsDialog.getByRole('button', { name: 'Close settings' }).click()
+  await expect(settingsDialog).toHaveCount(0)
+
   const cmdLauncher = await openNewSessionLauncher()
-  await cmdLauncher.getByRole('button', { name: 'Command Prompt', exact: true }).click()
+  await cmdLauncher.getByRole('button', { name: 'Command Prompt (new worktree)', exact: true }).click()
   const cmdRow = sessionRowByKind('cmd')
   await expect(cmdRow).toHaveCount(1, { timeout: 20_000 })
   await expect(cmdRow.locator('.session-status-dot')).toHaveAttribute('data-status', 'running', { timeout: 20_000 })
   await expect(visibleBypassWarnings()).toHaveCount(0)
+})
+
+test('removes a session kind from the launcher while its Settings switch is off', async () => {
+  const settingsTrigger = window.getByRole('button', { name: 'Settings' })
+  const settingsDialog = window.getByRole('dialog', { name: 'Settings' })
+
+  await settingsTrigger.click()
+  const codexEnabled = settingsDialog.getByRole('switch', { name: 'Enable Codex' })
+  await codexEnabled.click()
+  await expect(codexEnabled).toHaveAttribute('aria-checked', 'false')
+  // A kind that is not offered cannot offer a worktree variant either.
+  await expect(settingsDialog.getByRole('switch', { name: 'New worktree for Codex' })).toBeDisabled()
+  await settingsDialog.getByRole('button', { name: 'Close settings' }).click()
+
+  const launcher = await openNewSessionLauncher()
+  await expect(launcher.getByRole('button', { name: /^Codex/ })).toHaveCount(0)
+  await expect(launcher.getByRole('button', { name: 'Claude', exact: true })).toBeVisible()
+  await window.keyboard.press('Escape')
+  await expect(launcher).toHaveCount(0)
+
+  // Restored for the rest of the journey: the switch persists in the user-data dir.
+  await settingsTrigger.click()
+  await codexEnabled.click()
+  await expect(codexEnabled).toHaveAttribute('aria-checked', 'true')
+  await settingsDialog.getByRole('button', { name: 'Close settings' }).click()
+
+  const restoredLauncher = await openNewSessionLauncher()
+  await expect(restoredLauncher.getByRole('button', { name: 'Codex (new worktree)', exact: true })).toBeVisible()
+  await window.keyboard.press('Escape')
+  await expect(restoredLauncher).toHaveCount(0)
 })
 
 test('stopping and relaunching the app preserves sessions as stopped, and clicking one restores it', async () => {
@@ -460,6 +519,17 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
   for (let index = 0; index < 4; index += 1) {
     await expect(rows.nth(index).locator('.session-status-dot')).toHaveAttribute('aria-label', 'Click to restore')
   }
+
+  // The session-kind switches live in the renderer's localStorage inside --user-data-dir, so
+  // the Command Prompt worktree switch turned on earlier must still be on after the relaunch.
+  await window.getByRole('button', { name: 'Settings' }).click()
+  const relaunchedSettings = window.getByRole('dialog', { name: 'Settings' })
+  await expect(relaunchedSettings.getByRole('switch', { name: 'New worktree for Command Prompt' })).toHaveAttribute(
+    'aria-checked',
+    'true'
+  )
+  await window.keyboard.press('Escape')
+  await expect(relaunchedSettings).toHaveCount(0)
 
   const powershellRow = sessionRowByKind('powershell')
   await powershellRow.locator('.session-row-content').click()
@@ -498,8 +568,9 @@ test('mocked VS Code and Explorer project-row actions do not toggle the row or c
 
 test('blocks deleting a dirty worktree, then deletes cleanly and retains the branch', async () => {
   const cmdRow = sessionRowByKind('cmd')
+  // Third worktree, not fourth: the PowerShell session runs ordinary in the project directory.
   const worktreeName = (await cmdRow.locator('.session-secondary').textContent())?.trim()
-  expect(worktreeName).toMatch(/^worktree-\d{6}-4$/)
+  expect(worktreeName).toMatch(/^worktree-\d{6}-3$/)
   const worktreePath = join(repoPath, '.worktrees', worktreeName!)
   expect(existsSync(worktreePath)).toBe(true)
 

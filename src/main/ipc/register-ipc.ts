@@ -102,8 +102,8 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
     [
       IPC.sessionCreate,
       async (_event, payload): Promise<SessionRecord> => {
-        const { projectId, kind } = createSessionRequestSchema.parse(payload)
-        return coordinator.create(projectId, kind)
+        const { projectId, kind, worktree } = createSessionRequestSchema.parse(payload)
+        return coordinator.create(projectId, kind, { worktree })
       }
     ],
 

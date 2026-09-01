@@ -346,14 +346,31 @@ describe('registerIpc: session:create', () => {
     const { ipcMain, coordinator } = buildHarness()
     coordinator.create.mockResolvedValue(session)
 
+    await expect(ipcMain.invoke(IPC.sessionCreate, { projectId: 'project-1', kind: 'claude', worktree: true })).resolves.toEqual(session)
+    expect(coordinator.create).toHaveBeenCalledWith('project-1', 'claude', { worktree: true })
+  })
+
+  it('defaults a request with no worktree flag to the project directory', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+    coordinator.create.mockResolvedValue(session)
+
     await expect(ipcMain.invoke(IPC.sessionCreate, { projectId: 'project-1', kind: 'claude' })).resolves.toEqual(session)
-    expect(coordinator.create).toHaveBeenCalledWith('project-1', 'claude')
+    expect(coordinator.create).toHaveBeenCalledWith('project-1', 'claude', { worktree: false })
   })
 
   it('rejects an invalid session kind without calling the coordinator', async () => {
     const { ipcMain, coordinator } = buildHarness()
 
     await expect(ipcMain.invoke(IPC.sessionCreate, { projectId: 'project-1', kind: 'bash' })).rejects.toBeInstanceOf(z.ZodError)
+    expect(coordinator.create).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-boolean worktree flag without calling the coordinator', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+
+    await expect(
+      ipcMain.invoke(IPC.sessionCreate, { projectId: 'project-1', kind: 'claude', worktree: 'yes' })
+    ).rejects.toBeInstanceOf(z.ZodError)
     expect(coordinator.create).not.toHaveBeenCalled()
   })
 })

@@ -60,9 +60,14 @@ export const capabilityStateSchema = z.strictObject({
   vscode: toolAvailabilitySchema
 })
 
+// `worktree` is the explicit per-creation choice made in the launcher (kinds with the
+// preference enabled offer both a plain and a "(new worktree)" entry), not a lookup of the
+// stored preference: the main process never has to know what the menu currently offers.
+// Omitting it means "run in the project directory", the choice that creates nothing.
 export const createSessionRequestSchema = z.strictObject({
   projectId: z.string().min(1),
-  kind: sessionKindSchema
+  kind: sessionKindSchema,
+  worktree: z.boolean().default(false)
 })
 
 export const sessionIdRequestSchema = z.strictObject({
@@ -95,6 +100,51 @@ export const firstInputRequestSchema = z.strictObject({
   text: z.string().min(1).max(65536)
 })
 
+// What the New session menu offers per kind: `enabled` decides whether the kind is listed at
+// all, `worktree` whether it also gets a second "(new worktree)" entry. Renderer-owned (see
+// the app store) exactly like the theme and locale — it configures the menu, while the
+// actual per-session worktree decision always crosses IPC explicitly.
+const sessionKindPreferenceShape = {
+  enabled: z.boolean(),
+  worktree: z.boolean()
+}
+
+export const sessionKindPreferenceSchema = z.strictObject(sessionKindPreferenceShape)
+
+const sessionKindPreferencesShape = {
+  powershell: sessionKindPreferenceSchema,
+  cmd: sessionKindPreferenceSchema,
+  claude: sessionKindPreferenceSchema,
+  codex: sessionKindPreferenceSchema
+}
+
+export const sessionKindPreferencesSchema = z.strictObject(sessionKindPreferencesShape)
+
+// Stored preferences are read leniently and merged over the defaults, per kind and per
+// field: a value written by a different build may be missing a kind, missing a field, or
+// carry one this build does not know about, and a partially readable preference is still
+// better than silently resetting all four kinds.
+export const storedSessionKindPreferencesSchema = z
+  .object({
+    powershell: z.object(sessionKindPreferenceShape).partial(),
+    cmd: z.object(sessionKindPreferenceShape).partial(),
+    claude: z.object(sessionKindPreferenceShape).partial(),
+    codex: z.object(sessionKindPreferenceShape).partial()
+  })
+  .partial()
+
+/**
+ * Every kind is offered by default. Shells default to the project directory — a quick
+ * terminal should not spawn a branch — while the agents default to an isolated worktree,
+ * which is the reason CodeFly creates worktrees at all.
+ */
+export const DEFAULT_SESSION_KIND_PREFERENCES: Readonly<SessionKindPreferences> = {
+  powershell: { enabled: true, worktree: false },
+  cmd: { enabled: true, worktree: false },
+  claude: { enabled: true, worktree: true },
+  codex: { enabled: true, worktree: true }
+}
+
 export const themePreferenceSchema = z.enum(['dark', 'light'])
 
 export const setThemeRequestSchema = z.strictObject({
@@ -119,6 +169,8 @@ export type SessionRecord = z.infer<typeof sessionRecordSchema>
 export type SessionKind = z.infer<typeof sessionKindSchema>
 export type CapabilityState = z.infer<typeof capabilityStateSchema>
 export type ThemePreference = z.infer<typeof themePreferenceSchema>
+export type SessionKindPreference = z.infer<typeof sessionKindPreferenceSchema>
+export type SessionKindPreferences = z.infer<typeof sessionKindPreferencesSchema>
 
 export type AppSnapshot = { state: AppState; capabilities: CapabilityState; recoveryWarning?: string }
 

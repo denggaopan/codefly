@@ -16,7 +16,8 @@ Built with Electron, React, TypeScript, xterm.js, and node-pty.
 - [Git for Windows](https://git-scm.com/download/win) on `PATH`. Required for isolated
   worktree sessions (see [Git and worktree sessions](#git-and-worktree-sessions) below);
   CodeFly still runs without it, but every session then falls back to an ordinary,
-  non-isolated session in the project's own directory.
+  non-isolated session in the project's own directory. Sessions created from a plain launcher
+  entry run there by design and need no Git.
 - Optional, to actually use the Claude/Codex launcher entries: the
   [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) and/or the
   [Codex CLI](https://github.com/openai/codex) (`codex`) installed and signed in. CodeFly
@@ -46,20 +47,39 @@ npm run dev
 | `npm run test:e2e`       | Build the app, then run the Playwright Electron end-to-end suite (`e2e/codefly.spec.ts`).                    |
 | `npm run package:win`    | Build the app, then produce a Windows x64 NSIS installer under `release/` via `electron-builder`.            |
 
+## Session kinds and the New session menu
+
+Every session kind — PowerShell, Command Prompt, Claude, Codex — has two switches under
+**Session kinds** in Settings:
+
+- **Enabled** decides whether the kind appears in the New session menu at all. Turning it off
+  removes its entries; existing sessions of that kind are untouched. This is different from a
+  missing CLI, which leaves the entry listed but disabled with a lookup hint.
+- **New worktree** adds a *second* entry for that kind — e.g. both **Claude** and
+  **Claude (new worktree)**. The plain entry runs the session in the project's own directory;
+  the worktree entry gives it an isolated Git worktree and branch.
+
+Defaults: all four kinds enabled, **New worktree** off for PowerShell and Command Prompt
+(a quick terminal should not create a branch) and on for Claude and Codex (isolation is what
+the agents want). Both switches are renderer-owned preferences stored in `localStorage`, like
+the theme and language; the worktree choice itself is sent explicitly with each create
+request, so the main process never infers it from a stored setting.
+
 ## Git and worktree sessions
 
-When you create a session in a project that is a Git repository with at least one commit,
-CodeFly creates an isolated Git worktree and a same-named branch for that session, under
-`<repository-root>/.worktrees/<worktree-name>`. Worktree names follow the pattern
-`worktree-YYMMDD-N` (local date, `N` starting at 1 and incrementing per repository per day).
-The `.worktrees` directory is added to the repository's *local* Git exclude file
-(`.git/info/exclude`), never to the tracked `.gitignore`, so this never shows up as a change
-for you to commit.
+When you create a session from a **(new worktree)** entry in a project that is a Git
+repository with at least one commit, CodeFly creates an isolated Git worktree and a
+same-named branch for that session, under `<repository-root>/.worktrees/<worktree-name>`.
+Worktree names follow the pattern `worktree-YYMMDD-N` (local date, `N` starting at 1 and
+incrementing per repository per day). The `.worktrees` directory is added to the repository's
+*local* Git exclude file (`.git/info/exclude`), never to the tracked `.gitignore`, so this
+never shows up as a change for you to commit.
 
-If the selected project is **not** a Git repository, or is a Git repository with no commits
-yet (no resolvable `HEAD`), CodeFly falls back to an **ordinary session**: the session runs
-directly in the project's own directory instead of an isolated worktree. This is shown as
-"Ordinary session" in the sidebar instead of a worktree name.
+A session created from a plain entry is an **ordinary session**: it runs directly in the
+project's own directory. A requested worktree also falls back to an ordinary session when the
+selected project is **not** a Git repository, or is a Git repository with no commits yet (no
+resolvable `HEAD`). Either way the sidebar shows "Ordinary session" instead of a worktree
+name.
 
 Deleting a session with a worktree:
 
@@ -125,6 +145,9 @@ The title bar's gear button opens the settings dialog.
 - **Launch at startup** registers (or removes) CodeFly as a Windows login item. The switch
   shows the value read back from the system *after* the write, so a change the OS refuses is
   never displayed as if it had taken effect.
+- **Session kinds** holds two switches per kind — whether the kind is offered in the New
+  session menu at all, and whether it also offers a **(new worktree)** entry. See
+  [Session kinds and the New session menu](#session-kinds-and-the-new-session-menu).
 - **Appearance** switches between the dark and light token sets.
 - **Language** switches the interface between English and 简体中文. Like the theme, the
   preference is renderer-owned (`localStorage`) and never enters the persisted state file. It
@@ -161,9 +184,11 @@ npm run test:e2e   # Playwright: full Electron end-to-end journeys
 The end-to-end suite (`e2e/codefly.spec.ts`) drives a real Electron window through adding a
 project, creating Claude/Codex/PowerShell/Command-Prompt sessions, verifying the exact
 bypass argv Claude and Codex receive (and that title-generation processes never receive
-either flag), the persistent bypass warning, worktree sequence numbering, restart
-persistence, VS Code/Explorer options-menu actions, and dirty-worktree delete protection followed by
-a clean delete that retains the branch.
+either flag), the persistent bypass warning, worktree sequence numbering, the per-kind
+Session kinds switches (a kind switched off leaves the New session menu, a worktree switch
+adds its second entry, and both survive a restart), restart persistence, VS Code/Explorer
+options-menu actions, and dirty-worktree delete protection followed by a clean delete that
+retains the branch.
 
 It runs with `CODEFLY_E2E=1`, which (only in `src/main/index.ts`, the app's composition
 root — no domain service branches on this) substitutes a small fixture executable
@@ -192,12 +217,14 @@ need live credentials. Before shipping a build, a human should still install the
 installer on a real Windows machine and verify, with real, logged-in `claude`/`codex`
 CLIs:
 
-- Claude and Codex sessions start in their assigned worktree, accept input, and produce
-  terminal output with `--dangerously-skip-permissions` /
-  `--dangerously-bypass-approvals-and-sandbox` respectively.
+- Claude and Codex sessions created from their **(new worktree)** entry start in their
+  assigned worktree, accept input, and produce terminal output with
+  `--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox` respectively;
+  the same kinds created from their plain entry start in the project's own directory.
 - If the separate title-generation process is unavailable or fails, the session still gets a
   usable local/fallback title rather than getting stuck on the placeholder.
-- PowerShell and Command Prompt sessions work normally.
+- PowerShell and Command Prompt sessions work normally, and enabling their **New worktree**
+  switch really produces a worktree session for them too.
 - The Visual Studio Code and File Explorer project-options actions work against a real VS
   Code install.
 - Project paths containing spaces and paths containing Chinese characters work correctly

@@ -26,6 +26,8 @@ export const en = {
   'launcher.createSession': 'Create session',
   'launcher.newSession': 'New session',
   'launcher.close': 'Close launcher',
+  'launcher.worktreeVariant': '{kind} (new worktree)',
+  'launcher.allKindsDisabled': 'Every session kind is turned off in Settings.',
 
   'sessionKind.powershell': 'PowerShell',
   'sessionKind.cmd': 'Command Prompt',
@@ -52,6 +54,13 @@ export const en = {
   'settings.close': 'Close settings',
   'settings.launchAtLogin': 'Launch at startup',
   'settings.launchAtLoginFailed': 'Could not change the startup setting: {reason}',
+  'settings.sessionKinds': 'Session kinds',
+  'settings.sessionKindsHint':
+    'A kind that is turned off disappears from the New session menu. New worktree adds a second entry for that kind which runs the session in its own Git worktree and branch.',
+  'settings.columnEnabled': 'Enabled',
+  'settings.columnWorktree': 'New worktree',
+  'settings.enableKind': 'Enable {kind}',
+  'settings.worktreeForKind': 'New worktree for {kind}',
   'settings.appearance': 'Appearance',
   'settings.themeDark': 'Dark',
   'settings.themeLight': 'Light',

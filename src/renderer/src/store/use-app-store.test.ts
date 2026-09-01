@@ -12,7 +12,8 @@ import type {
   UpdateCheckResult
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
-import { AGENT_IDLE_MS, useAppStore } from './use-app-store'
+import { DEFAULT_SESSION_KIND_PREFERENCES } from '../../../shared/contracts'
+import { AGENT_IDLE_MS, SESSION_KINDS_STORAGE_KEY, useAppStore } from './use-app-store'
 
 const defaultCapabilities = (): CapabilityState => ({
   claude: { available: true, detail: '' },
@@ -98,6 +99,7 @@ const idleIds = (): Record<string, true> => useAppStore.getState().idleAgentSess
 
 beforeEach(async () => {
   vi.useFakeTimers()
+  window.localStorage.clear()
   useAppStore.getState().reset()
   api = createFakeApi()
   window.codefly = api
@@ -133,6 +135,59 @@ describe('useAppStore.reorderProjects', () => {
 
     expect(useAppStore.getState().appState.projects).toEqual(before)
     expect(useAppStore.getState().notice).toEqual({ message: 'Project not found: ghost', tone: 'error' })
+  })
+})
+
+describe('useAppStore.createSession', () => {
+  it('forwards the per-creation worktree choice to the main process verbatim', async () => {
+    await useAppStore.getState().createSession('project-1', 'claude', true)
+    expect(api.createSession).toHaveBeenLastCalledWith('project-1', 'claude', true)
+
+    await useAppStore.getState().createSession('project-1', 'claude', false)
+    expect(api.createSession).toHaveBeenLastCalledWith('project-1', 'claude', false)
+  })
+})
+
+describe('useAppStore session-kind preferences', () => {
+  const reinitializeWith = async (stored: string): Promise<void> => {
+    dispose()
+    window.localStorage.setItem(SESSION_KINDS_STORAGE_KEY, stored)
+    useAppStore.getState().reset()
+    dispose = useAppStore.getState().initialize()
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('starts from the documented defaults when nothing is stored', () => {
+    expect(useAppStore.getState().sessionKindPreferences).toEqual(DEFAULT_SESSION_KIND_PREFERENCES)
+  })
+
+  it('patches one field of one kind and persists the whole record', () => {
+    useAppStore.getState().setSessionKindPreference('cmd', { worktree: true })
+    useAppStore.getState().setSessionKindPreference('powershell', { enabled: false })
+
+    const expected = {
+      ...DEFAULT_SESSION_KIND_PREFERENCES,
+      powershell: { enabled: false, worktree: false },
+      cmd: { enabled: true, worktree: true }
+    }
+    expect(useAppStore.getState().sessionKindPreferences).toEqual(expected)
+    expect(JSON.parse(window.localStorage.getItem(SESSION_KINDS_STORAGE_KEY)!)).toEqual(expected)
+  })
+
+  it('merges a partial stored value over the defaults field by field on initialize', async () => {
+    await reinitializeWith(JSON.stringify({ claude: { worktree: false }, cmd: { enabled: false } }))
+
+    expect(useAppStore.getState().sessionKindPreferences).toEqual({
+      ...DEFAULT_SESSION_KIND_PREFERENCES,
+      cmd: { enabled: false, worktree: false },
+      claude: { enabled: true, worktree: false }
+    })
+  })
+
+  it('falls back to the defaults when the stored value is unreadable', async () => {
+    await reinitializeWith('not json')
+
+    expect(useAppStore.getState().sessionKindPreferences).toEqual(DEFAULT_SESSION_KIND_PREFERENCES)
   })
 })
 

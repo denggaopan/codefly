@@ -20,7 +20,7 @@ export type CodeFlyApi = {
   reorderProjects(orderedProjectIds: readonly string[]): Promise<ProjectRecord[]>
   openProjectInVSCode(projectId: string): Promise<void>
   openProjectFolder(projectId: string): Promise<void>
-  createSession(projectId: string, kind: SessionKind): Promise<SessionRecord>
+  createSession(projectId: string, kind: SessionKind, worktree: boolean): Promise<SessionRecord>
   restoreSession(sessionId: string): Promise<SessionRecord>
   deleteSession(sessionId: string): Promise<DeleteSessionResult>
   submitFirstInput(sessionId: string, text: string): Promise<void>
@@ -46,7 +46,7 @@ const api: CodeFlyApi = {
   reorderProjects: (orderedProjectIds) => ipcRenderer.invoke(IPC.projectReorder, { orderedProjectIds: [...orderedProjectIds] }),
   openProjectInVSCode: (projectId) => ipcRenderer.invoke(IPC.projectOpenVSCode, { projectId }),
   openProjectFolder: (projectId) => ipcRenderer.invoke(IPC.projectOpenFolder, { projectId }),
-  createSession: (projectId, kind) => ipcRenderer.invoke(IPC.sessionCreate, { projectId, kind }),
+  createSession: (projectId, kind, worktree) => ipcRenderer.invoke(IPC.sessionCreate, { projectId, kind, worktree }),
   restoreSession: (sessionId) => ipcRenderer.invoke(IPC.sessionRestore, { sessionId }),
   deleteSession: (sessionId) => ipcRenderer.invoke(IPC.sessionDelete, { sessionId }),
   submitFirstInput: (sessionId, text) => ipcRenderer.invoke(IPC.sessionFirstInput, { sessionId, text }),

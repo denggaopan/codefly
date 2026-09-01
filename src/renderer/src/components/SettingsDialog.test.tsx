@@ -79,6 +79,51 @@ describe('SettingsDialog', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
+  it('offers an enable and a worktree switch per session kind, with every kind on by default', async () => {
+    renderDialog()
+
+    for (const kind of ['PowerShell', 'Command Prompt', 'Claude', 'Codex']) {
+      expect(screen.getByRole('switch', { name: `Enable ${kind}` })).toHaveAttribute('aria-checked', 'true')
+    }
+    expect(screen.getByRole('switch', { name: 'New worktree for PowerShell' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('switch', { name: 'New worktree for Command Prompt' })).toHaveAttribute('aria-checked', 'false')
+    expect(screen.getByRole('switch', { name: 'New worktree for Claude' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('switch', { name: 'New worktree for Codex' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('persists flipped session-kind switches to the store and localStorage', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.click(screen.getByRole('switch', { name: 'New worktree for Command Prompt' }))
+    expect(screen.getByRole('switch', { name: 'New worktree for Command Prompt' })).toHaveAttribute('aria-checked', 'true')
+    expect(useAppStore.getState().sessionKindPreferences.cmd).toEqual({ enabled: true, worktree: true })
+
+    await user.click(screen.getByRole('switch', { name: 'Enable Codex' }))
+    expect(useAppStore.getState().sessionKindPreferences.codex).toEqual({ enabled: false, worktree: true })
+
+    expect(JSON.parse(window.localStorage.getItem('codefly.sessionKinds')!)).toEqual({
+      powershell: { enabled: true, worktree: false },
+      cmd: { enabled: true, worktree: true },
+      claude: { enabled: true, worktree: true },
+      codex: { enabled: false, worktree: true }
+    })
+  })
+
+  it('disables the worktree switch of a kind that is turned off, without discarding its value', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.click(screen.getByRole('switch', { name: 'Enable Claude' }))
+
+    const worktreeSwitch = screen.getByRole('switch', { name: 'New worktree for Claude' })
+    expect(worktreeSwitch).toBeDisabled()
+    expect(worktreeSwitch).toHaveAttribute('aria-checked', 'true')
+
+    await user.click(screen.getByRole('switch', { name: 'Enable Claude' }))
+    expect(screen.getByRole('switch', { name: 'New worktree for Claude' })).toBeEnabled()
+  })
+
   it('switches the whole dialog to Simplified Chinese and back', async () => {
     const user = userEvent.setup()
     renderDialog()

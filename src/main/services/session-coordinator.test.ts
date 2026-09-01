@@ -140,7 +140,7 @@ describe('SessionCoordinator.create', () => {
   it('creates the worktree location, persists a creating record, starts the PTY, then persists running', async () => {
     const { store, worktreeService, terminalService, coordinator } = buildHarness()
 
-    const record = await coordinator.create('project-1', 'powershell')
+    const record = await coordinator.create('project-1', 'powershell', { worktree: true })
 
     expect(record).toMatchObject({
       id: 'session-1',
@@ -191,7 +191,7 @@ describe('SessionCoordinator.create', () => {
     const startError = new Error('agent CLI not found')
     terminalService.start.mockRejectedValue(startError)
 
-    await expect(coordinator.create('project-1', 'claude')).rejects.toThrow(startError)
+    await expect(coordinator.create('project-1', 'claude', { worktree: true })).rejects.toThrow(startError)
 
     expect(store.update).toHaveBeenCalledTimes(2)
     const persisted = await store.load()
@@ -200,6 +200,41 @@ describe('SessionCoordinator.create', () => {
     expect(worktreeService.rollback).toHaveBeenCalledWith(worktreeLocation)
     // Removal of the temporary record happens before rollback is invoked.
     expect(store.update.mock.invocationCallOrder[1]).toBeLessThan(worktreeService.rollback.mock.invocationCallOrder[0]!)
+  })
+
+  it('never asks WorktreeService for a location when no worktree was requested', async () => {
+    const { worktreeService, terminalService, coordinator } = buildHarness()
+
+    const record = await coordinator.create('project-1', 'claude')
+
+    expect(worktreeService.create).not.toHaveBeenCalled()
+    expect(record).toMatchObject({ mode: 'ordinary', launchPath: project.path })
+    expect(terminalService.start).toHaveBeenCalledWith(expect.objectContaining({ mode: 'ordinary', launchPath: project.path }))
+  })
+
+  it('records ordinary mode when a requested worktree falls back (non-Git project or no commit yet)', async () => {
+    const { worktreeService, coordinator } = buildHarness()
+    worktreeService.create.mockResolvedValue(ordinaryLocation)
+
+    const record = await coordinator.create('project-1', 'claude', { worktree: true })
+
+    expect(worktreeService.create).toHaveBeenCalledTimes(1)
+    expect(record.mode).toBe('ordinary')
+  })
+
+  it('records worktree mode with the created branch when a worktree was requested', async () => {
+    const { worktreeService, coordinator } = buildHarness()
+    worktreeService.create.mockResolvedValue(worktreeLocation)
+
+    const record = await coordinator.create('project-1', 'claude', { worktree: true })
+
+    expect(record).toMatchObject({
+      mode: 'worktree',
+      worktreeName: worktreeLocation.worktreeName,
+      worktreePath: worktreeLocation.worktreePath,
+      branchName: worktreeLocation.branchName,
+      launchPath: worktreeLocation.launchPath
+    })
   })
 
   it('does not roll back an ordinary-mode session when the PTY fails to start', async () => {
@@ -226,8 +261,8 @@ describe('SessionCoordinator.create', () => {
     })
 
     const [a, b] = await Promise.all([
-      coordinator.create('project-1', 'powershell'),
-      coordinator.create('project-1', 'powershell')
+      coordinator.create('project-1', 'powershell', { worktree: true }),
+      coordinator.create('project-1', 'powershell', { worktree: true })
     ])
 
     expect(order).toEqual(['worktree.create', 'terminal.start', 'worktree.create', 'terminal.start'])

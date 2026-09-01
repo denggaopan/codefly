@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -267,9 +267,91 @@ describe('App', () => {
     await openNewSessionLauncher(user)
     await user.click(await screen.findByRole('button', { name: label }))
 
-    expect(api.createSession).toHaveBeenCalledWith('project-1', kind)
+    expect(api.createSession).toHaveBeenCalledWith('project-1', kind, false)
     expect(await screen.findByText(created.title, { selector: 'span.session-title' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
+  })
+
+  it('offers a "(new worktree)" entry only for the kinds whose Settings switch is on', async () => {
+    const user = userEvent.setup()
+    api = createFakeApi(stateWith(), allAvailableCapabilities)
+    window.codefly = api
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    await openNewSessionLauncher(user)
+
+    // Defaults: the shells only run in the project directory, the agents offer both.
+    expect(screen.queryByRole('button', { name: 'PowerShell (new worktree)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Command Prompt (new worktree)' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Claude (new worktree)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Codex (new worktree)' })).toBeInTheDocument()
+
+    act(() => {
+      useAppStore.getState().setSessionKindPreference('powershell', { worktree: true })
+      useAppStore.getState().setSessionKindPreference('codex', { worktree: false })
+    })
+
+    expect(screen.getByRole('button', { name: 'PowerShell (new worktree)' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Codex (new worktree)' })).not.toBeInTheDocument()
+    // The plain entry is never removed: every kind can always launch in the project directory.
+    expect(screen.getByRole('button', { name: 'Codex' })).toBeInTheDocument()
+  })
+
+  it('drops a session kind from the launcher entirely once it is turned off in Settings', async () => {
+    const user = userEvent.setup()
+    api = createFakeApi(stateWith(), allAvailableCapabilities)
+    window.codefly = api
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    await openNewSessionLauncher(user)
+
+    act(() => {
+      useAppStore.getState().setSessionKindPreference('cmd', { enabled: false })
+    })
+
+    expect(screen.queryByRole('button', { name: 'Command Prompt' })).not.toBeInTheDocument()
+    // A disabled kind is gone; the ones left over are untouched.
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Claude (new worktree)' })).toBeInTheDocument()
+
+    act(() => {
+      for (const kind of ['powershell', 'claude', 'codex'] as const) {
+        useAppStore.getState().setSessionKindPreference(kind, { enabled: false })
+      }
+    })
+
+    expect(screen.getByText('Every session kind is turned off in Settings.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'PowerShell' })).not.toBeInTheDocument()
+  })
+
+  it('requests a worktree only when the "(new worktree)" entry is the one activated', async () => {
+    const user = userEvent.setup()
+    api = createFakeApi(stateWith(), allAvailableCapabilities)
+    api.createSession.mockResolvedValue({
+      id: 'session-claude-worktree',
+      projectId: 'project-1',
+      kind: 'claude',
+      title: 'New Claude session',
+      titleState: 'pending',
+      createdAt: '2026-08-20T00:04:00.000Z',
+      mode: 'worktree',
+      launchPath: 'C:\work\demo-project\.worktrees\worktree-260820-1',
+      worktreeName: 'worktree-260820-1',
+      worktreePath: 'C:\work\demo-project\.worktrees\worktree-260820-1',
+      branchName: 'worktree-260820-1',
+      status: 'running'
+    })
+    window.codefly = api
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    await openNewSessionLauncher(user)
+    await user.click(screen.getByRole('button', { name: 'Claude (new worktree)' }))
+
+    expect(api.createSession).toHaveBeenCalledWith('project-1', 'claude', true)
+    expect(await screen.findByText('worktree-260820-1', { selector: 'span.session-secondary' })).toBeInTheDocument()
   })
 
   it('returns focus to the project options trigger after closing the launcher with its close button', async () => {
@@ -326,7 +408,7 @@ describe('App', () => {
     expect(powershellButton).toHaveFocus()
     await user.keyboard('{Enter}')
 
-    expect(api.createSession).toHaveBeenCalledWith('project-1', 'powershell')
+    expect(api.createSession).toHaveBeenCalledWith('project-1', 'powershell', false)
     await waitFor(() => expect(trigger).toHaveFocus())
   })
 
@@ -600,6 +682,6 @@ describe('App', () => {
     await openNewSessionLauncher(user, project2.name)
     await user.click(await screen.findByRole('button', { name: 'PowerShell' }))
 
-    expect(api.createSession).toHaveBeenCalledWith('project-2', 'powershell')
+    expect(api.createSession).toHaveBeenCalledWith('project-2', 'powershell', false)
   })
 })
