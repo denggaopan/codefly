@@ -56,7 +56,7 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
   const statusLabel = sessionStatusLabel(t, session, agentIdle)
 
   return (
-    <li className="session-row">
+    <li className="session-row" data-active={active ? 'true' : undefined}>
       <button type="button" className="session-row-content" aria-current={active ? 'true' : undefined} onClick={onActivate}>
         <span className="session-icon">
           <span aria-hidden="true" className="session-kind-icon" data-kind={session.kind}>

@@ -521,11 +521,28 @@ input {
   padding: 0 0 6px;
 }
 
+/*
+  The hover/active highlight lives on the ROW, not on the label button: the delete button is
+  a sibling of the label (see SessionRow), so a background on the label alone stopped short
+  of the close icon and left the active row visibly clipped on its right edge.
+  aria-current stays on the label button (that is the navigable item), hence the mirrored
+  data-active on the row.
+*/
 .session-row {
   display: flex;
   align-items: center;
   gap: 2px;
   padding-right: 6px;
+  border-left: 3px solid transparent;
+}
+
+.session-row:hover,
+.session-row[data-active='true'] {
+  background: var(--color-panel-elevated);
+}
+
+.session-row[data-active='true'] {
+  border-left-color: var(--color-accent);
 }
 
 .session-row-content {
@@ -538,19 +555,9 @@ input {
   min-width: 0;
   padding: 6px 6px 6px 20px;
   border: none;
-  border-left: 3px solid transparent;
   background: transparent;
   text-align: left;
   font-size: 0.82rem;
-}
-
-.session-row-content:hover {
-  background: var(--color-panel-elevated);
-}
-
-.session-row-content[aria-current='true'] {
-  background: var(--color-panel-elevated);
-  border-left-color: var(--color-accent);
 }
 
 /* Positioning context for the status dot badged onto the icon's top-right corner. */
@@ -620,8 +627,8 @@ input {
   white-space: nowrap;
 }
 
-.session-row-content:hover .session-status-dot,
-.session-row-content[aria-current='true'] .session-status-dot {
+.session-row:hover .session-status-dot,
+.session-row[data-active='true'] .session-status-dot {
   box-shadow: 0 0 0 2px var(--color-panel-elevated);
 }
 
