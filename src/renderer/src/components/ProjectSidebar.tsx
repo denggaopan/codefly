@@ -149,7 +149,9 @@ export default function ProjectSidebar() {
       launcherTriggerRef.current
         ?.closest<HTMLElement>('[data-project-row]')
         ?.querySelector<HTMLButtonElement>('[data-launcher-item] button:not(:disabled)')
-        ?.focus()
+        // preventScroll for the same reason as the options menu: the launcher is an absolutely
+        // positioned popover that can sit outside the scrollport when focus lands on it.
+        ?.focus({ preventScroll: true })
     } else if (wasLauncherOpenRef.current && !launcherOpen) {
       launcherTriggerRef.current?.focus()
       launcherTriggerRef.current = null
@@ -161,7 +163,11 @@ export default function ProjectSidebar() {
     if (!openOptionsProjectId) return
 
     const menu = optionsMenuRef.current
-    menu?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
+    // preventScroll: this passive effect runs before the placement layout effect's re-render
+    // commits, so the menu is still at its provisional "below" offset. Letting the browser
+    // scroll it into view would jump the project list and re-enter updateLayout through the
+    // scroll listener; the layout effect keeps the menu inside the scrollport by itself.
+    menu?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true })
 
     const handlePointerDown = (event: PointerEvent): void => {
       const target = event.target
