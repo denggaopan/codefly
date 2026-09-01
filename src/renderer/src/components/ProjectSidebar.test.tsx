@@ -217,6 +217,12 @@ describe('ProjectSidebar', () => {
     await openProjectOptions(user)
     await user.tab()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add Project' })).toHaveFocus()
+
+    await openProjectOptions(user)
+    await user.tab({ shift: true })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: projectOptionsName(project1.name) })).toHaveFocus()
   })
 
   it('keeps only one project menu open and clears stale state when a project disappears', async () => {
@@ -257,6 +263,22 @@ describe('ProjectSidebar', () => {
     expect(screen.getByLabelText('Create session')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Close launcher' }))
     await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('moves keyboard focus into the launcher and restores it after launcher Escape', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    await openProjectOptions(user)
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByLabelText('Create session')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument())
+    expect(trigger).toHaveFocus()
   })
 
   it('renders the supplied options SVG as a decorative trigger icon', () => {
@@ -313,6 +335,7 @@ describe('ProjectSidebar', () => {
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     render(<ProjectSidebar />)
 
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
     await openProjectOptions(user)
     await user.click(screen.getByRole('menuitem', { name: 'Open project in VS Code' }))
 
@@ -321,6 +344,7 @@ describe('ProjectSidebar', () => {
     expect(useAppStore.getState().activeProjectId).toBeNull()
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
   })
 
   it('does not toggle the project row or restore a session when opening the folder', async () => {

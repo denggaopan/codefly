@@ -119,7 +119,9 @@ export default function ProjectSidebar() {
   const wasLauncherOpenRef = useRef(false)
 
   useEffect(() => {
-    if (wasLauncherOpenRef.current && !launcherOpen) {
+    if (!wasLauncherOpenRef.current && launcherOpen) {
+      document.querySelector<HTMLButtonElement>('[data-launcher-item] button:not(:disabled)')?.focus()
+    } else if (wasLauncherOpenRef.current && !launcherOpen) {
       launcherTriggerRef.current?.focus()
       launcherTriggerRef.current = null
     }
