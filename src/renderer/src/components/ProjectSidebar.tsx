@@ -46,26 +46,31 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
   // role="button" must not have focusable descendants (screen readers flatten/misreport
   // that), and native <button> elements get keyboard (Enter/Space) activation for free, so
   // no manual onKeyDown is needed here either.
-  // The status is carried by a coloured dot in front of the title rather than a text pill.
-  // Colour alone is not an accessible signal, so the dot keeps the very same status string
-  // the pill used to render: as its accessible name (role="img" + aria-label, which
-  // overrides the decorative bullet glyph for screen readers) and as its hover tooltip.
+  // The status is carried by a coloured dot badged onto the top-right corner of the kind
+  // icon rather than a text pill. Colour alone is not an accessible signal, so the dot keeps
+  // the very same status string the pill used to render: as its accessible name
+  // (role="img" + aria-label, which overrides the decorative bullet glyph for screen
+  // readers) and as its hover tooltip. The dot therefore sits NEXT TO the aria-hidden kind
+  // icon inside a shared positioning wrapper -- nesting it inside the icon would hide its
+  // label from screen readers along with the icon.
   const statusLabel = sessionStatusLabel(t, session, agentIdle)
 
   return (
     <li className="session-row">
       <button type="button" className="session-row-content" aria-current={active ? 'true' : undefined} onClick={onActivate}>
-        <span aria-hidden="true" className="session-kind-icon" data-kind={session.kind}>
-          <img src={sessionKindIconUrl(session.kind)} alt="" width={16} height={16} />
-        </span>
-        <span
-          className="session-status-dot"
-          data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}
-          role="img"
-          aria-label={statusLabel}
-          title={statusLabel}
-        >
-          &bull;
+        <span className="session-icon">
+          <span aria-hidden="true" className="session-kind-icon" data-kind={session.kind}>
+            <img src={sessionKindIconUrl(session.kind)} alt="" width={16} height={16} />
+          </span>
+          <span
+            className="session-status-dot"
+            data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}
+            role="img"
+            aria-label={statusLabel}
+            title={statusLabel}
+          >
+            &bull;
+          </span>
         </span>
         <span className="session-title" title={session.title}>
           {session.title}

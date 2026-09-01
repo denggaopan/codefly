@@ -531,12 +531,12 @@ input {
 .session-row-content {
   flex: 1 1 auto;
   display: grid;
-  /* kind icon | status dot | title + secondary line */
-  grid-template-columns: 20px auto minmax(0, 1fr);
+  /* kind icon (status dot badged onto it) | title + secondary line */
+  grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;
   column-gap: 6px;
   min-width: 0;
-  padding: 6px 6px 6px 28px;
+  padding: 6px 6px 6px 20px;
   border: none;
   border-left: 3px solid transparent;
   background: transparent;
@@ -553,9 +553,18 @@ input {
   border-left-color: var(--color-accent);
 }
 
-.session-kind-icon {
+/* Positioning context for the status dot badged onto the icon's top-right corner. */
+.session-icon {
   grid-column: 1;
   grid-row: 1 / span 2;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+}
+
+.session-kind-icon {
   display: grid;
   place-items: center;
   width: 20px;
@@ -567,7 +576,7 @@ input {
 }
 
 .session-title {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -576,7 +585,7 @@ input {
 }
 
 .session-secondary {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 2;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -591,13 +600,17 @@ input {
   visual channel — the accessible name and tooltip carry the wording, see SessionRow.
 */
 .session-status-dot {
-  grid-column: 2;
-  grid-row: 1;
+  position: absolute;
+  top: 0;
+  right: 0;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: currentColor;
   color: var(--color-text-muted);
+  /* A ring in the row background keeps the badge readable against the icon underneath;
+     the row lifts to --color-panel-elevated on hover and while active, so the ring follows. */
+  box-shadow: 0 0 0 2px var(--color-panel);
   /* The element's bullet glyph is hidden behind the drawn disc: a real circle keeps the same
      size and shape in every font, where the glyph renders as a barely visible speck at the
      row's font size and shifts with the font stack. The glyph stays in the markup as the
@@ -605,6 +618,11 @@ input {
   overflow: hidden;
   text-indent: 100%;
   white-space: nowrap;
+}
+
+.session-row-content:hover .session-status-dot,
+.session-row-content[aria-current='true'] .session-status-dot {
+  box-shadow: 0 0 0 2px var(--color-panel-elevated);
 }
 
 .session-status-dot[data-status='running'] {
