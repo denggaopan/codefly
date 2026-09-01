@@ -2,6 +2,14 @@ appId: com.codefly.desktop
 productName: CodeFly
 artifactName: ${productName}-Setup-${version}-${os}-${arch}.${ext}
 npmRebuild: false
+# Package from the Electron binaries npm already installed instead of letting
+# electron-builder download its own copy: it unpacks that copy into
+# release/win-unpacked.tmp and renames it, and on Windows the rename is refused
+# (EPERM) whenever a security scanner still holds the freshly written exe/dlls.
+# node_modules/electron/dist is the same official build as the devDependency this
+# config is packaged with, so reusing it skips the download, the unpack, and the
+# rename that kept failing.
+electronDist: node_modules/electron/dist
 directories:
   output: release
 files:
