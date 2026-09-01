@@ -174,9 +174,20 @@ test('exposes the startup toggle, version check, About links, and language switc
   await dialog.getByRole('button', { name: 'Check for updates' }).click()
   await expect(dialog.getByRole('status')).toHaveText('No release has been published yet.')
 
-  await expect(dialog.getByText('https://github.com/denggaopan/codefly', { exact: true })).toBeVisible()
-  await expect(dialog.getByText('https://github.com/denggaopan/codefly/releases', { exact: true })).toBeVisible()
-  await expect(dialog.getByText('https://github.com/denggaopan/codefly/releases/latest', { exact: true })).toBeVisible()
+  // About rows print their label and a chain glyph; the URL only ever appears as the tooltip.
+  await expect(dialog.getByRole('button', { name: 'Project repository' })).toHaveAttribute(
+    'title',
+    'https://github.com/denggaopan/codefly'
+  )
+  await expect(dialog.getByRole('button', { name: 'Changelog' })).toHaveAttribute(
+    'title',
+    'https://github.com/denggaopan/codefly/releases'
+  )
+  await expect(dialog.getByRole('button', { name: 'Downloads' })).toHaveAttribute(
+    'title',
+    'https://github.com/denggaopan/codefly/releases/latest'
+  )
+  await expect(dialog.getByText('https://github.com/denggaopan/codefly', { exact: true })).toHaveCount(0)
 
   await dialog.getByRole('button', { name: '简体中文' }).click()
   await expect(window.getByRole('dialog', { name: '设置' })).toBeVisible()

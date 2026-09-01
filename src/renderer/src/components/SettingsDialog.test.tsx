@@ -139,9 +139,13 @@ describe('SettingsDialog', () => {
     const user = userEvent.setup()
     const api = renderDialog()
 
-    expect(await screen.findByText(links.repository)).toBeInTheDocument()
+    // Each row shows its label and a chain glyph only — the destination stays in the tooltip.
+    const repository = screen.getByRole('button', { name: 'Project repository' })
+    await waitFor(() => expect(repository).toHaveAttribute('title', links.repository))
+    expect(repository.querySelector('.settings-link-icon')).not.toBeNull()
+    expect(screen.queryByText(links.repository)).not.toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /Project repository/ }))
+    await user.click(repository)
     await user.click(screen.getByRole('button', { name: /Changelog/ }))
     await user.click(screen.getByRole('button', { name: /Downloads/ }))
 
