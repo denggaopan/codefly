@@ -37,7 +37,7 @@ export default function SessionLauncher({ projectId, onDragStart }: SessionLaunc
   const [pending, setPending] = useState(false)
 
   // Escape closes the launcher from the keyboard; ProjectSidebar's focus-restoration effect
-  // (watching launcherOpen) then returns focus to the project-row "New session" trigger.
+  // (watching launcherOpen) then returns focus to the project options trigger.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
