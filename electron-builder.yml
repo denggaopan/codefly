@@ -1,5 +1,6 @@
 appId: com.codefly.desktop
 productName: CodeFly
+artifactName: ${productName}-Setup-${version}-${os}-${arch}.${ext}
 npmRebuild: false
 directories:
   output: release
