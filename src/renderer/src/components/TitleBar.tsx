@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import logoUrl from '../assets/logo.svg'
 import { useTranslation } from '../i18n/use-translation'
 import SettingsDialog from './SettingsDialog'
 
@@ -17,6 +18,7 @@ export default function TitleBar() {
 
   return (
     <header className="title-bar">
+      <img className="title-bar-logo" src={logoUrl} alt="" aria-hidden="true" />
       <span className="title-bar-app-name">CodeFly</span>
       <button
         type="button"
