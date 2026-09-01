@@ -39,20 +39,32 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
   // role="button" must not have focusable descendants (screen readers flatten/misreport
   // that), and native <button> elements get keyboard (Enter/Space) activation for free, so
   // no manual onKeyDown is needed here either.
+  // The status is carried by a coloured dot in front of the title rather than a text pill.
+  // Colour alone is not an accessible signal, so the dot keeps the very same status string
+  // the pill used to render: as its accessible name (role="img" + aria-label, which
+  // overrides the decorative bullet glyph for screen readers) and as its hover tooltip.
+  const statusLabel = sessionStatusLabel(t, session, agentIdle)
+
   return (
     <li className="session-row">
       <button type="button" className="session-row-content" aria-current={active ? 'true' : undefined} onClick={onActivate}>
         <span aria-hidden="true" className="session-kind-icon" data-kind={session.kind}>
           <img src={sessionKindIconUrl(session.kind)} alt="" width={16} height={16} />
         </span>
+        <span
+          className="session-status-dot"
+          data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}
+          role="img"
+          aria-label={statusLabel}
+          title={statusLabel}
+        >
+          &bull;
+        </span>
         <span className="session-title" title={session.title}>
           {session.title}
         </span>
         <span className="session-secondary" title={secondary}>
           {secondary}
-        </span>
-        <span className="session-status" data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}>
-          {sessionStatusLabel(t, session, agentIdle)}
         </span>
       </button>
       <button

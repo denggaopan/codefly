@@ -464,9 +464,10 @@ input {
 .session-row-content {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  /* kind icon | status dot | title + secondary line */
+  grid-template-columns: 20px auto minmax(0, 1fr);
   align-items: center;
-  column-gap: 8px;
+  column-gap: 6px;
   min-width: 0;
   padding: 6px 6px 6px 28px;
   border: none;
@@ -499,7 +500,7 @@ input {
 }
 
 .session-title {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -508,7 +509,7 @@ input {
 }
 
 .session-secondary {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 2;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -517,40 +518,45 @@ input {
   font-size: 0.72rem;
 }
 
-.session-status {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  justify-self: end;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--color-panel-elevated);
+/*
+  Status dot: replaces the old text pill in front of the session title. It sits on the title
+  row only (the secondary line stays left-aligned with the title), and colour is its only
+  visual channel — the accessible name and tooltip carry the wording, see SessionRow.
+*/
+.session-status-dot {
+  grid-column: 2;
+  grid-row: 1;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
   color: var(--color-text-muted);
-  font-size: 0.68rem;
+  /* The element's bullet glyph is hidden behind the drawn disc: a real circle keeps the same
+     size and shape in every font, where the glyph renders as a barely visible speck at the
+     row's font size and shifts with the font stack. The glyph stays in the markup as the
+     plain-text fallback for anything rendering the DOM without this stylesheet. */
+  overflow: hidden;
+  text-indent: 100%;
   white-space: nowrap;
 }
 
-.session-status[data-status='running'] {
-  background: rgba(62, 207, 142, 0.16);
+.session-status-dot[data-status='running'] {
   color: var(--color-state-running);
 }
 
-.session-status[data-status='done'] {
-  background: rgba(177, 138, 255, 0.16);
+.session-status-dot[data-status='done'] {
   color: var(--color-state-done);
 }
 
-.session-status[data-status='creating'] {
-  background: rgba(148, 113, 199, 0.16);
+.session-status-dot[data-status='creating'] {
   color: var(--color-accent);
 }
 
-.session-status[data-status='missing'] {
-  background: rgba(224, 169, 64, 0.16);
+.session-status-dot[data-status='missing'] {
   color: var(--color-state-warning);
 }
 
-.session-status[data-status='error'] {
-  background: rgba(229, 72, 77, 0.16);
+.session-status-dot[data-status='error'] {
   color: var(--color-state-destructive);
 }
 

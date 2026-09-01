@@ -204,8 +204,8 @@ test('marks the running Claude session Done once its output has gone quiet', asy
   // The fake agent prints one ready marker and then stays silent, so after the renderer's
   // quiet window (AGENT_IDLE_MS) the sidebar row must flip from Running to Done.
   const claudeRow = sessionRowByKind('claude')
-  const status = claudeRow.locator('.session-status')
-  await expect(status).toHaveText('Done', { timeout: 20_000 })
+  const status = claudeRow.locator('.session-status-dot')
+  await expect(status).toHaveAttribute('aria-label', 'Done', { timeout: 20_000 })
   await expect(status).toHaveAttribute('data-status', 'done')
 })
 
@@ -285,7 +285,7 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   await window.locator('.session-launcher').getByRole('button', { name: 'PowerShell', exact: true }).click()
   const powershellRow = sessionRowByKind('powershell')
   await expect(powershellRow).toHaveCount(1, { timeout: 20_000 })
-  await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
+  await expect(powershellRow.locator('.session-status-dot')).toHaveAttribute('data-status', 'running', { timeout: 20_000 })
   await expect(visibleBypassWarnings()).toHaveCount(0)
 
   // Regression guard: a freshly created session's terminal must own keyboard focus, so
@@ -310,7 +310,7 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   await window.locator('.session-launcher').getByRole('button', { name: 'Command Prompt', exact: true }).click()
   const cmdRow = sessionRowByKind('cmd')
   await expect(cmdRow).toHaveCount(1, { timeout: 20_000 })
-  await expect(cmdRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
+  await expect(cmdRow.locator('.session-status-dot')).toHaveAttribute('data-status', 'running', { timeout: 20_000 })
   await expect(visibleBypassWarnings()).toHaveCount(0)
 })
 
@@ -326,12 +326,12 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
 
   const rows = window.locator('.session-row')
   for (let index = 0; index < 4; index += 1) {
-    await expect(rows.nth(index).locator('.session-status')).toHaveText('Click to restore')
+    await expect(rows.nth(index).locator('.session-status-dot')).toHaveAttribute('aria-label', 'Click to restore')
   }
 
   const powershellRow = sessionRowByKind('powershell')
   await powershellRow.locator('.session-row-content').click()
-  await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
+  await expect(powershellRow.locator('.session-status-dot')).toHaveAttribute('data-status', 'running', { timeout: 20_000 })
   await expect(powershellRow.locator('.session-row-content')).toHaveAttribute('aria-current', 'true')
 
   // Regression guard: restoring a session must also hand keyboard focus to its terminal —

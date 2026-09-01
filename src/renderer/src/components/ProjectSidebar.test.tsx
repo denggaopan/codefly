@@ -342,7 +342,7 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText(runningWorktreeSession.worktreeName as string)).toBeInTheDocument()
   })
 
-  it('shows "Click to restore" for a stopped session and calls restoreSession on click', async () => {
+  it('marks a stopped session with a restore-hinting status dot and calls restoreSession on click', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [stoppedSession] })
     const restarted: SessionRecord = { ...stoppedSession, status: 'running' }
@@ -350,42 +350,42 @@ describe('ProjectSidebar', () => {
     window.codefly = api
     render(<ProjectSidebar />)
 
-    expect(screen.getByText('Click to restore')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Click to restore' })).toHaveAttribute('data-status', 'stopped')
     await user.click(screen.getByText(stoppedSession.title))
 
     expect(api.restoreSession).toHaveBeenCalledWith(stoppedSession.id)
   })
 
-  it('shows "Running" for a running session and only switches to it on click', async () => {
+  it('marks a running session with a running status dot and only switches to it on click', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [runningWorktreeSession] })
     render(<ProjectSidebar />)
 
-    expect(screen.getByText('Running')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Running' })).toHaveAttribute('data-status', 'running')
     await user.click(screen.getByText(runningWorktreeSession.title))
 
     expect(api.restoreSession).not.toHaveBeenCalled()
     expect(useAppStore.getState().activeSessionId).toBe(runningWorktreeSession.id)
   })
 
-  it('shows "Done" with a done status tint for a running agent session whose output has gone quiet', () => {
+  it('shows a done-tinted status dot for a running agent session whose output has gone quiet', () => {
     seedStore({ version: 1, projects: [project1], sessions: [runningWorktreeSession] })
     useAppStore.setState({ idleAgentSessionIds: { [runningWorktreeSession.id]: true } })
     render(<ProjectSidebar />)
 
-    const status = screen.getByText('Done')
+    const status = screen.getByRole('img', { name: 'Done' })
     expect(status).toHaveAttribute('data-status', 'done')
-    expect(screen.queryByText('Running')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'Running' })).not.toBeInTheDocument()
   })
 
-  it('keeps "Running" for a quiet shell session even when it is marked idle', () => {
+  it('keeps the running status dot for a quiet shell session even when it is marked idle', () => {
     const runningShell: SessionRecord = { ...stoppedSession, id: 'session-shell', status: 'running' }
     seedStore({ version: 1, projects: [project1], sessions: [runningShell] })
     useAppStore.setState({ idleAgentSessionIds: { [runningShell.id]: true } })
     render(<ProjectSidebar />)
 
-    expect(screen.getByText('Running')).toBeInTheDocument()
-    expect(screen.queryByText('Done')).not.toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Running' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'Done' })).not.toBeInTheDocument()
   })
 
   it('stops propagation on the session delete button and opens a confirmation', async () => {
