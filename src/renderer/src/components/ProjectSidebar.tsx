@@ -98,6 +98,12 @@ export default function ProjectSidebar() {
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const optionsMenuRef = useRef<HTMLDivElement | null>(null)
+
+  const closeProjectOptions = (restoreFocus = false): void => {
+    if (restoreFocus) optionsTriggerRef.current?.focus()
+    setOpenOptionsProjectId(null)
+  }
 
   // Project drag-reordering: the whole project row is the drag handle unless the pointer began
   // in the options trigger, menu, or launcher. Dragging is disabled while a search filter is
@@ -119,6 +125,33 @@ export default function ProjectSidebar() {
     }
     wasLauncherOpenRef.current = launcherOpen
   }, [launcherOpen])
+
+  useEffect(() => {
+    if (!openOptionsProjectId) return
+
+    const menu = optionsMenuRef.current
+    menu?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus()
+
+    const handlePointerDown = (event: PointerEvent): void => {
+      const target = event.target
+      if (
+        target instanceof Node &&
+        (menu?.contains(target) || optionsTriggerRef.current?.contains(target))
+      ) {
+        return
+      }
+      closeProjectOptions()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [openOptionsProjectId])
+
+  useEffect(() => {
+    if (openOptionsProjectId && !appState.projects.some((project) => project.id === openOptionsProjectId)) {
+      setOpenOptionsProjectId(null)
+    }
+  }, [appState.projects, openOptionsProjectId])
 
   // Focus restoration for the delete confirmation: remembers whichever "Delete" button
   // opened it so focus can return there once the dialog closes (Cancel, Escape, or a
@@ -164,6 +197,47 @@ export default function ProjectSidebar() {
     dragOriginIsExemptRef.current = false
     setDraggingProjectId(null)
     setDropTarget(null)
+  }
+
+  const handleProjectOptionsMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeProjectOptions(true)
+      return
+    }
+
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+
+    const menuItems = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+    if (menuItems.length === 0) return
+
+    const activeIndex = menuItems.indexOf(document.activeElement as HTMLButtonElement)
+    let nextIndex: number
+    switch (event.key) {
+      case 'ArrowDown':
+        nextIndex = activeIndex === -1 || activeIndex === menuItems.length - 1 ? 0 : activeIndex + 1
+        break
+      case 'ArrowUp':
+        nextIndex = activeIndex <= 0 ? menuItems.length - 1 : activeIndex - 1
+        break
+      case 'Home':
+        nextIndex = 0
+        break
+      case 'End':
+        nextIndex = menuItems.length - 1
+        break
+      default:
+        return
+    }
+    menuItems[nextIndex]?.focus()
+  }
+
+  const handleProjectOptionsMenuBlur = (event: React.FocusEvent<HTMLDivElement>): void => {
+    if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) {
+      closeProjectOptions()
+    }
   }
 
   const handleRowPointerDownCapture = (event: React.PointerEvent<HTMLDivElement>): void => {
@@ -290,10 +364,17 @@ export default function ProjectSidebar() {
                     aria-label={`Project options for ${project.name}`}
                     aria-haspopup="menu"
                     aria-expanded={openOptionsProjectId === project.id}
+                    onPointerDown={(event) => {
+                      if (openOptionsProjectId === project.id) event.preventDefault()
+                    }}
                     onClick={(event) => {
                       event.stopPropagation()
                       optionsTriggerRef.current = event.currentTarget
-                      setOpenOptionsProjectId((currentProjectId) => (currentProjectId === project.id ? null : project.id))
+                      if (openOptionsProjectId === project.id) {
+                        closeProjectOptions(true)
+                      } else {
+                        setOpenOptionsProjectId(project.id)
+                      }
                     }}
                   >
                     <img src={optionsIconUrl} alt="" width={16} height={16} className="icon icon-options" />
@@ -304,12 +385,16 @@ export default function ProjectSidebar() {
                     className="project-options-menu"
                     role="menu"
                     aria-label={`Project options for ${project.name}`}
+                    ref={optionsMenuRef}
                     onClick={(event) => event.stopPropagation()}
+                    onKeyDown={handleProjectOptionsMenuKeyDown}
+                    onBlur={handleProjectOptionsMenuBlur}
                   >
                     <button
                       type="button"
                       className="project-options-menu-item"
                       role="menuitem"
+                      tabIndex={-1}
                       onClick={(event) => {
                         event.stopPropagation()
                         launcherTriggerRef.current = optionsTriggerRef.current
@@ -328,9 +413,13 @@ export default function ProjectSidebar() {
                       title={capabilities.vscode.available ? undefined : capabilities.vscode.detail}
                       aria-describedby={capabilities.vscode.available ? undefined : vscodeHintId(project.id)}
                       disabled={!capabilities.vscode.available}
+                      tabIndex={-1}
+                      onPointerDown={(event) => {
+                        if (!capabilities.vscode.available) event.preventDefault()
+                      }}
                       onClick={(event) => {
                         event.stopPropagation()
-                        setOpenOptionsProjectId(null)
+                        closeProjectOptions(true)
                         void openProjectInVSCode(project.id)
                       }}
                     >
@@ -341,9 +430,10 @@ export default function ProjectSidebar() {
                       type="button"
                       className="project-options-menu-item"
                       role="menuitem"
+                      tabIndex={-1}
                       onClick={(event) => {
                         event.stopPropagation()
-                        setOpenOptionsProjectId(null)
+                        closeProjectOptions(true)
                         void openProjectFolder(project.id)
                       }}
                     >

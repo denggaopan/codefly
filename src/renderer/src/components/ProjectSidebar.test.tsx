@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -158,6 +158,105 @@ describe('ProjectSidebar', () => {
     await user.click(trigger)
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
+  it('focuses the first enabled menu item and supports wrapping keyboard navigation', async () => {
+    const user = userEvent.setup()
+    seedStore(
+      { version: 1, projects: [project1], sessions: [] },
+      {
+        claude: { available: true, detail: '' },
+        codex: { available: true, detail: '' },
+        vscode: { available: false, detail: 'Install VS Code or the code command.' }
+      }
+    )
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const newSession = within(menu).getByRole('menuitem', { name: 'New session' })
+    const folder = within(menu).getByRole('menuitem', { name: 'Open project folder' })
+    expect(newSession).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+    expect(folder).toHaveFocus()
+    await user.keyboard('{ArrowDown}')
+    expect(newSession).toHaveFocus()
+    await user.keyboard('{End}')
+    expect(folder).toHaveFocus()
+    await user.keyboard('{Home}')
+    expect(newSession).toHaveFocus()
+    await user.keyboard('{ArrowUp}')
+    expect(folder).toHaveFocus()
+  })
+
+  it('closes on Escape and restores focus to the options trigger', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    await openProjectOptions(user)
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('closes on outside click and Tab without stealing the destination focus', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user)
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    await user.click(search)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(search).toHaveFocus()
+
+    await openProjectOptions(user)
+    await user.tab()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('keeps only one project menu open and clears stale state when a project disappears', async () => {
+    const user = userEvent.setup()
+    const project2: ProjectRecord = {
+      id: 'project-2',
+      name: 'second-project',
+      path: 'C:\\work\\second',
+      createdAt: '2026-08-21T00:00:00.000Z'
+    }
+    const state = { version: 1 as const, projects: [project1, project2], sessions: [] }
+    seedStore(state)
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user, project1.name)
+    await openProjectOptions(user, project2.name)
+    expect(screen.getAllByRole('menu')).toHaveLength(1)
+    expect(screen.getByRole('menu', { name: projectOptionsName(project2.name) })).toBeInTheDocument()
+
+    act(() => useAppStore.setState({ appState: { ...state, projects: [project1] } }))
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    act(() => useAppStore.setState({ appState: state }))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('returns focus to the options trigger after a folder action and after closing the launcher', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    let menu = await openProjectOptions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: 'Open project folder' }))
+    expect(trigger).toHaveFocus()
+
+    menu = await openProjectOptions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: 'New session' }))
+    expect(screen.getByLabelText('Create session')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Close launcher' }))
+    await waitFor(() => expect(trigger).toHaveFocus())
   })
 
   it('renders the supplied options SVG as a decorative trigger icon', () => {
