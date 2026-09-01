@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { UpdateCheckResult } from '../../../shared/contracts'
+import type { UpdateCheckResult, UpdateDownloadResult } from '../../../shared/contracts'
 import type { ExternalLinkTarget } from '../../../shared/links'
 import { useAppStore } from '../store/use-app-store'
 import SettingsDialog from './SettingsDialog'
@@ -23,15 +23,24 @@ const createFakeApi = () => ({
   setAutoLaunch: vi.fn(async (enabled: boolean) => enabled),
   checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: '9.9.9' })),
   openExternalLink: vi.fn(async (_target: ExternalLinkTarget): Promise<void> => undefined),
+  downloadUpdate: vi.fn(async (): Promise<UpdateDownloadResult> => ({ status: 'ready', version: '10.0.0', fileName: 'Setup.exe' })),
   setTheme: vi.fn(async () => undefined)
 })
 
 type FakeApi = ReturnType<typeof createFakeApi>
 
-const renderDialog = (api: FakeApi = createFakeApi()): FakeApi => {
+const renderDialog = (api: FakeApi = createFakeApi(), onClose: () => void = vi.fn()): FakeApi => {
   window.codefly = api as unknown as typeof window.codefly
-  render(<SettingsDialog open onClose={vi.fn()} />)
+  render(<SettingsDialog open onClose={onClose} />)
   return api
+}
+
+const availableWithInstaller: UpdateCheckResult = {
+  status: 'available',
+  currentVersion: '9.9.9',
+  latestVersion: '10.0.0',
+  releaseUrl: 'https://example.test/release',
+  asset: { fileName: 'CodeFly-Setup-10.0.0-win-x64.exe', size: 4096 }
 }
 
 describe('SettingsDialog', () => {
@@ -165,8 +174,26 @@ describe('SettingsDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Check for updates' }))
 
     expect(await screen.findByRole('status')).toHaveTextContent('Version 10.0.0 is available.')
+    // No installer in this release, so the download page is the only thing on offer.
+    expect(within(screen.getByRole('status')).queryByRole('button', { name: 'Update now' })).toBeNull()
     await user.click(within(screen.getByRole('status')).getByRole('button', { name: 'Downloads' }))
     expect(api.openExternalLink).toHaveBeenCalledWith('download')
+  })
+
+  it('hands a downloadable release to the update dialog and gets out of the way', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    const api = createFakeApi()
+    api.checkForUpdates.mockResolvedValueOnce(availableWithInstaller)
+    renderDialog(api, onClose)
+
+    await user.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await user.click(within(await screen.findByRole('status')).getByRole('button', { name: 'Update now' }))
+
+    // The download starts straight away and Settings closes, leaving UpdateDialog on screen.
+    expect(api.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(useAppStore.getState().updater).toEqual({ phase: 'ready', version: '10.0.0' }))
   })
 
   it('surfaces the reason an update check failed', async () => {

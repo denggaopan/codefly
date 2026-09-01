@@ -7,7 +7,9 @@ import type {
   ProjectRecord,
   SessionRecord,
   ThemePreference,
-  UpdateCheckResult
+  UpdateCheckResult,
+  UpdateDownloadResult,
+  UpdateInstallResult
 } from '../../shared/contracts'
 import {
   createSessionRequestSchema,
@@ -27,6 +29,7 @@ import type { ExternalAppService } from '../services/external-app-service'
 import type { ProjectService } from '../services/project-service'
 import type { SessionCoordinator } from '../services/session-coordinator'
 import type { TerminalService } from '../services/terminal-service'
+import type { UpdaterService } from '../services/updater-service'
 
 export type RegisterIpcDependencies = {
   ipcMain: IpcMain
@@ -36,6 +39,7 @@ export type RegisterIpcDependencies = {
   coordinator: SessionCoordinator
   externalAppService: ExternalAppService
   appInfoService: AppInfoService
+  updaterService: UpdaterService
   terminalService: TerminalService
   getSnapshot: () => Promise<AppSnapshot>
   applyTheme: (theme: ThemePreference) => void
@@ -57,8 +61,19 @@ const publish = (window: BrowserWindow, channel: string, payload: unknown): void
  * disposer that removes every handler/listener registered by this call.
  */
 export function registerIpc(deps: RegisterIpcDependencies): () => void {
-  const { ipcMain, dialog, window, projectService, coordinator, externalAppService, appInfoService, terminalService, getSnapshot, applyTheme } =
-    deps
+  const {
+    ipcMain,
+    dialog,
+    window,
+    projectService,
+    coordinator,
+    externalAppService,
+    appInfoService,
+    updaterService,
+    terminalService,
+    getSnapshot,
+    applyTheme
+  } = deps
 
   const invokeHandlers: ReadonlyArray<readonly [string, InvokeHandler]> = [
     [IPC.snapshotGet, async (): Promise<AppSnapshot> => getSnapshot()],
@@ -143,6 +158,15 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
 
     [IPC.appUpdateCheck, async (): Promise<UpdateCheckResult> => appInfoService.checkForUpdates()],
 
+    // The three update commands carry no payload on purpose: UpdaterService resolves the
+    // release asset itself, so the renderer can never name the file that gets downloaded
+    // and executed. There is nothing to parse, but the sender check below still applies.
+    [IPC.appUpdateDownload, async (): Promise<UpdateDownloadResult> => updaterService.download()],
+
+    [IPC.appUpdateCancel, async (): Promise<void> => updaterService.cancel()],
+
+    [IPC.appUpdateInstall, async (): Promise<UpdateInstallResult> => updaterService.install()],
+
     [
       IPC.appOpenLink,
       async (_event, payload): Promise<void> => {
@@ -211,6 +235,9 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
   const unsubscribeTerminalExit = terminalService.on('exit', (payload) => {
     publish(window, IPC.terminalExit, payload)
   })
+  const unsubscribeUpdateProgress = updaterService.onProgress((progress) => {
+    publish(window, IPC.appUpdateProgress, progress)
+  })
 
   return () => {
     for (const [channel] of invokeHandlers) {
@@ -221,5 +248,6 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
     unsubscribeState()
     unsubscribeTerminalData()
     unsubscribeTerminalExit()
+    unsubscribeUpdateProgress()
   }
 }

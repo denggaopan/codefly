@@ -154,6 +154,92 @@ describe('AppInfoService.checkForUpdates: outcomes', () => {
     })
   })
 
+  it('describes the Windows installer the release publishes, without leaking its URL', async () => {
+    const { service } = buildHarness({
+      version: '0.4.1',
+      respond: async () =>
+        jsonResponse(200, {
+          ...(release('v0.5.0') as object),
+          assets: [
+            {
+              name: 'CodeFly-Setup-0.5.0-win-x64.exe',
+              size: 84_231_680,
+              browser_download_url: 'https://github.com/denggaopan/codefly/releases/download/v0.5.0/CodeFly-Setup-0.5.0-win-x64.exe',
+              // Extra asset fields mirror the real payload and must be ignored.
+              content_type: 'application/x-msdownload',
+              download_count: 42
+            }
+          ]
+        })
+    })
+
+    await expect(service.checkForUpdates()).resolves.toMatchObject({
+      status: 'available',
+      asset: { fileName: 'CodeFly-Setup-0.5.0-win-x64.exe', size: 84_231_680 }
+    })
+    // The download URL stays in the main process: UpdaterService re-resolves it itself.
+    await expect(service.checkForUpdates()).resolves.not.toHaveProperty('asset.browser_download_url')
+  })
+
+  it('prefers the Setup package when a release publishes several executables', async () => {
+    const { service } = buildHarness({
+      version: '0.4.1',
+      respond: async () =>
+        jsonResponse(200, {
+          ...(release('v0.5.0') as object),
+          assets: [
+            { name: 'CodeFly-Portable-0.5.0.exe', size: 10, browser_download_url: 'https://github.com/a.exe' },
+            { name: 'CodeFly-Setup-0.5.0-win-x64.exe', size: 20, browser_download_url: 'https://github.com/b.exe' }
+          ]
+        })
+    })
+
+    await expect(service.checkForUpdates()).resolves.toMatchObject({
+      asset: { fileName: 'CodeFly-Setup-0.5.0-win-x64.exe', size: 20 }
+    })
+  })
+
+  it('omits the asset when the release ships no Windows installer, leaving the download page as the fallback', async () => {
+    const { service } = buildHarness({
+      version: '0.4.1',
+      respond: async () =>
+        jsonResponse(200, {
+          ...(release('v0.5.0') as object),
+          assets: [{ name: 'CodeFly-0.5.0-win-x64.zip', size: 12, browser_download_url: 'https://github.com/a.zip' }]
+        })
+    })
+
+    const result = await service.checkForUpdates()
+
+    expect(result).not.toHaveProperty('asset')
+    expect(result).toMatchObject({ status: 'available', latestVersion: '0.5.0' })
+  })
+
+  it('omits the asset when the published name is not a plain file name', async () => {
+    const { service } = buildHarness({
+      version: '0.4.1',
+      respond: async () =>
+        jsonResponse(200, {
+          ...(release('v0.5.0') as object),
+          assets: [{ name: '../CodeFly-Setup.exe', size: 12, browser_download_url: 'https://github.com/a.exe' }]
+        })
+    })
+
+    await expect(service.checkForUpdates()).resolves.not.toHaveProperty('asset')
+  })
+
+  it('still reports the new version when the assets array itself is unreadable', async () => {
+    const { service } = buildHarness({
+      version: '0.4.1',
+      respond: async () => jsonResponse(200, { ...(release('v0.5.0') as object), assets: 'not-an-array' })
+    })
+
+    const result = await service.checkForUpdates()
+
+    expect(result).toMatchObject({ status: 'available', latestVersion: '0.5.0' })
+    expect(result).not.toHaveProperty('asset')
+  })
+
   it('reports `up-to-date` when the latest tag equals the running version', async () => {
     const { service } = buildHarness({ version: '0.4.1', respond: async () => jsonResponse(200, release('v0.4.1')) })
 

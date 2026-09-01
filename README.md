@@ -156,12 +156,33 @@ The title bar's gear button opens the settings dialog.
   only: main-process text (tool-availability hints, session errors) and already-persisted
   session titles stay in the language they were produced in.
 - **Version** shows the installed version and, on demand, queries GitHub's latest-release
-  API. CodeFly never downloads or installs an update by itself; a newer version simply links
-  out to the download page.
+  API. When the newest release ships a Windows installer, **Update now** downloads it inside
+  the app and then asks whether to install it right away or later; when it does not, the
+  section still just links out to the download page. See [Updates](#updates) below.
 - **About CodeFly** links to the project repository, the changelog (the releases page), and
   the downloads page. The renderer can only ask for one of those three *named targets* — the
   main process resolves each to a URL from `src/shared/links.ts` before handing it to
   `shell.openExternal`, so the renderer can never make the app open an arbitrary address.
+
+## Updates
+
+CodeFly checks GitHub's latest-release API once in the background on startup. It stays
+silent unless a newer version exists — a failed or offline check, an up-to-date install, and
+a repository with no releases all produce no interruption at all. When there *is* a newer
+version, a dialog offers **Update now** or **Later**.
+
+**Update now** downloads that release's Windows installer inside the app, with a progress
+bar and a **Cancel** button, into an `updates` folder under Electron's `userData` directory.
+When the download finishes CodeFly asks again: **Install now** quits the app and launches the
+installer (it has to quit — the installer replaces files the running app holds open), while
+**Later** simply closes the dialog and leaves the downloaded installer on disk, so choosing
+**Update now** again later finds it already there and skips straight to the install prompt.
+The same flow is reachable on demand from **Check for updates** in Settings.
+
+The renderer never names what gets downloaded or executed: the download, cancel, and install
+IPC commands take no arguments, and the main process re-resolves the release asset itself and
+refuses any download URL that is not an HTTPS GitHub release address. A release that publishes
+no `.exe` asset offers only the download page, never an in-app download.
 
 ## Persistence
 
@@ -187,13 +208,18 @@ bypass argv Claude and Codex receive (and that title-generation processes never 
 either flag), the persistent bypass warning, worktree sequence numbering, the per-kind
 Session kinds switches (a kind switched off leaves the New session menu, a worktree switch
 adds its second entry, and both survive a restart), restart persistence, VS Code/Explorer
-options-menu actions, and dirty-worktree delete protection followed by a clean delete that
-retains the branch.
+options-menu actions, dirty-worktree delete protection followed by a clean delete that
+retains the branch, and the whole update journey (startup prompt, **Later**, the Settings
+hand-off, a real streamed download, and the installer launch).
 
 It runs with `CODEFLY_E2E=1`, which (only in `src/main/index.ts`, the app's composition
 root — no domain service branches on this) substitutes a small fixture executable
 (`e2e/fixtures/fake-agent.cjs`) for the real `claude`/`codex` CLIs and a fixed directory for
-the "Add Project" picker. The fixture only replaces which *executable* is launched; the
+the "Add Project" picker. The update test additionally supplies one published release offline
+(`CODEFLY_E2E_RELEASE`) and records the installer that would have been executed
+(`CODEFLY_E2E_INSTALL_LOG`) — the version comparison, asset picking, GitHub host allowlist,
+streamed write, size check and rename are all real, writing into the suite's own user-data
+directory. The fixture only replaces which *executable* is launched; the
 bypass argument each session type receives is still produced by the same fixed, real
 launch-adapter code path used in production. Every other seam — Git, PowerShell, `cmd.exe`,
 the persisted state file, and the full worktree lifecycle — is the real, production
@@ -233,5 +259,9 @@ CLIs:
   reopening the dialog still shows the system's actual state.
 - **Check for updates** reaches GitHub over the network and reports a sensible result, both
   when a release exists and when none has been published yet.
+- Against a real published release: the startup check raises the update dialog, **Update
+  now** downloads the real installer with visible progress, **Cancel** stops it and leaves no
+  partial file behind, and **Install now** quits CodeFly and launches the downloaded
+  installer, which upgrades the existing install in place.
 - Switching the language to 简体中文 translates the sidebar, launcher, terminal header, and
   dialogs, and the choice survives a restart.

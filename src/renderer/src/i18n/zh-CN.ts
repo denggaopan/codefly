@@ -74,9 +74,27 @@ export const zhCN: Translations = {
   'settings.updateAvailable': '新版本 {version} 可用。',
   'settings.updateNoReleases': '尚未发布任何版本。',
   'settings.updateFailed': '检查更新失败：{reason}',
+  'settings.updateNow': '立即更新',
   'settings.about': '关于 CodeFly',
   'settings.linkRepository': '项目地址',
   'settings.linkChangelog': '更新日志',
   'settings.linkDownload': '下载地址',
-  'settings.openExternalHint': '将在浏览器中打开'
+  'settings.openExternalHint': '将在浏览器中打开',
+
+  'update.availableTitle': '新版本 {version} 可用',
+  'update.availableBody': 'CodeFly 可以为你下载安装包，待你准备好后再安装。',
+  'update.noInstallerBody': '该版本未发布 Windows 安装包，需要前往发布页面手动下载。',
+  'update.updateNow': '立即更新',
+  'update.later': '稍后更新',
+  'update.openDownloadPage': '打开下载页面',
+  'update.downloadingTitle': '正在下载版本 {version}',
+  'update.progress': '{received} / {total}',
+  'update.progressUnknownTotal': '已下载 {received}',
+  'update.downloadProgressLabel': '下载进度',
+  'update.cancelDownload': '取消',
+  'update.readyTitle': '版本 {version} 已可安装',
+  'update.readyBody': 'CodeFly 将关闭并运行安装程序。请先保存正在运行的会话中的工作。',
+  'update.installNow': '立即安装',
+  'update.failedTitle': '更新下载失败',
+  'update.tryAgain': '重试'
 }

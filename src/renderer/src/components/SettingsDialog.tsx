@@ -68,6 +68,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const setLocale = useAppStore((state) => state.setLocale)
   const sessionKindPreferences = useAppStore((state) => state.sessionKindPreferences)
   const setSessionKindPreference = useAppStore((state) => state.setSessionKindPreference)
+  const beginUpdate = useAppStore((state) => state.beginUpdate)
+  const startUpdateDownload = useAppStore((state) => state.startUpdateDownload)
 
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   // null while the main process has not answered yet: the switch stays disabled rather than
@@ -150,6 +152,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const openLink = (target: ExternalLinkTarget): void => {
     void window.codefly.openExternalLink(target).catch(() => undefined)
   }
+
+  // Hands the check's outcome to the app store instead of making UpdateDialog repeat the
+  // round trip, then closes Settings so the update dialog is the only thing on screen.
+  const handleUpdateNow = (version: string): void => {
+    beginUpdate(version, true)
+    void startUpdateDownload()
+    onClose()
+  }
+
+  // Extracted before the JSX so the narrowing survives into the click handler's closure.
+  const downloadableUpdate =
+    updateState.phase === 'done' && updateState.result.status === 'available' && updateState.result.asset
+      ? updateState.result
+      : null
 
   return createPortal(
     <div className="settings-dialog-backdrop" onClick={onClose}>
@@ -235,6 +251,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         {updateState.phase === 'done' && (
           <p className="settings-update-status" role="status" data-status={updateState.result.status}>
             {updateMessage(updateState.result, t)}
+            {/* Only a release that actually publishes a Windows installer can be downloaded
+                in-app; without one the download page stays the only thing to offer. */}
+            {downloadableUpdate && (
+              <button type="button" className="settings-inline-action" onClick={() => handleUpdateNow(downloadableUpdate.latestVersion)}>
+                {t('settings.updateNow')}
+              </button>
+            )}
             {updateState.result.status === 'available' && (
               <button type="button" className="settings-inline-link" onClick={() => openLink('download')}>
                 {t('settings.linkDownload')}

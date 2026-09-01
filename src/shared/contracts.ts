@@ -181,10 +181,37 @@ export type DeleteSessionResult =
 
 export type AppInfo = { version: string; links: Readonly<Record<ExternalLinkTarget, string>> }
 
+// The installer the release publishes, without its download URL: the renderer only needs
+// the file name and size to describe the download, and never gets to say *what* the main
+// process downloads (see UpdaterService — it resolves the URL itself, exactly like
+// shared/links.ts keeps renderer-supplied URLs away from shell.openExternal).
+export type UpdateAssetInfo = { fileName: string; size: number }
+
 // `none` is distinct from `up-to-date`: the repository has published no release at all, so
 // there is no version to compare against rather than a comparison that came out equal.
+// `asset` is absent when the release carries no Windows installer, which is what tells the
+// UI to fall back to the download page instead of offering an in-app download.
 export type UpdateCheckResult =
   | { status: 'up-to-date'; currentVersion: string; latestVersion: string }
-  | { status: 'available'; currentVersion: string; latestVersion: string; releaseUrl: string }
+  | { status: 'available'; currentVersion: string; latestVersion: string; releaseUrl: string; asset?: UpdateAssetInfo }
   | { status: 'none'; currentVersion: string }
   | { status: 'error'; message: string }
+
+// Streamed to the renderer while an installer downloads. `totalBytes` is 0 when the server
+// sends no length, which the progress bar renders as indeterminate rather than as 0%.
+export type UpdateDownloadProgress = {
+  version: string
+  receivedBytes: number
+  totalBytes: number
+}
+
+// `cancelled` is a first-class outcome, not an error: the user asked for it, so the UI
+// returns to its resting state instead of showing a failure.
+export type UpdateDownloadResult =
+  | { status: 'ready'; version: string; fileName: string }
+  | { status: 'cancelled' }
+  | { status: 'error'; message: string }
+
+// `launched` means the installer process was handed to the OS and CodeFly is quitting; the
+// renderer will not get another turn, so there is nothing to report on success beyond that.
+export type UpdateInstallResult = { status: 'launched' } | { status: 'error'; message: string }

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -598,4 +598,83 @@ test('blocks deleting a dirty worktree, then deletes cleanly and retains the bra
 
   const branches = execFileSync('git', ['-C', repoPath, 'branch', '--format=%(refname:short)'], { encoding: 'utf8' })
   expect(branches.split(/\r?\n/u).map((line) => line.trim())).toContain(worktreeName)
+})
+
+/**
+ * The in-app update journey, driven against a second Electron instance with its own
+ * user-data directory. CODEFLY_E2E_RELEASE (see src/main/index.ts) supplies one published
+ * release offline and CODEFLY_E2E_INSTALL_LOG records the installer that would have been
+ * executed — those two seams, plus the process spawn, are the only substitutions: the SemVer
+ * comparison, the asset picker, the GitHub host allowlist, the streamed write, the size check
+ * and the `.part` rename are all the real production code, writing into a real directory.
+ *
+ * It runs in its own instance because the startup check fires once per launch, and a modal
+ * update dialog on the shared window would block every other test in the journey.
+ */
+test('prompts on startup, downloads the installer in-app, and launches it on demand', async () => {
+  const updaterUserDataDir = mkdtempSync(join(tmpdir(), 'codefly-e2e-update-'))
+  const installLog = join(updaterUserDataDir, 'install-launch.log')
+  const installerName = 'CodeFly-Setup-99.0.0-win-x64.exe'
+  const installerBytes = 512 * 1024
+  const release = {
+    tag_name: 'v99.0.0',
+    html_url: 'https://github.com/denggaopan/codefly/releases/tag/v99.0.0',
+    assets: [
+      {
+        name: installerName,
+        size: installerBytes,
+        browser_download_url: `https://github.com/denggaopan/codefly/releases/download/v99.0.0/${installerName}`
+      }
+    ]
+  }
+
+  const updaterApp = await electron.launch({
+    args: ['.', `--user-data-dir=${updaterUserDataDir}`],
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      CODEFLY_E2E: '1',
+      CODEFLY_E2E_PROJECT: repoPath,
+      CODEFLY_E2E_AGENT_CMD: fakeAgentCmd,
+      CODEFLY_E2E_RELEASE: JSON.stringify(release),
+      CODEFLY_E2E_INSTALL_LOG: installLog
+    }
+  })
+
+  try {
+    const page = await updaterApp.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+
+    // Nothing is clicked to get here: the startup check raises the dialog by itself.
+    const updateDialog = page.getByRole('alertdialog')
+    await expect(updateDialog).toContainText('Version 99.0.0 is available', { timeout: 20_000 })
+
+    // "Later" must leave no trace — no dialog, and nothing downloaded.
+    await updateDialog.getByRole('button', { name: 'Later' }).click()
+    await expect(updateDialog).toHaveCount(0)
+    const installerPath = join(updaterUserDataDir, 'updates', installerName)
+    expect(existsSync(installerPath)).toBe(false)
+
+    // The same flow is reachable on demand from Settings, which hands off and closes itself.
+    const settingsDialog = page.getByRole('dialog', { name: 'Settings' })
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await settingsDialog.getByRole('button', { name: 'Check for updates' }).click()
+    await expect(settingsDialog.getByRole('status')).toContainText('Version 99.0.0 is available.')
+    await settingsDialog.getByRole('button', { name: 'Update now' }).click()
+    await expect(settingsDialog).toHaveCount(0)
+
+    await expect(updateDialog).toContainText('Version 99.0.0 is ready to install', { timeout: 30_000 })
+
+    // The installer really was streamed to disk, at exactly its declared size.
+    expect(existsSync(installerPath)).toBe(true)
+    expect(statSync(installerPath).size).toBe(installerBytes)
+
+    await updateDialog.getByRole('button', { name: 'Install now' }).click()
+    await expect
+      .poll(() => (existsSync(installLog) ? readFileSync(installLog, 'utf8') : null), { timeout: 15_000 })
+      .toBe(installerPath)
+  } finally {
+    await updaterApp.close()
+    rmSync(updaterUserDataDir, { recursive: true, force: true })
+  }
 })

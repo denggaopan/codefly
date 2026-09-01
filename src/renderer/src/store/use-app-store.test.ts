@@ -9,7 +9,10 @@ import type {
   DeleteSessionResult,
   ProjectRecord,
   SessionRecord,
-  UpdateCheckResult
+  UpdateCheckResult,
+  UpdateDownloadProgress,
+  UpdateDownloadResult,
+  UpdateInstallResult
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
 import { DEFAULT_SESSION_KIND_PREFERENCES } from '../../../shared/contracts'
@@ -50,6 +53,7 @@ const seededState: AppState = { version: 1, projects: [], sessions: [claudeSessi
 const createFakeApi = () => {
   const dataListeners = new Set<(payload: { sessionId: string; data: string }) => void>()
   const exitListeners = new Set<(payload: { sessionId: string; exitCode: number }) => void>()
+  const progressListeners = new Set<(progress: UpdateDownloadProgress) => void>()
   return {
     setTheme: vi.fn(async (): Promise<void> => undefined),
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state: seededState, capabilities: defaultCapabilities() })),
@@ -63,6 +67,9 @@ const createFakeApi = () => {
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
     getAppInfo: vi.fn(async (): Promise<AppInfo> => ({ version: '0.0.0-test', links: EXTERNAL_LINKS })),
     checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: '0.0.0-test' })),
+    downloadUpdate: vi.fn(async (): Promise<UpdateDownloadResult> => ({ status: 'cancelled' })),
+    cancelUpdateDownload: vi.fn(async (): Promise<void> => undefined),
+    installUpdate: vi.fn(async (): Promise<UpdateInstallResult> => ({ status: 'launched' })),
     openExternalLink: vi.fn(async (): Promise<void> => undefined),
     getAutoLaunch: vi.fn(async (): Promise<boolean> => false),
     setAutoLaunch: vi.fn(async (enabled: boolean): Promise<boolean> => enabled),
@@ -81,6 +88,15 @@ const createFakeApi = () => {
         exitListeners.delete(listener)
       }
     }),
+    onUpdateProgress: vi.fn((listener: (progress: UpdateDownloadProgress) => void) => {
+      progressListeners.add(listener)
+      return () => {
+        progressListeners.delete(listener)
+      }
+    }),
+    emitUpdateProgress: (progress: UpdateDownloadProgress) => {
+      for (const listener of [...progressListeners]) listener(progress)
+    },
     emitTerminalData: (payload: { sessionId: string; data: string }) => {
       for (const listener of [...dataListeners]) listener(payload)
     },
@@ -259,5 +275,144 @@ describe('useAppStore agent idle tracking', () => {
 
     useAppStore.getState().reset()
     expect(idleIds()).toEqual({})
+  })
+})
+
+describe('useAppStore updater', () => {
+  const availableResult = {
+    status: 'available',
+    currentVersion: '0.0.0-test',
+    latestVersion: '2.0.0',
+    releaseUrl: 'https://example.test/release',
+    asset: { fileName: 'CodeFly-Setup-2.0.0-win-x64.exe', size: 1024 }
+  } as const
+
+  // Re-runs initialize() against a check result of the test's choosing; the file-level
+  // beforeEach has already run one startup check (answered "none").
+  const restartWithCheckResult = async (result: UpdateCheckResult): Promise<void> => {
+    dispose()
+    useAppStore.getState().reset()
+    api.checkForUpdates.mockResolvedValueOnce(result)
+    dispose = useAppStore.getState().initialize()
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('checks for updates once on startup', () => {
+    expect(api.checkForUpdates).toHaveBeenCalledTimes(1)
+    // The seeded fake answers "none", which must leave nothing on screen.
+    expect(useAppStore.getState().updater).toEqual({ phase: 'idle' })
+  })
+
+  it('raises the dialog only when a newer version actually exists', async () => {
+    await restartWithCheckResult(availableResult)
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'available', version: '2.0.0', downloadable: true })
+  })
+
+  it('marks a release with no installer as not downloadable', async () => {
+    const { asset: _asset, ...withoutAsset } = availableResult
+    await restartWithCheckResult(withoutAsset)
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'available', version: '2.0.0', downloadable: false })
+  })
+
+  it('stays silent when the background check fails', async () => {
+    dispose()
+    useAppStore.getState().reset()
+    api.checkForUpdates.mockRejectedValueOnce(new Error('Network request failed.'))
+    dispose = useAppStore.getState().initialize()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'idle' })
+    expect(useAppStore.getState().notice).toBeNull()
+  })
+
+  it('runs the download and lands on ready', async () => {
+    useAppStore.getState().beginUpdate('2.0.0', true)
+    api.downloadUpdate.mockResolvedValueOnce({ status: 'ready', version: '2.0.0', fileName: 'Setup.exe' })
+
+    await useAppStore.getState().startUpdateDownload()
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'ready', version: '2.0.0' })
+  })
+
+  it('returns to idle when the download is cancelled', async () => {
+    useAppStore.getState().beginUpdate('2.0.0', true)
+    api.downloadUpdate.mockResolvedValueOnce({ status: 'cancelled' })
+
+    await useAppStore.getState().startUpdateDownload()
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'idle' })
+  })
+
+  it('keeps the version alongside a download failure so retry knows what to fetch', async () => {
+    useAppStore.getState().beginUpdate('2.0.0', true)
+    api.downloadUpdate.mockResolvedValueOnce({ status: 'error', message: 'GitHub returned HTTP 500.' })
+
+    await useAppStore.getState().startUpdateDownload()
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'error', version: '2.0.0', message: 'GitHub returned HTTP 500.' })
+  })
+
+  it('folds a rejected invoke into the same error phase', async () => {
+    useAppStore.getState().beginUpdate('2.0.0', true)
+    api.downloadUpdate.mockRejectedValueOnce(new Error('Unauthorized IPC sender.'))
+
+    await useAppStore.getState().startUpdateDownload()
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'error', version: '2.0.0', message: 'Unauthorized IPC sender.' })
+  })
+
+  it('ignores a second download request while one is already running', async () => {
+    useAppStore.getState().beginUpdate('2.0.0', true)
+    const first = useAppStore.getState().startUpdateDownload()
+    await useAppStore.getState().startUpdateDownload()
+    await first
+
+    expect(api.downloadUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('merges progress only while that version is downloading', () => {
+    useAppStore.setState({ updater: { phase: 'downloading', version: '2.0.0', receivedBytes: 0, totalBytes: 0 } })
+
+    api.emitUpdateProgress({ version: '2.0.0', receivedBytes: 512, totalBytes: 4096 })
+    expect(useAppStore.getState().updater).toEqual({ phase: 'downloading', version: '2.0.0', receivedBytes: 512, totalBytes: 4096 })
+
+    // A late event from an abandoned download must not resurrect the progress bar.
+    useAppStore.getState().dismissUpdate()
+    api.emitUpdateProgress({ version: '2.0.0', receivedBytes: 1024, totalBytes: 4096 })
+    expect(useAppStore.getState().updater).toEqual({ phase: 'idle' })
+  })
+
+  it('leaves the dialog alone when the installer launches, and reports it when it does not', async () => {
+    useAppStore.setState({ updater: { phase: 'ready', version: '2.0.0' } })
+    await useAppStore.getState().installUpdate()
+    expect(useAppStore.getState().updater).toEqual({ phase: 'ready', version: '2.0.0' })
+
+    api.installUpdate.mockResolvedValueOnce({ status: 'error', message: 'The downloaded installer is missing.' })
+    await useAppStore.getState().installUpdate()
+    expect(useAppStore.getState().updater).toEqual({
+      phase: 'error',
+      version: '2.0.0',
+      message: 'The downloaded installer is missing.'
+    })
+  })
+
+  it('asks the main process to cancel without pre-empting the download result', async () => {
+    useAppStore.setState({ updater: { phase: 'downloading', version: '2.0.0', receivedBytes: 10, totalBytes: 100 } })
+
+    await useAppStore.getState().cancelUpdateDownload()
+
+    expect(api.cancelUpdateDownload).toHaveBeenCalledTimes(1)
+    // Still downloading as far as this store knows: startUpdateDownload's own result decides.
+    expect(useAppStore.getState().updater.phase).toBe('downloading')
+  })
+
+  it('reset returns the updater to idle', () => {
+    useAppStore.setState({ updater: { phase: 'ready', version: '2.0.0' } })
+
+    useAppStore.getState().reset()
+
+    expect(useAppStore.getState().updater).toEqual({ phase: 'idle' })
   })
 })

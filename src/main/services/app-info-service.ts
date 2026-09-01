@@ -1,26 +1,14 @@
 import { app, shell } from 'electron'
-import { z } from 'zod'
 
 import type { AppInfo, UpdateCheckResult } from '../../shared/contracts'
 import { EXTERNAL_LINKS, type ExternalLinkTarget } from '../../shared/links'
-
-const LATEST_RELEASE_URL = 'https://api.github.com/repos/denggaopan/codefly/releases/latest'
-
-// GitHub rejects unauthenticated API calls without a User-Agent, and pins the response
-// shape to the documented v3 schema via the Accept header.
-const REQUEST_HEADERS: Readonly<Record<string, string>> = {
-  Accept: 'application/vnd.github+json',
-  'User-Agent': 'CodeFly'
-}
-
-const REQUEST_TIMEOUT_MS = 10_000
-
-// Only the two fields the update check needs; every other release field is ignored so a
-// GitHub payload change cannot fail the parse.
-const latestReleaseSchema = z.object({
-  tag_name: z.string(),
-  html_url: z.string().optional()
-})
+import {
+  latestReleaseSchema,
+  pickWindowsInstaller,
+  LATEST_RELEASE_URL,
+  REQUEST_HEADERS,
+  REQUEST_TIMEOUT_MS
+} from './github-release'
 
 export type HttpResponseLike = {
   ok: boolean
@@ -192,11 +180,17 @@ export class AppInfoService {
     }
 
     if (comparison > 0) {
+      // The asset is reported without its download URL: the renderer only needs to describe
+      // the download, and UpdaterService re-resolves the URL itself when the user starts it.
+      // A release with no Windows installer simply omits it, which leaves the UI on its
+      // "open the download page" fallback.
+      const installer = pickWindowsInstaller(release.data.assets)
       return {
         status: 'available',
         currentVersion,
         latestVersion,
-        releaseUrl: release.data.html_url ?? EXTERNAL_LINKS.download
+        releaseUrl: release.data.html_url ?? EXTERNAL_LINKS.download,
+        ...(installer ? { asset: { fileName: installer.fileName, size: installer.size } } : {})
       }
     }
     return { status: 'up-to-date', currentVersion, latestVersion }

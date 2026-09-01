@@ -73,9 +73,27 @@ export const en = {
   'settings.updateAvailable': 'Version {version} is available.',
   'settings.updateNoReleases': 'No release has been published yet.',
   'settings.updateFailed': 'Could not check for updates: {reason}',
+  'settings.updateNow': 'Update now',
   'settings.about': 'About CodeFly',
   'settings.linkRepository': 'Project repository',
   'settings.linkChangelog': 'Changelog',
   'settings.linkDownload': 'Downloads',
-  'settings.openExternalHint': 'Opens in your browser'
+  'settings.openExternalHint': 'Opens in your browser',
+
+  'update.availableTitle': 'Version {version} is available',
+  'update.availableBody': 'CodeFly can download the installer for you and install it when you are ready.',
+  'update.noInstallerBody': 'This release does not publish a Windows installer, so it has to be downloaded from the releases page.',
+  'update.updateNow': 'Update now',
+  'update.later': 'Later',
+  'update.openDownloadPage': 'Open download page',
+  'update.downloadingTitle': 'Downloading version {version}',
+  'update.progress': '{received} of {total}',
+  'update.progressUnknownTotal': '{received} downloaded',
+  'update.downloadProgressLabel': 'Download progress',
+  'update.cancelDownload': 'Cancel',
+  'update.readyTitle': 'Version {version} is ready to install',
+  'update.readyBody': 'CodeFly will close and run the installer. Save your work in any running session first.',
+  'update.installNow': 'Install now',
+  'update.failedTitle': 'The update could not be downloaded',
+  'update.tryAgain': 'Try again'
 } as const

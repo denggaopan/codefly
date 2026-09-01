@@ -1258,6 +1258,129 @@ input {
   color: var(--color-text-muted);
 }
 
+/* The in-app download entry point next to the update status line. Unlike the neighbouring
+   inline link (which leaves for the browser) this one acts inside the app, so it is styled
+   as a small button rather than as a hyperlink. */
+.settings-inline-action {
+  border: 1px solid var(--color-accent);
+  border-radius: 6px;
+  padding: 2px 10px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+/* ==========================================================================
+   Update dialog
+   ========================================================================== */
+
+.update-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110; /* Above Settings: the update flow closes it and must not sit behind it. */
+  display: grid;
+  place-items: center;
+  background: rgba(4, 6, 9, 0.55);
+}
+
+.update-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-panel-elevated);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.update-dialog-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: var(--color-text);
+}
+
+.update-dialog-description {
+  margin: 0 0 16px;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.update-dialog-error {
+  color: var(--color-state-destructive);
+}
+
+.update-dialog-progress {
+  margin: 0 0 16px;
+}
+
+.update-progress-track {
+  overflow: hidden;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-panel);
+}
+
+.update-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-accent);
+  transition: width 120ms linear;
+}
+
+/* No Content-Length: the bar sweeps instead of claiming a percentage it does not know. */
+.update-progress-track--indeterminate .update-progress-fill {
+  width: 35%;
+  animation: update-progress-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes update-progress-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(285%);
+  }
+}
+
+.update-dialog-progress-text {
+  margin: 8px 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.update-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.update-dialog-secondary,
+.update-dialog-primary {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  background: var(--color-panel);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+
+.update-dialog-primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-progress-fill {
+    transition: none;
+  }
+
+  .update-progress-track--indeterminate .update-progress-fill {
+    width: 100%;
+    animation: none;
+  }
+}
 
 /* ==========================================================================
    Responsive (Windows desktop only — no mobile navigation mode)

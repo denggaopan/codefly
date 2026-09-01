@@ -36,21 +36,25 @@ npm run package:win   # build + electron-builder 产出 release/ 下的 NSIS 安
 - **WorktreeService**：worktree 创建（`worktree-YYMMDD-N` 命名，写入 `.git/info/exclude` 而非 `.gitignore`）、restore 前校验、删除保护（脏 worktree 阻止删除；**分支永不删除**；从不 `--force`）。非 Git 项目或无 commit 的仓库回退为 ordinary session（直接跑在项目目录）。
 - **SessionStore**：版本化 JSON（Electron `userData/state.json`），写入前经 `appStateSchema` 校验，损坏时带 recoveryWarning 恢复。
 - **TitleService**：首次输入后用独立的非交互 CLI 进程生成标题（15s 超时，中性目录，**绝不带 bypass 旗标**），失败回退本地归一化/截断。标题任务的幂等由持久化的 `titleState: pending→complete` 转移保证，内存 Set 只是快路径。
+- **UpdaterService**：应用内更新下载与安装。`download()` **不接受任何参数**——它自己重新拉一次 latest release 并挑 Windows 安装包（`github-release.ts` 里的 `pickWindowsInstaller` 与 `latestReleaseSchema` 由它和 AppInfoService 共用），renderer 永远无法指定被下载/执行的 URL；只有 https 的 GitHub 域名才会被下载（`isTrustedInstallerUrl`）。流式写 `<userData>/updates/<name>.part`，完成后校验大小再 rename；进度经节流后广播。重复调用 `download()` 复用同一个 in-flight promise；`cancel()` 让它返回 `cancelled`；`install()` 以 detached 方式启动安装包再 `app.quit()`（安装包要覆盖运行中的文件），失败时**不退出**。与 AppInfoService 一样**永不 reject**，所有失败折成结果。
 - **cli-locator**（infrastructure/）：在 PATH 及标准安装位置发现 pwsh/claude/codex/VS Code。
 
 ### 渲染进程（src/renderer/）
 
 - `store/use-app-store.ts`（zustand）：action 调 `window.codefly` 并把返回记录立即合入 appState（返回值就是主进程刚持久化的内容）；`onStateChanged` 广播则整体替换 appState，作为最终事实来源。跨 `ipcRenderer.invoke` 的 rejection 会被 Electron 抹掉子类信息，**只能读 `error.message`，不能按错误类型分支**。
 - `terminal/first-input-tracker.ts`：从 PTY 输入流中剥离 ANSI 转义序列、捕获首行提交文本（用于标题生成），之后纯透传。
-- 组件：`ProjectSidebar`（项目手风琴 + 会话行；状态由标题前的彩色圆点表示，文案只作为圆点的 `aria-label`/`title`，如停止的会话是 "Click to restore"）、`TerminalWorkspace`（xterm 实例管理）、`SessionLauncher`、`ConfirmDialog`。
+- 组件：`ProjectSidebar`（项目手风琴 + 会话行；状态由标题前的彩色圆点表示，文案只作为圆点的 `aria-label`/`title`，如停止的会话是 "Click to restore"）、`TerminalWorkspace`（xterm 实例管理）、`SessionLauncher`、`ConfirmDialog`、`UpdateDialog`。
+- `UpdateDialog` + store 的 `updater` 状态机（`idle → available → downloading → ready`，外加 `error`）：整个更新流程只有这一个界面，启动时的后台检查与 Settings 的手动检查都汇入它。**后台检查静默**——只有 `available` 才会改状态，失败/最新/无发布一律留在 `idle` 且不发 notice。进度事件只在 phase 仍是 `downloading` 且版本相同时合并，避免过期事件把对话框拉回下载态。「稍后更新」只回 `idle`，已下载的安装包留在磁盘由主进程复用。
 - `i18n/`：自建类型安全字典，不引库。`en.ts` 是 key 的唯一来源（`TranslationKey` 由它推导），`zh-CN.ts` 被类型约束为必须全量实现——**新增 UI 文案必须同时加两个字典的 key**，否则编译不过。组件用 `useTranslation()` 取 `t`，纯函数（如 `session-status.ts`、store 的 notice）改为接收 `Translator` 或直接调 `translate(locale, ...)`。语言存 localStorage（与 theme 同源，不进持久化 AppState），**默认 en 且不跟随系统语言**：全部单测与 e2e 都断言英文文案，改默认值会全线挂。
-- `SettingsDialog`：开机自启动 / 会话类型 / 外观 / 语言 / 版本与检查更新 / 关于链接。「会话类型」每种类型两个开关：`enabled`（关闭则不出现在新建菜单）与 `worktree`（开启则额外提供「X (new worktree)」入口）；存 localStorage（key `codefly.sessionKinds`，与 theme/locale 同源，不进持久化 AppState），默认全部启用、shell 的 worktree 关、agent 的 worktree 开（`DEFAULT_SESSION_KIND_PREFERENCES`）。**worktree 选择由创建请求显式携带（`createSessionRequestSchema.worktree`），主进程从不读这份偏好**。版本/更新/关于三块的数据由主进程 `AppInfoService` 提供，对话框每次打开时重新拉取；外链只接受 `shared/links.ts` 里的三个具名 target，URL 由主进程查表得到，renderer 不能让它打开任意地址。
+- `SettingsDialog`：开机自启动 / 会话类型 / 外观 / 语言 / 版本与检查更新 / 关于链接。「会话类型」每种类型两个开关：`enabled`（关闭则不出现在新建菜单）与 `worktree`（开启则额外提供「X (new worktree)」入口）；存 localStorage（key `codefly.sessionKinds`，与 theme/locale 同源，不进持久化 AppState），默认全部启用、shell 的 worktree 关、agent 的 worktree 开（`DEFAULT_SESSION_KIND_PREFERENCES`）。**worktree 选择由创建请求显式携带（`createSessionRequestSchema.worktree`），主进程从不读这份偏好**。版本/更新/关于三块的数据由主进程 `AppInfoService` 提供，对话框每次打开时重新拉取；外链只接受 `shared/links.ts` 里的三个具名 target，URL 由主进程查表得到，renderer 不能让它打开任意地址。检查结果带 `asset`（该 release 确实发布了 Windows 安装包）时才出现「Update now」，它把版本交给 store 并立刻开始下载、关闭设置框，由 `UpdateDialog` 接手。
 
 ### 关键产品约定（改动前先读 README.md 对应章节）
 
 - 交互式 Claude/Codex 会话固定携带 `--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox`，运行期间终端头部持续显示 bypass 警告；本版本无关闭开关。
 - 新建会话菜单的条目由 Settings 的「会话类型」开关决定：关闭的类型完全不出现（全部关闭时显示空态文案），开启 worktree 的类型有两个条目（普通 = 跑在项目目录，「(new worktree)」= 独立 worktree + 同名分支）。CLI 缺失是另一回事——条目仍在，只是 disabled 并附查找说明。
 - 应用启动时所有会话一律标记为 `stopped`；点击恢复在原目录重启同类型 CLI 并续接上次对话（见 TerminalService 的 resume 参数）。
+- 应用启动时后台检查一次更新：只有确实有新版本才弹 `UpdateDialog`，失败/最新/无发布全部静默。「立即更新」在应用内下载安装包（进度可见、可取消），完成后再问一次「立即安装 / 稍后」；「立即安装」= 启动安装包并退出应用。
+- e2e 的更新用例另起一个 Electron 实例（启动检查每次启动只跑一次，模态框会挡住共用窗口的其它用例），用 `CODEFLY_E2E_RELEASE` 离线提供一个 release、`CODEFLY_E2E_INSTALL_LOG` 记录本该被执行的安装包路径；**磁盘写入是真的**（写进套件自己的 user-data 目录），只有网络与 spawn 被替换。
 - e2e 断言了 Claude/Codex 收到的**精确 argv**、标题进程不带 bypass 旗标、worktree 序号（Claude=1、Codex=2、手动开启开关后的 cmd=3；PowerShell 是 ordinary）、会话类型开关的增删条目与重启存活、重启持久化、脏 worktree 删除保护等——改这些行为必须同步改 `e2e/codefly.spec.ts`。
 
 ## 测试约定

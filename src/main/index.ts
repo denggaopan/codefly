@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
@@ -21,6 +22,12 @@ import {
   type TitleAdapter,
   type TitleProcessSpawner
 } from './services/title-service'
+import {
+  UpdaterService,
+  type FetchLike as UpdaterFetchLike,
+  type InstallerSpawner,
+  type UpdaterFileSystem
+} from './services/updater-service'
 import { WorktreeService } from './services/worktree-service'
 import { applyWindowTheme, createMainWindow } from './window'
 
@@ -108,13 +115,70 @@ const buildE2EExternalAppService = (): ExternalAppService =>
     async () => ''
   )
 
+/**
+ * An offline stand-in for one published GitHub release, supplied by the E2E suite as JSON in
+ * CODEFLY_E2E_RELEASE. Without it the release endpoint answers 404 — what that endpoint
+ * really returns for this repository today — and the suite exercises the "no release" path.
+ * With it, the whole update journey runs against the real services: the real SemVer
+ * comparison, the real asset picker and host allowlist, and a real streamed write into the
+ * suite's own user-data directory. Only the network and the installer process are replaced.
+ */
+type E2EReleaseFixture = {
+  release: unknown
+  installerUrl: string
+  installerBytes: number
+  installLog: string | undefined
+}
+
+const readE2EReleaseFixture = (): E2EReleaseFixture | undefined => {
+  const raw = process.env.CODEFLY_E2E_RELEASE
+  if (!raw) return undefined
+
+  const release = JSON.parse(raw) as { assets?: ReadonlyArray<{ browser_download_url?: string; size?: number }> }
+  const asset = release.assets?.[0]
+  if (!asset?.browser_download_url) return undefined
+
+  return {
+    release,
+    installerUrl: asset.browser_download_url,
+    installerBytes: asset.size ?? 0,
+    installLog: process.env.CODEFLY_E2E_INSTALL_LOG
+  }
+}
+
+const e2eReleaseFixture = isE2E ? readE2EReleaseFixture() : undefined
+
+const RELEASE_NOT_FOUND = { ok: false, status: 404, json: async () => null }
+
+// Splits the two requests the update flow makes: the release metadata, and the installer
+// itself. The installer body is yielded in chunks so the throttled progress reporting and the
+// renderer's progress bar are both exercised, not short-circuited by a single frame.
+const buildE2EReleaseFetch = (fixture: E2EReleaseFixture): UpdaterFetchLike => {
+  const CHUNK_BYTES = 64 * 1024
+
+  return async (url) => {
+    if (url !== fixture.installerUrl) return { ok: true, status: 200, json: async () => fixture.release }
+
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: (name) => (name.toLowerCase() === 'content-length' ? String(fixture.installerBytes) : null) },
+      json: async () => null,
+      body: (async function* () {
+        for (let sent = 0; sent < fixture.installerBytes; sent += CHUNK_BYTES) {
+          yield new Uint8Array(Math.min(CHUNK_BYTES, fixture.installerBytes - sent)).fill(0x41)
+        }
+      })()
+    }
+  }
+}
+
 const buildE2EAppInfoService = (): AppInfoService =>
   new AppInfoService(
     () => app.getVersion(),
-    // Offline stand-in for the GitHub releases API. 404 is what that endpoint really answers
-    // for this repository today, so the production mapping (404 -> `none`) is still the code
-    // path under test; only the network round trip is removed.
-    async () => ({ ok: false, status: 404, json: async () => null }),
+    e2eReleaseFixture
+      ? async () => ({ ok: true, status: 200, json: async () => e2eReleaseFixture.release })
+      : async () => RELEASE_NOT_FOUND,
     async () => {
       // Mocked launch: E2E asserts the Settings action fires, never that a real browser opens.
     },
@@ -129,6 +193,48 @@ const buildE2EAppInfoService = (): AppInfoService =>
       }
     })()
   )
+
+// An updater that cannot reach the network, the disk, or a child process: with no release
+// fixture the E2E suite must not be able to download a real installer or launch one. The 404
+// stand-in stops the flow where production would when no release exists, so the renderer's
+// "no update available" path is still the code path under test.
+const buildE2EUpdaterService = (fixture: E2EReleaseFixture | undefined): UpdaterService => {
+  const unusableFileSystem: UpdaterFileSystem = {
+    ensureDirectory: async () => undefined,
+    fileSize: async () => undefined,
+    openWriteStream: async () => {
+      throw new Error('The E2E updater never writes to disk.')
+    },
+    rename: async () => undefined,
+    remove: async () => undefined
+  }
+
+  // Records the installer path the service would have executed. The real spawn is the one
+  // thing this flow cannot rehearse — running an installer would modify the machine — so it
+  // is replaced by the smallest possible observable side effect.
+  const recordingSpawner: InstallerSpawner = (file) => {
+    if (fixture?.installLog) writeFileSync(fixture.installLog, file, 'utf8')
+    return { unref: () => undefined }
+  }
+
+  return new UpdaterService(
+    () => app.getVersion(),
+    fixture ? buildE2EReleaseFetch(fixture) : async () => RELEASE_NOT_FOUND,
+    () => app.getPath('userData'),
+    // With a fixture the real filesystem is used, against the suite's own --user-data-dir:
+    // the streamed write, the size check, and the .part rename are all real.
+    fixture ? undefined : unusableFileSystem,
+    fixture
+      ? recordingSpawner
+      : () => {
+          throw new Error('The E2E updater never launches an installer.')
+        },
+    () => {
+      // Mocked quit: the suite drives the window lifecycle itself, and quitting here would
+      // tear down the window mid-assertion.
+    }
+  )
+}
 
 const buildE2EDialog = (projectPath: string | undefined): Dialog =>
   ({
@@ -151,6 +257,7 @@ app.whenReady().then(() => {
     : new TitleService()
   const externalAppService = isE2E ? buildE2EExternalAppService() : new ExternalAppService()
   const appInfoService = isE2E ? buildE2EAppInfoService() : new AppInfoService()
+  const updaterService = isE2E ? buildE2EUpdaterService(e2eReleaseFixture) : new UpdaterService()
   const dialogForIpc = isE2E ? buildE2EDialog(process.env.CODEFLY_E2E_PROJECT) : dialog
 
   const coordinator = new SessionCoordinator(store, projectService, worktreeService, terminalService, titleService)
@@ -165,6 +272,7 @@ app.whenReady().then(() => {
     coordinator,
     externalAppService,
     appInfoService,
+    updaterService,
     terminalService,
     getSnapshot: buildGetSnapshot(coordinator, externalAppService, agentLocator, store),
     applyTheme: (theme) => applyWindowTheme(window, theme)

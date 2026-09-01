@@ -11,6 +11,9 @@ export const IPC = {
   themeSet: 'theme:set',
   appInfoGet: 'app:info',
   appUpdateCheck: 'app:update-check',
+  appUpdateDownload: 'app:update-download',
+  appUpdateCancel: 'app:update-cancel',
+  appUpdateInstall: 'app:update-install',
   appOpenLink: 'app:open-link',
   appAutoLaunchGet: 'app:auto-launch-get',
   appAutoLaunchSet: 'app:auto-launch-set',
@@ -18,5 +21,6 @@ export const IPC = {
   terminalResize: 'terminal:resize',
   stateChanged: 'state:changed',
   terminalData: 'terminal:data',
-  terminalExit: 'terminal:exit'
+  terminalExit: 'terminal:exit',
+  appUpdateProgress: 'app:update-progress'
 } as const

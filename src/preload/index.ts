@@ -9,7 +9,10 @@ import type {
   SessionKind,
   SessionRecord,
   ThemePreference,
-  UpdateCheckResult
+  UpdateCheckResult,
+  UpdateDownloadProgress,
+  UpdateDownloadResult,
+  UpdateInstallResult
 } from '../shared/contracts'
 import { IPC } from '../shared/ipc'
 import type { ExternalLinkTarget } from '../shared/links'
@@ -27,6 +30,11 @@ export type CodeFlyApi = {
   setTheme(theme: ThemePreference): Promise<void>
   getAppInfo(): Promise<AppInfo>
   checkForUpdates(): Promise<UpdateCheckResult>
+  // No parameters by design: the main process re-resolves the release asset itself, so the
+  // renderer can never name the URL that gets downloaded and executed.
+  downloadUpdate(): Promise<UpdateDownloadResult>
+  cancelUpdateDownload(): Promise<void>
+  installUpdate(): Promise<UpdateInstallResult>
   openExternalLink(target: ExternalLinkTarget): Promise<void>
   getAutoLaunch(): Promise<boolean>
   setAutoLaunch(enabled: boolean): Promise<boolean>
@@ -35,6 +43,7 @@ export type CodeFlyApi = {
   onStateChanged(listener: (state: AppState) => void): () => void
   onTerminalData(listener: (event: { sessionId: string; data: string }) => void): () => void
   onTerminalExit(listener: (event: { sessionId: string; exitCode: number }) => void): () => void
+  onUpdateProgress(listener: (progress: UpdateDownloadProgress) => void): () => void
 }
 
 // Every method here is a thin bridge over ipcRenderer: no Node APIs, filesystem paths,
@@ -53,6 +62,9 @@ const api: CodeFlyApi = {
   setTheme: (theme) => ipcRenderer.invoke(IPC.themeSet, { theme }),
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfoGet),
   checkForUpdates: () => ipcRenderer.invoke(IPC.appUpdateCheck),
+  downloadUpdate: () => ipcRenderer.invoke(IPC.appUpdateDownload),
+  cancelUpdateDownload: () => ipcRenderer.invoke(IPC.appUpdateCancel),
+  installUpdate: () => ipcRenderer.invoke(IPC.appUpdateInstall),
   openExternalLink: (target) => ipcRenderer.invoke(IPC.appOpenLink, { target }),
   getAutoLaunch: () => ipcRenderer.invoke(IPC.appAutoLaunchGet),
   setAutoLaunch: (enabled) => ipcRenderer.invoke(IPC.appAutoLaunchSet, { enabled }),
@@ -83,6 +95,13 @@ const api: CodeFlyApi = {
     ipcRenderer.on(IPC.terminalExit, wrapped)
     return () => {
       ipcRenderer.removeListener(IPC.terminalExit, wrapped)
+    }
+  },
+  onUpdateProgress: (listener) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: UpdateDownloadProgress): void => listener(payload)
+    ipcRenderer.on(IPC.appUpdateProgress, wrapped)
+    return () => {
+      ipcRenderer.removeListener(IPC.appUpdateProgress, wrapped)
     }
   }
 }

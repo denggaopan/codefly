@@ -19,6 +19,20 @@ export type Notice = {
   tone: 'error' | 'info'
 }
 
+/**
+ * The in-app update flow, from "a newer release exists" to "the installer is on disk".
+ * `idle` is the resting state and the only one that renders no dialog, so every terminal
+ * outcome — declined, cancelled, or installed — comes back here. `downloadable` is false
+ * when the release publishes no Windows installer: the only thing left to offer is the
+ * download page.
+ */
+export type UpdaterState =
+  | { phase: 'idle' }
+  | { phase: 'available'; version: string; downloadable: boolean }
+  | { phase: 'downloading'; version: string; receivedBytes: number; totalBytes: number }
+  | { phase: 'ready'; version: string }
+  | { phase: 'error'; version: string; message: string }
+
 export type AppStore = {
   appState: AppState
   capabilities: CapabilityState
@@ -33,9 +47,18 @@ export type AppStore = {
   locale: Locale
   /** Which kinds the New session launcher lists, and which of them offer a worktree entry. */
   sessionKindPreferences: SessionKindPreferences
+  /** Drives UpdateDialog; `idle` renders nothing at all. */
+  updater: UpdaterState
 
   initialize: () => () => void
   reset: () => void
+
+  checkForUpdatesInBackground: () => Promise<void>
+  beginUpdate: (version: string, downloadable: boolean) => void
+  startUpdateDownload: () => Promise<void>
+  cancelUpdateDownload: () => Promise<void>
+  installUpdate: () => Promise<void>
+  dismissUpdate: () => void
 
   setTheme: (theme: ThemePreference) => void
   setLocale: (locale: Locale) => void
@@ -240,6 +263,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
     theme: 'dark',
     locale: DEFAULT_LOCALE,
     sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES,
+    updater: { phase: 'idle' },
 
     initialize: () => {
       set({ sessionKindPreferences: readStoredSessionKindPreferences() })
@@ -277,11 +301,33 @@ export const useAppStore = create<AppStore>()((set, get) => {
       const disposeExit = window.codefly.onTerminalExit(({ sessionId }) => {
         unmarkIdle(sessionId)
       })
+      // Progress is only merged while this store still believes that exact version is
+      // downloading, so an event that arrives after a cancel, a failure, or a completion
+      // cannot drag the dialog back into the downloading phase.
+      const disposeUpdateProgress = window.codefly.onUpdateProgress((progress) => {
+        set((state) =>
+          state.updater.phase === 'downloading' && state.updater.version === progress.version
+            ? {
+                updater: {
+                  phase: 'downloading',
+                  version: progress.version,
+                  receivedBytes: progress.receivedBytes,
+                  totalBytes: progress.totalBytes
+                }
+              }
+            : {}
+        )
+      })
+
+      // Fire-and-forget: a startup check that finds nothing, fails, or cannot reach the
+      // network must leave the app exactly as quiet as it would have been without it.
+      void get().checkForUpdatesInBackground()
 
       return () => {
         disposeState()
         disposeData()
         disposeExit()
+        disposeUpdateProgress()
         clearAllIdleTimers()
       }
     },
@@ -299,9 +345,78 @@ export const useAppStore = create<AppStore>()((set, get) => {
         idleAgentSessionIds: {},
         theme: 'dark',
         locale: DEFAULT_LOCALE,
-        sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES
+        sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES,
+        updater: { phase: 'idle' }
       })
     },
+
+    // A background check is allowed exactly one outcome that the user can see: a newer
+    // version exists. Up-to-date, no releases, a network failure, and a rejected invoke all
+    // leave the updater idle and silent — unlike Settings' explicit check, nobody asked.
+    checkForUpdatesInBackground: async () => {
+      try {
+        const result = await window.codefly.checkForUpdates()
+        if (result.status !== 'available') return
+        set({ updater: { phase: 'available', version: result.latestVersion, downloadable: result.asset !== undefined } })
+      } catch {
+        // Silent by design.
+      }
+    },
+
+    // Settings has just run its own check, so it hands the outcome over rather than making
+    // the dialog repeat the round trip.
+    beginUpdate: (version, downloadable) => set({ updater: { phase: 'available', version, downloadable } }),
+
+    startUpdateDownload: async () => {
+      const current = get().updater
+      // Nothing to download from a resting dialog, and a second call while bytes are already
+      // moving would only reset the progress the main process is still reporting.
+      if (current.phase === 'idle' || current.phase === 'downloading') return
+      const { version } = current
+
+      set({ updater: { phase: 'downloading', version, receivedBytes: 0, totalBytes: 0 } })
+      try {
+        const result = await window.codefly.downloadUpdate()
+        if (result.status === 'ready') {
+          set({ updater: { phase: 'ready', version: result.version } })
+        } else if (result.status === 'cancelled') {
+          set({ updater: { phase: 'idle' } })
+        } else {
+          set({ updater: { phase: 'error', version, message: result.message } })
+        }
+      } catch (error) {
+        set({ updater: { phase: 'error', version, message: errorMessage(error, get().locale) } })
+      }
+    },
+
+    // The in-flight downloadUpdate() call is what reports the outcome (`cancelled`), so this
+    // only asks; setting a phase here would race that answer.
+    cancelUpdateDownload: async () => {
+      try {
+        await window.codefly.cancelUpdateDownload()
+      } catch {
+        // The download simply keeps going, and its own result still lands.
+      }
+    },
+
+    installUpdate: async () => {
+      const current = get().updater
+      if (current.phase === 'idle') return
+      const { version } = current
+
+      try {
+        const result = await window.codefly.installUpdate()
+        // `launched` means the app is already quitting: leaving the dialog as it is avoids a
+        // flash of some other state during teardown.
+        if (result.status === 'error') set({ updater: { phase: 'error', version, message: result.message } })
+      } catch (error) {
+        set({ updater: { phase: 'error', version, message: errorMessage(error, get().locale) } })
+      }
+    },
+
+    // "Later" in every phase. A downloaded installer is deliberately left on disk: the main
+    // process reuses it, so choosing to update again skips straight to the install prompt.
+    dismissUpdate: () => set({ updater: { phase: 'idle' } }),
 
     setTheme: (theme) => {
       set({ theme })

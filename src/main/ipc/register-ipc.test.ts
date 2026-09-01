@@ -1,7 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
-import type { AppInfo, AppSnapshot, AppState, DeleteSessionResult, ProjectRecord, SessionRecord, UpdateCheckResult } from '../../shared/contracts'
+import type {
+  AppInfo,
+  AppSnapshot,
+  AppState,
+  DeleteSessionResult,
+  ProjectRecord,
+  SessionRecord,
+  UpdateCheckResult,
+  UpdateDownloadProgress,
+  UpdateDownloadResult,
+  UpdateInstallResult
+} from '../../shared/contracts'
 import { IPC } from '../../shared/ipc'
 import { EXTERNAL_LINKS } from '../../shared/links'
 import { ProjectNotFoundError, type ProjectService } from '../services/project-service'
@@ -9,6 +20,7 @@ import { SessionNotFoundError, type SessionCoordinator } from '../services/sessi
 import type { AppInfoService } from '../services/app-info-service'
 import type { ExternalAppService } from '../services/external-app-service'
 import type { TerminalService } from '../services/terminal-service'
+import type { UpdaterService } from '../services/updater-service'
 import { registerIpc } from './register-ipc'
 
 type Listener = (event: unknown, payload?: unknown) => unknown
@@ -120,6 +132,28 @@ class FakeTerminalService {
   }
 }
 
+class FakeUpdaterService {
+  readonly download = vi.fn(async (): Promise<UpdateDownloadResult> => ({ status: 'cancelled' }))
+  readonly cancel = vi.fn(async () => undefined)
+  readonly install = vi.fn(async (): Promise<UpdateInstallResult> => ({ status: 'launched' }))
+  private readonly listeners = new Set<(progress: UpdateDownloadProgress) => void>()
+
+  onProgress(listener: (progress: UpdateDownloadProgress) => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  emitProgress(progress: UpdateDownloadProgress): void {
+    for (const listener of [...this.listeners]) listener(progress)
+  }
+
+  listenerCount(): number {
+    return this.listeners.size
+  }
+}
+
 const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
 
 const capabilities = (): AppSnapshot['capabilities'] => ({
@@ -161,6 +195,7 @@ type Harness = {
     autoLaunch: ReturnType<typeof vi.fn>
     setAutoLaunch: ReturnType<typeof vi.fn>
   }
+  updaterService: FakeUpdaterService
   terminalService: FakeTerminalService
   getSnapshot: ReturnType<typeof vi.fn>
   applyTheme: ReturnType<typeof vi.fn>
@@ -186,6 +221,7 @@ const buildHarness = (options: {
     autoLaunch: vi.fn(() => false),
     setAutoLaunch: vi.fn((enabled: boolean) => enabled)
   }
+  const updaterService = new FakeUpdaterService()
   const terminalService = new FakeTerminalService()
   const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ state: emptyState(), capabilities: capabilities() }))
   const applyTheme = vi.fn()
@@ -198,6 +234,7 @@ const buildHarness = (options: {
     coordinator: coordinator as unknown as SessionCoordinator,
     externalAppService: externalAppService as unknown as ExternalAppService,
     appInfoService: appInfoService as unknown as AppInfoService,
+    updaterService: updaterService as unknown as UpdaterService,
     terminalService: terminalService as unknown as TerminalService,
     getSnapshot,
     applyTheme
@@ -211,6 +248,7 @@ const buildHarness = (options: {
     coordinator,
     externalAppService,
     appInfoService,
+    updaterService,
     terminalService,
     getSnapshot,
     applyTheme,
@@ -473,6 +511,52 @@ describe('registerIpc: app:update-check', () => {
   })
 })
 
+describe('registerIpc: app:update-download / app:update-cancel / app:update-install', () => {
+  it('starts a download with no renderer-supplied payload and returns the result verbatim', async () => {
+    const { ipcMain, updaterService } = buildHarness()
+    const result: UpdateDownloadResult = { status: 'ready', version: '0.5.0', fileName: 'CodeFly-Setup-0.5.0-win-x64.exe' }
+    updaterService.download.mockResolvedValue(result)
+
+    await expect(ipcMain.invoke(IPC.appUpdateDownload)).resolves.toEqual(result)
+    expect(updaterService.download).toHaveBeenCalledWith()
+  })
+
+  it('ignores anything the renderer sends alongside the command, so it can never name a URL', async () => {
+    const { ipcMain, updaterService } = buildHarness()
+
+    await ipcMain.invoke(IPC.appUpdateDownload, { url: 'https://evil.invalid/payload.exe' })
+
+    expect(updaterService.download).toHaveBeenCalledWith()
+  })
+
+  it('cancels the running download', async () => {
+    const { ipcMain, updaterService } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.appUpdateCancel)).resolves.toBeUndefined()
+    expect(updaterService.cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the install result verbatim', async () => {
+    const { ipcMain, updaterService } = buildHarness()
+    const result: UpdateInstallResult = { status: 'error', message: 'Could not start the installer: EACCES' }
+    updaterService.install.mockResolvedValue(result)
+
+    await expect(ipcMain.invoke(IPC.appUpdateInstall)).resolves.toEqual(result)
+  })
+
+  it.each([IPC.appUpdateDownload, IPC.appUpdateCancel, IPC.appUpdateInstall])(
+    'rejects %s from webContents other than the owning window',
+    async (channel) => {
+      const { ipcMain, updaterService } = buildHarness()
+
+      await expect(ipcMain.invokeFrom({}, channel)).rejects.toThrow(/unauthorized ipc sender/i)
+      expect(updaterService.download).not.toHaveBeenCalled()
+      expect(updaterService.cancel).not.toHaveBeenCalled()
+      expect(updaterService.install).not.toHaveBeenCalled()
+    }
+  )
+})
+
 describe('registerIpc: app:open-link', () => {
   it('parses the target and delegates to AppInfoService.openLink', async () => {
     const { ipcMain, appInfoService } = buildHarness()
@@ -638,6 +722,23 @@ describe('registerIpc: event publication', () => {
 
     expect(window.webContents.send).not.toHaveBeenCalled()
   })
+
+  it('publishes download progress only to a non-destroyed window', () => {
+    const { window, updaterService } = buildHarness({ windowDestroyed: false })
+    const progress: UpdateDownloadProgress = { version: '0.5.0', receivedBytes: 512, totalBytes: 2048 }
+
+    updaterService.emitProgress(progress)
+
+    expect(window.webContents.send).toHaveBeenCalledWith(IPC.appUpdateProgress, progress)
+  })
+
+  it('does not publish download progress when the window webContents is destroyed', () => {
+    const { window, updaterService } = buildHarness({ windowDestroyed: true })
+
+    updaterService.emitProgress({ version: '0.5.0', receivedBytes: 512, totalBytes: 2048 })
+
+    expect(window.webContents.send).not.toHaveBeenCalled()
+  })
 })
 
 describe('registerIpc: disposer', () => {
@@ -659,6 +760,9 @@ describe('registerIpc: disposer', () => {
       IPC.themeSet,
       IPC.appInfoGet,
       IPC.appUpdateCheck,
+      IPC.appUpdateDownload,
+      IPC.appUpdateCancel,
+      IPC.appUpdateInstall,
       IPC.appOpenLink,
       IPC.appAutoLaunchGet,
       IPC.appAutoLaunchSet
@@ -676,16 +780,18 @@ describe('registerIpc: disposer', () => {
     expect(ipcMain.listeners.get(IPC.terminalResize)?.size ?? 0).toBe(0)
   })
 
-  it('unsubscribes from coordinator state changes and terminal events so nothing is published afterwards', () => {
-    const { window, coordinator, terminalService, dispose } = buildHarness({ windowDestroyed: false })
+  it('unsubscribes from coordinator state changes, terminal events, and download progress so nothing is published afterwards', () => {
+    const { window, coordinator, terminalService, updaterService, dispose } = buildHarness({ windowDestroyed: false })
 
     dispose()
     coordinator.emitState(emptyState())
     terminalService.emitData({ sessionId: 'session-1', data: 'output' })
     terminalService.emitExit({ sessionId: 'session-1', exitCode: 0 })
+    updaterService.emitProgress({ version: '0.5.0', receivedBytes: 1, totalBytes: 2 })
 
     expect(window.webContents.send).not.toHaveBeenCalled()
     expect(coordinator.listenerCount()).toBe(0)
     expect(terminalService.listenerCounts()).toEqual({ data: 0, exit: 0 })
+    expect(updaterService.listenerCount()).toBe(0)
   })
 })
