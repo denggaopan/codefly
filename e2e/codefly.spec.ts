@@ -78,6 +78,19 @@ const readJsonArgvLog = (path: string): unknown => JSON.parse(readFileSync(path,
 const sessionRowByKind = (kind: 'powershell' | 'cmd' | 'claude' | 'codex') =>
   window.locator('.session-row', { has: window.locator(`.session-kind-icon[data-kind="${kind}"]`) })
 
+const projectOptionsTrigger = () => window.getByRole('button', { name: /^Project options for / })
+
+const openProjectOptions = async () => {
+  await projectOptionsTrigger().click()
+  return window.getByRole('menu', { name: /^Project options for / })
+}
+
+const openNewSessionLauncher = async () => {
+  const menu = await openProjectOptions()
+  await menu.getByRole('menuitem', { name: 'New session' }).click()
+  return window.locator('.session-launcher')
+}
+
 // The bypass disclosure is a single compact badge in the active session's terminal header
 // (TerminalWorkspace.tsx's TerminalHeader). Every session that has ever been made active
 // keeps its terminal pane — and thus its header — mounted in the DOM, just hidden
@@ -137,8 +150,8 @@ test('adds the fixture project and creates a Claude session as the first worktre
   await window.getByRole('button', { name: 'Add Project' }).click()
   await expect(window.locator('[data-project-row]')).toHaveCount(1, { timeout: 20_000 })
 
-  await window.getByRole('button', { name: 'New session' }).click()
-  await window.locator('.session-launcher').getByRole('button', { name: 'Claude', exact: true }).click()
+  const launcher = await openNewSessionLauncher()
+  await launcher.getByRole('button', { name: 'Claude', exact: true }).click()
 
   const claudeRow = sessionRowByKind('claude')
   await expect(claudeRow).toHaveCount(1, { timeout: 20_000 })
@@ -175,14 +188,49 @@ test('keeps the terminal workflow usable at the 900 by 600 minimum window size',
   expect(size[1]).toBeGreaterThanOrEqual(600)
   expect(size[1]).toBeLessThanOrEqual(602)
 
-  await expect(window.getByRole('button', { name: 'Open project in VS Code' })).toBeVisible()
-  await expect(window.getByRole('button', { name: 'Open project folder' })).toBeVisible()
-  await expect(window.getByRole('button', { name: 'New session' })).toBeVisible()
+  await expect(projectOptionsTrigger()).toHaveCount(1)
+  await expect(projectOptionsTrigger()).toBeVisible()
+  await expect(window.getByRole('button', { name: 'New session' })).toHaveCount(0)
+  await expect(window.getByRole('button', { name: 'Open project in VS Code' })).toHaveCount(0)
+  await expect(window.getByRole('button', { name: 'Open project folder' })).toHaveCount(0)
   await expect(window.locator('.terminal-pane:visible .terminal-instance-host')).toBeVisible()
   await expect(visibleBypassWarnings()).toHaveText([BYPASS_WARNING_TEXT])
 
-  await window.getByRole('button', { name: 'New session' }).click()
-  const launcher = window.locator('.session-launcher')
+  const optionsMenu = await openProjectOptions()
+  await expect(optionsMenu.getByRole('menuitem')).toHaveCount(3)
+  expect(await optionsMenu.evaluate((element) => getComputedStyle(element).position)).toBe('absolute')
+  const darkMenuBackground = await optionsMenu.evaluate((element) => getComputedStyle(element).backgroundColor)
+  const [menuBounds, menuViewport] = await Promise.all([
+    optionsMenu.boundingBox(),
+    window.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+  ])
+  expect(menuBounds).not.toBeNull()
+  expect(menuBounds!.x).toBeGreaterThanOrEqual(0)
+  expect(menuBounds!.y).toBeGreaterThanOrEqual(0)
+  expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(menuViewport.width)
+  expect(menuBounds!.y + menuBounds!.height).toBeLessThanOrEqual(menuViewport.height)
+
+  await window.keyboard.press('Escape')
+  await expect(optionsMenu).toHaveCount(0)
+  await expect(projectOptionsTrigger()).toBeFocused()
+
+  const settingsTrigger = window.getByRole('button', { name: 'Settings' })
+  await settingsTrigger.click()
+  const settingsDialog = window.getByRole('dialog', { name: 'Settings' })
+  await settingsDialog.getByRole('button', { name: 'Light' }).click()
+  await settingsDialog.getByRole('button', { name: 'Close settings' }).click()
+
+  const lightOptionsMenu = await openProjectOptions()
+  const lightMenuBackground = await lightOptionsMenu.evaluate((element) => getComputedStyle(element).backgroundColor)
+  expect(lightMenuBackground).not.toBe(darkMenuBackground)
+  await window.keyboard.press('Escape')
+
+  await settingsTrigger.click()
+  await settingsDialog.getByRole('button', { name: 'Dark' }).click()
+  await expect(window.locator('html')).toHaveAttribute('data-theme', 'dark')
+  await window.keyboard.press('Escape')
+
+  const launcher = await openNewSessionLauncher()
   await expect(launcher).toBeVisible()
   const [bounds, viewport] = await Promise.all([
     launcher.boundingBox(),
@@ -220,8 +268,8 @@ test('submitting the first input replaces the title and never leaks a bypass fla
 })
 
 test('creates a Codex session as the second worktree, receiving exactly its own bypass flag', async () => {
-  await window.getByRole('button', { name: 'New session' }).click()
-  await window.locator('.session-launcher').getByRole('button', { name: 'Codex', exact: true }).click()
+  const launcher = await openNewSessionLauncher()
+  await launcher.getByRole('button', { name: 'Codex', exact: true }).click()
 
   const codexRow = sessionRowByKind('codex')
   await expect(codexRow).toHaveCount(1, { timeout: 20_000 })
@@ -235,8 +283,8 @@ test('creates a Codex session as the second worktree, receiving exactly its own 
 })
 
 test('creates PowerShell and Command Prompt sessions with the bypass warning absent', async () => {
-  await window.getByRole('button', { name: 'New session' }).click()
-  await window.locator('.session-launcher').getByRole('button', { name: 'PowerShell', exact: true }).click()
+  const powershellLauncher = await openNewSessionLauncher()
+  await powershellLauncher.getByRole('button', { name: 'PowerShell', exact: true }).click()
   const powershellRow = sessionRowByKind('powershell')
   await expect(powershellRow).toHaveCount(1, { timeout: 20_000 })
   await expect(powershellRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
@@ -260,8 +308,8 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   expect(Math.abs(screenBox!.y - hostBox!.y)).toBeLessThan(16)
   expect(screenBox!.y + screenBox!.height).toBeLessThanOrEqual(hostBox!.y + hostBox!.height + 2)
 
-  await window.getByRole('button', { name: 'New session' }).click()
-  await window.locator('.session-launcher').getByRole('button', { name: 'Command Prompt', exact: true }).click()
+  const cmdLauncher = await openNewSessionLauncher()
+  await cmdLauncher.getByRole('button', { name: 'Command Prompt', exact: true }).click()
   const cmdRow = sessionRowByKind('cmd')
   await expect(cmdRow).toHaveCount(1, { timeout: 20_000 })
   await expect(cmdRow.locator('.session-status')).toHaveText('Running', { timeout: 20_000 })
@@ -305,12 +353,14 @@ test('mocked VS Code and Explorer project-row actions do not toggle the row or c
   const sessionRowCount = await window.locator('.session-row').count()
   expect(sessionRowCount).toBeGreaterThan(0)
 
-  await window.getByRole('button', { name: 'Open project in VS Code' }).click()
+  const vscodeMenu = await openProjectOptions()
+  await vscodeMenu.getByRole('menuitem', { name: 'Open project in VS Code' }).click()
   await expect(window.locator('.sidebar-notice')).toHaveCount(0)
   await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
   await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveAttribute('data-kind', activeKindBefore!)
 
-  await window.getByRole('button', { name: 'Open project folder' }).click()
+  const explorerMenu = await openProjectOptions()
+  await explorerMenu.getByRole('menuitem', { name: 'Open project folder' }).click()
   await expect(window.locator('.sidebar-notice')).toHaveCount(0)
   await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
   await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveAttribute('data-kind', activeKindBefore!)

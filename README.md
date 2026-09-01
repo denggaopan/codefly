@@ -23,7 +23,7 @@ Built with Electron, React, TypeScript, xterm.js, and node-pty.
   detects them on `PATH` at startup; a missing or unauthenticated CLI leaves its launcher
   entry visible but disabled, with an installation hint.
 - Optional: [Visual Studio Code](https://code.visualstudio.com/) (or its `code` command on
-  `PATH`) to use the project row's "Open in VS Code" action.
+  `PATH`) to use “Open project in VS Code” from a project's options menu.
 
 ## Getting started
 
@@ -110,12 +110,13 @@ Title generation never delays your terminal input.
 
 ## Visual Studio Code and File Explorer
 
-A project row's Visual Studio Code and folder icons always open the project's **original,
-user-selected directory** — never a session's worktree — and never change which session is
-active or expand/collapse the row. Visual Studio Code is discovered via the `code` command
-on `PATH`, then the standard per-user and machine-wide install locations; if none is found,
-the action is disabled with an install hint. The folder action opens the directory in Windows
-File Explorer via `shell.openPath` and has no such dependency.
+A project's options menu contains its Visual Studio Code and folder actions. Both always
+open the project's **original, user-selected directory** — never a session's worktree — and
+never change which session is active or expand/collapse the row. Visual Studio Code is
+discovered via the `code` command on `PATH`, then the standard per-user and machine-wide
+install locations; if none is found, the menu item is disabled with an install hint. The
+folder action opens the directory in Windows File Explorer via `shell.openPath` and has no
+such dependency.
 
 ## Persistence
 
@@ -175,7 +176,7 @@ CLIs:
 - If the separate title-generation process is unavailable or fails, the session still gets a
   usable local/fallback title rather than getting stuck on the placeholder.
 - PowerShell and Command Prompt sessions work normally.
-- The Visual Studio Code and File Explorer project-row actions work against a real VS Code
-  install.
+- The Visual Studio Code and File Explorer project-options actions work against a real VS
+  Code install.
 - Project paths containing spaces and paths containing Chinese characters work correctly
   end to end (add project, create a worktree session, delete it).
