@@ -274,6 +274,49 @@ test('keeps the terminal workflow usable at the 900 by 600 minimum window size',
   await window.keyboard.press('Escape')
   await expect(lowerRowOptionsMenu).toHaveCount(0)
   await projectGroup.evaluate((element) => element.style.removeProperty('margin-top'))
+
+  const scrollDismissMenu = await openProjectOptions()
+  const scrollState = await projectGroup.evaluate((element) => {
+    const scrollport = element.closest<HTMLElement>('.project-groups')
+    const row = element.querySelector<HTMLElement>('[data-project-row]')
+    const trigger = element.querySelector<HTMLElement>('.project-options-trigger')
+    if (!scrollport || !row || !trigger) throw new Error('Project scrollport, row, or options trigger is missing')
+
+    const originalPaddingBottom = element.style.paddingBottom
+    const originalScrollTop = scrollport.scrollTop
+    element.style.paddingBottom = `${scrollport.clientHeight}px`
+    const scrollportRect = scrollport.getBoundingClientRect()
+    const triggerRect = trigger.getBoundingClientRect()
+    scrollport.scrollTop += Math.ceil(triggerRect.bottom - scrollportRect.top)
+
+    const rowAfterScroll = row.getBoundingClientRect()
+    const triggerAfterScroll = trigger.getBoundingClientRect()
+    const scrollportAfterScroll = scrollport.getBoundingClientRect()
+    scrollport.dispatchEvent(new Event('scroll'))
+    return {
+      originalPaddingBottom,
+      originalScrollTop,
+      rowIntersects:
+        rowAfterScroll.bottom > scrollportAfterScroll.top && rowAfterScroll.top < scrollportAfterScroll.bottom,
+      triggerFullyOutside:
+        triggerAfterScroll.bottom <= scrollportAfterScroll.top || triggerAfterScroll.top >= scrollportAfterScroll.bottom
+    }
+  })
+  try {
+    expect(scrollState.rowIntersects).toBe(true)
+    expect(scrollState.triggerFullyOutside).toBe(true)
+    await expect(scrollDismissMenu).toHaveCount(0)
+  } finally {
+    await projectGroup.evaluate((element, state) => {
+      const scrollport = element.closest<HTMLElement>('.project-groups')
+      if (!scrollport) throw new Error('Project scrollport is missing')
+
+      element.style.paddingBottom = state.originalPaddingBottom
+      scrollport.scrollTop = state.originalScrollTop
+      scrollport.dispatchEvent(new Event('scroll'))
+    }, scrollState)
+  }
+
   await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1180, 760))
 })
 

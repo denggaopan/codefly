@@ -170,11 +170,20 @@ export default function ProjectSidebar() {
     const scrollport = projectGroupsRef.current
     const row = menu?.closest<HTMLElement>('[data-project-row]')
     if (!menu || !scrollport || !row) return
+    const trigger = row.querySelector<HTMLElement>('.project-options-trigger')
+    if (!trigger) {
+      setOpenOptionsProjectId(null)
+      return
+    }
 
     const updateLayout = (): void => {
       const rowRect = row.getBoundingClientRect()
+      const triggerRect = trigger.getBoundingClientRect()
       const scrollportRect = scrollport.getBoundingClientRect()
-      if (scrollportRect.height > 0 && (rowRect.bottom <= scrollportRect.top || rowRect.top >= scrollportRect.bottom)) {
+      // A zero-height browser layout has no visible anchor; a layoutless test DOM has no
+      // client rect at all and cannot provide meaningful visibility geometry.
+      const scrollportHasLayout = scrollport.getClientRects().length > 0
+      if (scrollportHasLayout && (triggerRect.bottom <= scrollportRect.top || triggerRect.top >= scrollportRect.bottom)) {
         // The trigger is no longer visible, so leave focus alone rather than restoring it to
         // an offscreen row while dismissing the clipped menu.
         setOpenOptionsProjectId(null)

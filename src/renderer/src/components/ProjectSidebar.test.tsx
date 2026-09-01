@@ -113,6 +113,8 @@ const geometry = (top: number, bottom: number, left = 0, right = 300): DOMRect =
 const controlProjectOptionsGeometry = (state: {
   rowTop: number
   rowBottom: number
+  triggerTop?: number
+  triggerBottom?: number
   scrollportTop: number
   scrollportBottom: number
   menuHeight: number
@@ -124,12 +126,20 @@ const controlProjectOptionsGeometry = (state: {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     if (this.classList.contains('project-groups')) return geometry(state.scrollportTop, state.scrollportBottom)
     if (this.hasAttribute('data-project-row')) return geometry(state.rowTop, state.rowBottom)
+    if (this.classList.contains('project-options-trigger')) {
+      return geometry(state.triggerTop ?? state.rowTop, state.triggerBottom ?? state.rowBottom)
+    }
     if (this.classList.contains('project-options-menu')) {
       const clamped = this.style.getPropertyValue('--project-options-menu-max-height') !== ''
       const height = clamped ? state.clampedMenuRectHeight ?? state.menuRectHeight ?? 0 : state.menuRectHeight ?? 0
       return geometry(0, height)
     }
     return geometry(0, 0)
+  })
+  vi.spyOn(HTMLElement.prototype, 'getClientRects').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('project-groups')
+      ? ([geometry(state.scrollportTop, state.scrollportBottom)] as unknown as DOMRectList)
+      : ([] as unknown as DOMRectList)
   })
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
     return this.classList.contains('project-options-menu') ? state.menuHeight : 0
@@ -347,9 +357,71 @@ describe('ProjectSidebar', () => {
     expect(trigger).not.toHaveFocus()
   })
 
-  it('keeps the menu open and places it when its row remains partially visible in the scrollport', async () => {
+  it('closes the menu when a laid-out scrollport collapses to zero height', async () => {
     const user = userEvent.setup()
-    const state = { rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 }
+    const state = {
+      rowTop: 80,
+      rowBottom: 112,
+      triggerTop: 84,
+      triggerBottom: 108,
+      scrollportTop: 40,
+      scrollportBottom: 300,
+      menuHeight: 100
+    }
+    controlProjectOptionsGeometry(state)
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    state.scrollportBottom = state.scrollportTop
+    fireEvent.scroll(scrollport)
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+  })
+
+  it.each([
+    ['above', 20, 52, 8, 32],
+    ['below', 288, 320, 308, 332]
+  ])(
+    'closes the menu when its trigger scrolls fully %s the scrollport while its row still intersects',
+    async (_direction, rowTop, rowBottom, triggerTop, triggerBottom) => {
+      const user = userEvent.setup()
+      const state = {
+        rowTop: 80,
+        rowBottom: 112,
+        triggerTop: 84,
+        triggerBottom: 108,
+        scrollportTop: 40,
+        scrollportBottom: 300,
+        menuHeight: 100
+      }
+      controlProjectOptionsGeometry(state)
+      seedStore({ version: 1, projects: [project1], sessions: [] })
+      render(<ProjectSidebar />)
+
+      const menu = await openProjectOptions(user)
+      const scrollport = document.querySelector('.project-groups') as HTMLElement
+      expect(menu).toBeInTheDocument()
+
+      Object.assign(state, { rowTop, rowBottom, triggerTop, triggerBottom })
+      fireEvent.scroll(scrollport)
+
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    }
+  )
+
+  it('keeps the menu open and places it when its trigger remains partially visible in the scrollport', async () => {
+    const user = userEvent.setup()
+    const state = {
+      rowTop: 80,
+      rowBottom: 112,
+      triggerTop: 84,
+      triggerBottom: 108,
+      scrollportTop: 40,
+      scrollportBottom: 300,
+      menuHeight: 100
+    }
     controlProjectOptionsGeometry(state)
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
@@ -358,6 +430,8 @@ describe('ProjectSidebar', () => {
     const scrollport = document.querySelector('.project-groups') as HTMLElement
     state.rowTop = 20
     state.rowBottom = 52
+    state.triggerTop = 28
+    state.triggerBottom = 52
     fireEvent.scroll(scrollport)
 
     expect(menu).toBeInTheDocument()
