@@ -631,6 +631,20 @@ describe('ProjectSidebar', () => {
     await waitFor(() => expect(trigger).toHaveFocus())
   })
 
+  it('dismisses an open launcher when the options menu is reopened', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    await user.click(within(menu).getByRole('menuitem', { name: 'New session' }))
+    expect(screen.getByLabelText('Create session')).toBeInTheDocument()
+
+    // Both popovers anchor to the same row edge, so they must never be open together.
+    await openProjectOptions(user)
+    expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument()
+  })
+
   it('moves keyboard focus into the launcher and restores it after launcher Escape', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })

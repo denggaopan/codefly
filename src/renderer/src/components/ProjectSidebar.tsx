@@ -117,6 +117,7 @@ export default function ProjectSidebar() {
   const dismissNotice = useAppStore((state) => state.dismissNotice)
   const launcherOpen = useAppStore((state) => state.launcherOpen)
   const openLauncher = useAppStore((state) => state.openLauncher)
+  const closeLauncher = useAppStore((state) => state.closeLauncher)
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
@@ -469,6 +470,9 @@ export default function ProjectSidebar() {
                       if (openOptionsProjectId === project.id) {
                         closeProjectOptions(true)
                       } else {
+                        // The launcher anchors to the same row edge as this menu, so it is
+                        // dismissed rather than left stacked underneath.
+                        closeLauncher()
                         setOptionsMenuLayout({ placement: 'below', maxHeight: null })
                         setOpenOptionsProjectId(project.id)
                       }
