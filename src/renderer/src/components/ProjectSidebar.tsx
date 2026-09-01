@@ -339,7 +339,7 @@ export default function ProjectSidebar() {
                     </button>
                   </div>
                 )}
-                {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} />}
+                {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} onDragStart={stopRowDrag} />}
               </div>
 
               {/*

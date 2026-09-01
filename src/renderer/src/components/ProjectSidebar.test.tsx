@@ -238,7 +238,7 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
-  it('does not start a project drag from the options trigger or menu', async () => {
+  it('does not start a project drag from the options trigger, menu, or launcher', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
@@ -249,6 +249,10 @@ describe('ProjectSidebar', () => {
 
     const menu = await openProjectOptions(user)
     fireEvent.dragStart(menu, { dataTransfer: transfer })
+
+    await user.click(within(menu).getByRole('menuitem', { name: 'New session' }))
+    const launcherAction = screen.getByRole('button', { name: 'PowerShell' })
+    fireEvent.dragStart(launcherAction, { dataTransfer: transfer })
 
     expect(transfer.setData).not.toHaveBeenCalled()
   })
