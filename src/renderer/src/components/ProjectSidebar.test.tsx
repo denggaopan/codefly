@@ -244,15 +244,21 @@ describe('ProjectSidebar', () => {
     render(<ProjectSidebar />)
 
     const transfer = { setData: vi.fn(), getData: vi.fn(() => ''), effectAllowed: '', dropEffect: '' }
+    const row = screen.getByText(project1.name).closest('[data-project-row]') as HTMLElement
     const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
-    fireEvent.dragStart(trigger, { dataTransfer: transfer })
+    fireEvent.pointerDown(trigger)
+    fireEvent.dragStart(row, { dataTransfer: transfer })
 
     const menu = await openProjectOptions(user)
-    fireEvent.dragStart(menu, { dataTransfer: transfer })
+    const newSession = within(menu).getByRole('menuitem', { name: 'New session' })
+    fireEvent.pointerDown(newSession)
+    fireEvent.dragStart(row, { dataTransfer: transfer })
+    fireEvent.pointerUp(newSession)
 
-    await user.click(within(menu).getByRole('menuitem', { name: 'New session' }))
+    await user.click(newSession)
     const launcherAction = screen.getByRole('button', { name: 'PowerShell' })
-    fireEvent.dragStart(launcherAction, { dataTransfer: transfer })
+    fireEvent.pointerDown(launcherAction)
+    fireEvent.dragStart(row, { dataTransfer: transfer })
 
     expect(transfer.setData).not.toHaveBeenCalled()
   })

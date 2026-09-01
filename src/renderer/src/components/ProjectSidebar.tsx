@@ -99,11 +99,12 @@ export default function ProjectSidebar() {
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null)
 
-  // Project drag-reordering: the whole project row is the drag handle, excluding the options
-  // trigger, menu, and launcher via stopRowDrag. Dragging is disabled while a search filter is
+  // Project drag-reordering: the whole project row is the drag handle unless the pointer began
+  // in the options trigger, menu, or launcher. Dragging is disabled while a search filter is
   // active — the filtered view hides rows, so a drop position would be ambiguous.
   const [draggingProjectId, setDraggingProjectId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ projectId: string; position: 'before' | 'after' } | null>(null)
+  const dragOriginIsExemptRef = useRef(false)
 
   // Focus restoration for the launcher: the project options trigger that opened it gets
   // keyboard/screen-reader focus back when the launcher closes (close button, Escape, or a
@@ -160,11 +161,27 @@ export default function ProjectSidebar() {
   const dragEnabled = normalizedQuery === ''
 
   const clearDragState = (): void => {
+    dragOriginIsExemptRef.current = false
     setDraggingProjectId(null)
     setDropTarget(null)
   }
 
+  const handleRowPointerDownCapture = (event: React.PointerEvent<HTMLDivElement>): void => {
+    dragOriginIsExemptRef.current =
+      event.target instanceof Element && event.target.closest('[data-project-actions], .project-options-menu, .session-launcher') !== null
+  }
+
+  const clearDragOrigin = (): void => {
+    dragOriginIsExemptRef.current = false
+  }
+
   const handleRowDragStart = (event: React.DragEvent<HTMLDivElement>, projectId: string): void => {
+    if (dragOriginIsExemptRef.current) {
+      event.preventDefault()
+      event.stopPropagation()
+      clearDragState()
+      return
+    }
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', projectId)
     setDraggingProjectId(projectId)
@@ -197,12 +214,6 @@ export default function ProjectSidebar() {
     const changed = orderedIds.some((id, index) => appState.projects[index]?.id !== id)
     if (changed) void reorderProjects(orderedIds)
     clearDragState()
-  }
-
-  // The options trigger, menu, and launcher inside a draggable row must never start a row drag.
-  const stopRowDrag = (event: React.DragEvent<HTMLDivElement>): void => {
-    event.preventDefault()
-    event.stopPropagation()
   }
 
   return (
@@ -260,6 +271,9 @@ export default function ProjectSidebar() {
                 onDragOver={(event) => handleRowDragOver(event, project.id)}
                 onDrop={handleRowDrop}
                 onDragEnd={clearDragState}
+                onPointerDownCapture={handleRowPointerDownCapture}
+                onPointerUp={clearDragOrigin}
+                onPointerCancel={clearDragOrigin}
               >
                 <button type="button" className="project-row-label" onClick={() => setActiveProject(project.id)}>
                   <span className="project-name" title={project.name}>
@@ -269,7 +283,7 @@ export default function ProjectSidebar() {
                     {project.path}
                   </span>
                 </button>
-                <div className="project-actions" data-project-actions onDragStart={stopRowDrag}>
+                <div className="project-actions" data-project-actions>
                   <button
                     type="button"
                     className="project-options-trigger"
@@ -291,7 +305,6 @@ export default function ProjectSidebar() {
                     role="menu"
                     aria-label={`Project options for ${project.name}`}
                     onClick={(event) => event.stopPropagation()}
-                    onDragStart={stopRowDrag}
                   >
                     <button
                       type="button"
@@ -339,7 +352,7 @@ export default function ProjectSidebar() {
                     </button>
                   </div>
                 )}
-                {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} onDragStart={stopRowDrag} />}
+                {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} />}
               </div>
 
               {/*

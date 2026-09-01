@@ -20,7 +20,6 @@ const LAUNCHER_ITEMS: readonly LauncherItem[] = [
 
 type SessionLauncherProps = {
   projectId: string
-  onDragStart?: React.DragEventHandler<HTMLDivElement>
 }
 
 /**
@@ -30,7 +29,7 @@ type SessionLauncherProps = {
  * without hovering. PowerShell and Command Prompt use Windows system executables and are
  * always available.
  */
-export default function SessionLauncher({ projectId, onDragStart }: SessionLauncherProps) {
+export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   const capabilities = useAppStore((state) => state.capabilities)
   const createSession = useAppStore((state) => state.createSession)
   const closeLauncher = useAppStore((state) => state.closeLauncher)
@@ -67,7 +66,7 @@ export default function SessionLauncher({ projectId, onDragStart }: SessionLaunc
   }
 
   return (
-    <div className="session-launcher" aria-label="Create session" onDragStart={onDragStart}>
+    <div className="session-launcher" aria-label="Create session">
       <div className="session-launcher-header">
         <span>New session</span>
         <button type="button" className="session-launcher-close" aria-label="Close launcher" onClick={closeLauncher}>
