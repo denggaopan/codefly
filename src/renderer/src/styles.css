@@ -13,7 +13,7 @@
   --color-text: #e7edf5;
   --color-text-muted: #8b98a9;
 
-  /* Accent + state tokens. The accent is the phoenix-logo purple (#6e5494, see
+  /* Accent + state tokens. The accent is the rocket-logo purple (#6e5494, see
      build/icon.svg) lightened along the same hue so small text and outlines stay
      readable on the dark canvas. */
   --color-accent: #9471c7;
@@ -49,7 +49,7 @@
   --color-text: #1c2733;
   --color-text-muted: #5a6878;
 
-  /* The original phoenix-logo purple works unlightened on a light canvas; state colors are
+  /* The original rocket-logo purple works unlightened on a light canvas; state colors are
      darkened along their hues so pill text stays readable on the light tints behind it. */
   --color-accent: #6e5494;
   --color-state-running: #14855c;
