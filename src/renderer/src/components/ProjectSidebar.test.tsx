@@ -281,6 +281,36 @@ describe('ProjectSidebar', () => {
     expect(trigger).toHaveFocus()
   })
 
+  it('refocuses the newly selected project launcher when New session is reopened', async () => {
+    const user = userEvent.setup()
+    const project2: ProjectRecord = {
+      id: 'project-2',
+      name: 'second-project',
+      path: 'C:\\work\\second',
+      createdAt: '2026-08-21T00:00:00.000Z'
+    }
+    seedStore({ version: 1, projects: [project1, project2], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await openProjectOptions(user, project1.name)
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+
+    await openProjectOptions(user, project1.name)
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+
+    const project2Trigger = screen.getByRole('button', { name: projectOptionsName(project2.name) })
+    await openProjectOptions(user, project2.name)
+    await user.keyboard('{Enter}')
+
+    expect(useAppStore.getState().activeProjectId).toBe(project2.id)
+    expect(screen.getByRole('button', { name: 'PowerShell' })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument())
+    expect(project2Trigger).toHaveFocus()
+  })
+
   it('renders the supplied options SVG as a decorative trigger icon', () => {
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)

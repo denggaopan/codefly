@@ -97,6 +97,7 @@ export default function ProjectSidebar() {
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
+  const [launcherFocusRequest, setLauncherFocusRequest] = useState(0)
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null)
   const optionsMenuRef = useRef<HTMLDivElement | null>(null)
 
@@ -119,14 +120,17 @@ export default function ProjectSidebar() {
   const wasLauncherOpenRef = useRef(false)
 
   useEffect(() => {
-    if (!wasLauncherOpenRef.current && launcherOpen) {
-      document.querySelector<HTMLButtonElement>('[data-launcher-item] button:not(:disabled)')?.focus()
+    if (launcherOpen) {
+      launcherTriggerRef.current
+        ?.closest<HTMLElement>('[data-project-row]')
+        ?.querySelector<HTMLButtonElement>('[data-launcher-item] button:not(:disabled)')
+        ?.focus()
     } else if (wasLauncherOpenRef.current && !launcherOpen) {
       launcherTriggerRef.current?.focus()
       launcherTriggerRef.current = null
     }
     wasLauncherOpenRef.current = launcherOpen
-  }, [launcherOpen])
+  }, [launcherFocusRequest, launcherOpen])
 
   useEffect(() => {
     if (!openOptionsProjectId) return
@@ -403,6 +407,7 @@ export default function ProjectSidebar() {
                         setOpenOptionsProjectId(null)
                         setActiveProject(project.id)
                         openLauncher()
+                        setLauncherFocusRequest((request) => request + 1)
                       }}
                     >
                       <img src={sessionIconUrl} alt="" width={16} height={16} className="icon icon-session" />
