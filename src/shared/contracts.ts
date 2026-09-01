@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import type { ExternalLinkTarget } from './links'
+
 export const sessionKindSchema = z.enum(['powershell', 'cmd', 'claude', 'codex'])
 export const runtimeStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'missing'])
 export const titleStateSchema = z.enum(['pending', 'complete'])
@@ -99,6 +101,18 @@ export const setThemeRequestSchema = z.strictObject({
   theme: themePreferenceSchema
 })
 
+// The renderer picks a link by key; the URL table itself lives in shared/links.ts and is
+// resolved in the main process, so no renderer-supplied URL ever reaches the OS browser.
+export const externalLinkTargetSchema = z.enum(['repository', 'changelog', 'download'])
+
+export const openExternalLinkRequestSchema = z.strictObject({
+  target: externalLinkTargetSchema
+})
+
+export const setAutoLaunchRequestSchema = z.strictObject({
+  enabled: z.boolean()
+})
+
 export type AppState = z.infer<typeof appStateSchema>
 export type ProjectRecord = z.infer<typeof projectRecordSchema>
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
@@ -112,3 +126,13 @@ export type DeleteSessionResult =
   | { status: 'deleted' }
   | { status: 'dirty'; changedFiles: number }
   | { status: 'failed'; message: string }
+
+export type AppInfo = { version: string; links: Readonly<Record<ExternalLinkTarget, string>> }
+
+// `none` is distinct from `up-to-date`: the repository has published no release at all, so
+// there is no version to compare against rather than a comparison that came out equal.
+export type UpdateCheckResult =
+  | { status: 'up-to-date'; currentVersion: string; latestVersion: string }
+  | { status: 'available'; currentVersion: string; latestVersion: string; releaseUrl: string }
+  | { status: 'none'; currentVersion: string }
+  | { status: 'error'; message: string }

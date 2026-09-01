@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
-import type { AppSnapshot, AppState, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../shared/contracts'
+import type { AppInfo, AppSnapshot, AppState, DeleteSessionResult, ProjectRecord, SessionRecord, UpdateCheckResult } from '../../shared/contracts'
 import { IPC } from '../../shared/ipc'
+import { EXTERNAL_LINKS } from '../../shared/links'
 import { ProjectNotFoundError, type ProjectService } from '../services/project-service'
 import { SessionNotFoundError, type SessionCoordinator } from '../services/session-coordinator'
+import type { AppInfoService } from '../services/app-info-service'
 import type { ExternalAppService } from '../services/external-app-service'
 import type { TerminalService } from '../services/terminal-service'
 import { registerIpc } from './register-ipc'
@@ -152,11 +154,20 @@ type Harness = {
   projectService: { register: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; reorder: ReturnType<typeof vi.fn> }
   coordinator: FakeCoordinator
   externalAppService: { openInVSCode: ReturnType<typeof vi.fn>; openInExplorer: ReturnType<typeof vi.fn> }
+  appInfoService: {
+    info: ReturnType<typeof vi.fn>
+    checkForUpdates: ReturnType<typeof vi.fn>
+    openLink: ReturnType<typeof vi.fn>
+    autoLaunch: ReturnType<typeof vi.fn>
+    setAutoLaunch: ReturnType<typeof vi.fn>
+  }
   terminalService: FakeTerminalService
   getSnapshot: ReturnType<typeof vi.fn>
   applyTheme: ReturnType<typeof vi.fn>
   dispose: () => void
 }
+
+const appInfo: AppInfo = { version: '0.4.1', links: EXTERNAL_LINKS }
 
 const buildHarness = (options: {
   dialogResult?: { canceled: boolean; filePaths: string[] }
@@ -168,6 +179,13 @@ const buildHarness = (options: {
   const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project), reorder: vi.fn(async () => [project]) }
   const coordinator = new FakeCoordinator()
   const externalAppService = { openInVSCode: vi.fn(async () => undefined), openInExplorer: vi.fn(async () => undefined) }
+  const appInfoService = {
+    info: vi.fn((): AppInfo => appInfo),
+    checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: appInfo.version })),
+    openLink: vi.fn(async () => undefined),
+    autoLaunch: vi.fn(() => false),
+    setAutoLaunch: vi.fn((enabled: boolean) => enabled)
+  }
   const terminalService = new FakeTerminalService()
   const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ state: emptyState(), capabilities: capabilities() }))
   const applyTheme = vi.fn()
@@ -179,12 +197,25 @@ const buildHarness = (options: {
     projectService: projectService as unknown as ProjectService,
     coordinator: coordinator as unknown as SessionCoordinator,
     externalAppService: externalAppService as unknown as ExternalAppService,
+    appInfoService: appInfoService as unknown as AppInfoService,
     terminalService: terminalService as unknown as TerminalService,
     getSnapshot,
     applyTheme
   })
 
-  return { ipcMain, window, dialog, projectService, coordinator, externalAppService, terminalService, getSnapshot, applyTheme, dispose }
+  return {
+    ipcMain,
+    window,
+    dialog,
+    projectService,
+    coordinator,
+    externalAppService,
+    appInfoService,
+    terminalService,
+    getSnapshot,
+    applyTheme,
+    dispose
+  }
 }
 
 describe('registerIpc: sender ownership', () => {
@@ -401,6 +432,88 @@ describe('registerIpc: theme:set', () => {
   )
 })
 
+describe('registerIpc: app:info', () => {
+  it('returns the AppInfo composed by AppInfoService', async () => {
+    const { ipcMain, appInfoService } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.appInfoGet)).resolves.toEqual(appInfo)
+    expect(appInfoService.info).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('registerIpc: app:update-check', () => {
+  it('returns the UpdateCheckResult from the service verbatim', async () => {
+    const { ipcMain, appInfoService } = buildHarness()
+    const result: UpdateCheckResult = {
+      status: 'available',
+      currentVersion: '0.4.1',
+      latestVersion: '0.5.0',
+      releaseUrl: 'https://github.com/denggaopan/codefly/releases/tag/v0.5.0'
+    }
+    appInfoService.checkForUpdates.mockResolvedValue(result)
+
+    await expect(ipcMain.invoke(IPC.appUpdateCheck)).resolves.toEqual(result)
+  })
+})
+
+describe('registerIpc: app:open-link', () => {
+  it('parses the target and delegates to AppInfoService.openLink', async () => {
+    const { ipcMain, appInfoService } = buildHarness()
+
+    await ipcMain.invoke(IPC.appOpenLink, { target: 'changelog' })
+
+    expect(appInfoService.openLink).toHaveBeenCalledWith('changelog')
+  })
+
+  it.each([[{}], [{ target: 'https://evil.invalid' }], [{ target: 'repository', extra: true }], [{ url: 'repository' }]])(
+    'rejects malformed payload %j without touching the service',
+    async (payload) => {
+      const { ipcMain, appInfoService } = buildHarness()
+
+      await expect(ipcMain.invoke(IPC.appOpenLink, payload)).rejects.toBeInstanceOf(z.ZodError)
+      expect(appInfoService.openLink).not.toHaveBeenCalled()
+    }
+  )
+})
+
+describe('registerIpc: app:auto-launch-get', () => {
+  it('returns the current openAtLogin value', async () => {
+    const { ipcMain, appInfoService } = buildHarness()
+    appInfoService.autoLaunch.mockReturnValue(true)
+
+    await expect(ipcMain.invoke(IPC.appAutoLaunchGet)).resolves.toBe(true)
+  })
+})
+
+describe('registerIpc: app:auto-launch-set', () => {
+  it('parses the request and returns the value the service read back after writing', async () => {
+    const { ipcMain, appInfoService } = buildHarness()
+    appInfoService.setAutoLaunch.mockReturnValue(false)
+
+    await expect(ipcMain.invoke(IPC.appAutoLaunchSet, { enabled: true })).resolves.toBe(false)
+    expect(appInfoService.setAutoLaunch).toHaveBeenCalledWith(true)
+  })
+
+  it.each([[{}], [{ enabled: 'true' }], [{ enabled: true, extra: 1 }]])(
+    'rejects malformed payload %j without touching the service',
+    async (payload) => {
+      const { ipcMain, appInfoService } = buildHarness()
+
+      await expect(ipcMain.invoke(IPC.appAutoLaunchSet, payload)).rejects.toBeInstanceOf(z.ZodError)
+      expect(appInfoService.setAutoLaunch).not.toHaveBeenCalled()
+    }
+  )
+
+  it('propagates a write failure so the renderer can show why the toggle did not stick', async () => {
+    const { ipcMain, appInfoService } = buildHarness()
+    appInfoService.setAutoLaunch.mockImplementation(() => {
+      throw new Error('Access is denied.')
+    })
+
+    await expect(ipcMain.invoke(IPC.appAutoLaunchSet, { enabled: true })).rejects.toThrow('Access is denied.')
+  })
+})
+
 describe('registerIpc: terminal:write (send-only)', () => {
   it('parses the payload and forwards it to TerminalService.write', () => {
     const { ipcMain, terminalService } = buildHarness()
@@ -526,7 +639,12 @@ describe('registerIpc: disposer', () => {
       IPC.sessionRestore,
       IPC.sessionDelete,
       IPC.sessionFirstInput,
-      IPC.themeSet
+      IPC.themeSet,
+      IPC.appInfoGet,
+      IPC.appUpdateCheck,
+      IPC.appOpenLink,
+      IPC.appAutoLaunchGet,
+      IPC.appAutoLaunchSet
     ]) {
       expect(ipcMain.handlers.has(channel)).toBe(false)
     }

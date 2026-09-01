@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 
+import { useTranslation } from '../i18n/use-translation'
+
 type ConfirmDialogProps = {
   open: boolean
   title: string
@@ -19,17 +21,21 @@ type ConfirmDialogProps = {
  * stray Enter right after opening never fires the destructive action. Escape cancels, and a
  * minimal two-element focus trap keeps Tab/Shift+Tab cycling between Cancel and Confirm
  * rather than escaping to the page behind the backdrop.
+ *
+ * The button labels have no default parameter values because their fallbacks depend on the
+ * active locale, which only a hook can read; they are resolved in the body instead.
  */
 export default function ConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   destructive = false,
   onConfirm,
   onCancel
 }: ConfirmDialogProps) {
+  const { t } = useTranslation()
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
 
@@ -85,7 +91,7 @@ export default function ConfirmDialog({
         )}
         <div className="confirm-dialog-actions">
           <button ref={cancelRef} type="button" className="confirm-dialog-cancel" onClick={onCancel} autoFocus>
-            {cancelLabel}
+            {cancelLabel ?? t('common.cancel')}
           </button>
           <button
             ref={confirmRef}
@@ -93,7 +99,7 @@ export default function ConfirmDialog({
             className={destructive ? 'confirm-dialog-confirm confirm-dialog-confirm--destructive' : 'confirm-dialog-confirm'}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {confirmLabel ?? t('common.confirm')}
           </button>
         </div>
       </div>

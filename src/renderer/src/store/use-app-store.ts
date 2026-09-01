@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionKind, SessionRecord, ThemePreference } from '../../../shared/contracts'
+import { DEFAULT_LOCALE, isLocale, translate, type Locale } from '../i18n'
 
 export type Notice = {
   message: string
@@ -18,11 +19,13 @@ export type AppStore = {
   /** Running Claude/Codex sessions whose PTY output has been quiet for AGENT_IDLE_MS. */
   idleAgentSessionIds: Record<string, true>
   theme: ThemePreference
+  locale: Locale
 
   initialize: () => () => void
   reset: () => void
 
   setTheme: (theme: ThemePreference) => void
+  setLocale: (locale: Locale) => void
 
   addProject: () => Promise<void>
   reorderProjects: (orderedProjectIds: readonly string[]) => Promise<void>
@@ -50,9 +53,11 @@ const defaultCapabilities = (): CapabilityState => ({
   vscode: { available: false, detail: 'Checking availability…' }
 })
 
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : 'Something went wrong.')
+const errorMessage = (error: unknown, locale: Locale): string =>
+  error instanceof Error ? error.message : translate(locale, 'notice.genericError')
 
 export const THEME_STORAGE_KEY = 'codefly.theme'
+export const LOCALE_STORAGE_KEY = 'codefly.locale'
 
 // The theme preference is renderer-owned (localStorage), not part of the main process's
 // persisted AppState: it is pure presentation, and localStorage survives restarts without
@@ -77,6 +82,30 @@ const applyThemeEffects = (theme: ThemePreference): void => {
     // localStorage unavailable: the preference just won't survive a restart.
   }
   window.codefly.setTheme(theme).catch(() => undefined)
+}
+
+// The UI language is renderer-owned (localStorage) for the same reasons as the theme: it is
+// pure presentation and never crosses into the persisted AppState. Anything unrecognized —
+// including a first launch with no stored key — falls back to DEFAULT_LOCALE (English), which
+// keeps startup copy deterministic regardless of the host OS language.
+const readStoredLocale = (): Locale => {
+  try {
+    const stored = window.localStorage.getItem(LOCALE_STORAGE_KEY)
+    return isLocale(stored) ? stored : DEFAULT_LOCALE
+  } catch {
+    return DEFAULT_LOCALE
+  }
+}
+
+// Applies a locale everywhere outside this store's own state: the persisted preference and
+// the document language (which drives font fallback and assistive-technology pronunciation).
+const applyLocaleEffects = (locale: Locale): void => {
+  document.documentElement.lang = locale
+  try {
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, locale)
+  } catch {
+    // localStorage unavailable: the preference just won't survive a restart.
+  }
 }
 
 /**
@@ -161,8 +190,13 @@ export const useAppStore = create<AppStore>()((set, get) => {
     notice: null,
     idleAgentSessionIds: {},
     theme: 'dark',
+    locale: DEFAULT_LOCALE,
 
     initialize: () => {
+      const storedLocale = readStoredLocale()
+      set({ locale: storedLocale })
+      applyLocaleEffects(storedLocale)
+
       const storedTheme = readStoredTheme()
       set({ theme: storedTheme })
       // Re-applied on every startup (even for the dark default) so the main process's
@@ -180,7 +214,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
           }))
         })
         .catch((error: unknown) => {
-          set({ notice: { message: errorMessage(error), tone: 'error' } })
+          set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
         })
 
       const disposeState = window.codefly.onStateChanged((state) => {
@@ -212,7 +246,8 @@ export const useAppStore = create<AppStore>()((set, get) => {
         searchQuery: '',
         notice: null,
         idleAgentSessionIds: {},
-        theme: 'dark'
+        theme: 'dark',
+        locale: DEFAULT_LOCALE
       })
     },
 
@@ -221,13 +256,18 @@ export const useAppStore = create<AppStore>()((set, get) => {
       applyThemeEffects(theme)
     },
 
+    setLocale: (locale) => {
+      set({ locale })
+      applyLocaleEffects(locale)
+    },
+
     addProject: async () => {
       try {
         const project = await window.codefly.addProject()
         if (!project) return
         set((state) => ({ appState: upsertProject(state.appState, project), activeProjectId: project.id }))
       } catch (error) {
-        set({ notice: { message: errorMessage(error), tone: 'error' } })
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
       }
     },
 
@@ -236,7 +276,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
         const projects = await window.codefly.reorderProjects(orderedProjectIds)
         set((state) => ({ appState: { ...state.appState, projects } }))
       } catch (error) {
-        set({ notice: { message: errorMessage(error), tone: 'error' } })
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
       }
     },
 
@@ -244,7 +284,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
       try {
         await window.codefly.openProjectInVSCode(projectId)
       } catch (error) {
-        set({ notice: { message: errorMessage(error), tone: 'error' } })
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
       }
     },
 
@@ -252,7 +292,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
       try {
         await window.codefly.openProjectFolder(projectId)
       } catch (error) {
-        set({ notice: { message: errorMessage(error), tone: 'error' } })
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
       }
     },
 
@@ -269,7 +309,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
           launcherOpen: false
         }))
       } catch (error) {
-        set({ notice: { message: errorMessage(error), tone: 'error' } })
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
       }
     },
 
@@ -287,7 +327,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
           activeSessionId: session.id
         }))
       } catch (error) {
-        set({ notice: { message: errorMessage(error), tone: 'error' } })
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
       }
     },
 
@@ -304,7 +344,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
         } else if (result.status === 'dirty') {
           set({
             notice: {
-              message: `Worktree has ${result.changedFiles} changed files. Commit or discard them before deleting.`,
+              message: translate(get().locale, 'notice.dirtyWorktree', { count: result.changedFiles }),
               tone: 'error'
             }
           })
@@ -314,7 +354,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
 
         return result
       } catch (error) {
-        set({ notice: { message: errorMessage(error), tone: 'error' } })
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
         return undefined
       }
     },

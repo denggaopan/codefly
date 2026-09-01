@@ -3,7 +3,17 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AppSnapshot, AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../../shared/contracts'
+import type {
+  AppInfo,
+  AppSnapshot,
+  AppState,
+  CapabilityState,
+  DeleteSessionResult,
+  ProjectRecord,
+  SessionRecord,
+  UpdateCheckResult
+} from '../../../shared/contracts'
+import { EXTERNAL_LINKS } from '../../../shared/links'
 import { BYPASS_WARNING_TEXT } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import TerminalWorkspace from './TerminalWorkspace'
@@ -95,6 +105,11 @@ const createFakeApi = () => {
     deleteSession: vi.fn(async (): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
     setTheme: vi.fn(async (): Promise<void> => undefined),
+    getAppInfo: vi.fn(async (): Promise<AppInfo> => ({ version: '0.0.0-test', links: EXTERNAL_LINKS })),
+    checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: '0.0.0-test' })),
+    openExternalLink: vi.fn(async (): Promise<void> => undefined),
+    getAutoLaunch: vi.fn(async (): Promise<boolean> => false),
+    setAutoLaunch: vi.fn(async (enabled: boolean): Promise<boolean> => enabled),
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
     onStateChanged: vi.fn(() => () => undefined),

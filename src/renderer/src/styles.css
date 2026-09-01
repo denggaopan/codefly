@@ -881,7 +881,7 @@ input {
 }
 
 .settings-dialog {
-  width: min(400px, calc(100vw - 32px));
+  width: min(440px, calc(100vw - 32px));
   padding: 18px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
@@ -922,6 +922,10 @@ input {
   gap: 12px;
 }
 
+.settings-dialog-section + .settings-dialog-section {
+  margin-top: 14px;
+}
+
 .settings-dialog-label {
   font-size: 0.85rem;
   color: var(--color-text);
@@ -954,6 +958,160 @@ input {
   background: var(--color-panel-elevated);
   color: var(--color-text);
 }
+/* Startup switch: a role="switch" button, so it is a real toggle to assistive technology
+   rather than a styled checkbox. Disabled until the main process reports the current value. */
+.settings-switch {
+  position: relative;
+  width: 38px;
+  height: 21px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-panel);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.settings-switch[aria-checked='true'] {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.settings-switch:disabled {
+  opacity: 0.5;
+}
+
+.settings-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.settings-switch[aria-checked='true'] .settings-switch-thumb {
+  background: #fff;
+  transform: translateX(17px);
+}
+
+.settings-dialog-error {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--color-state-destructive);
+}
+
+.settings-version-value {
+  margin-left: 8px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.settings-update-button {
+  flex: none;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 5px 12px;
+  background: var(--color-panel);
+  color: var(--color-text);
+  font-size: 0.8rem;
+}
+
+.settings-update-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.settings-update-button:disabled {
+  color: var(--color-text-muted);
+}
+
+.settings-update-status {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.settings-update-status[data-status='available'] {
+  color: var(--color-state-done);
+}
+
+.settings-update-status[data-status='error'] {
+  color: var(--color-state-destructive);
+}
+
+.settings-inline-link {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.78rem;
+  text-decoration: underline;
+}
+
+/* About: the full URL is shown under each label (not only in the tooltip) so a user can see
+   where a click will take them before taking it — the pages open in the system browser. */
+.settings-dialog-about {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+
+.settings-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-link {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.settings-link:hover {
+  background: var(--color-panel);
+}
+
+.settings-link-label {
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.settings-link-url {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-link:hover .settings-link-label {
+  color: var(--color-accent);
+}
+
+.settings-dialog-hint {
+  margin: 8px 0 0;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
 
 /* ==========================================================================
    Responsive (Windows desktop only — no mobile navigation mode)

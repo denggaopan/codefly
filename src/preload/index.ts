@@ -1,7 +1,18 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-import type { AppSnapshot, AppState, DeleteSessionResult, ProjectRecord, SessionKind, SessionRecord, ThemePreference } from '../shared/contracts'
+import type {
+  AppInfo,
+  AppSnapshot,
+  AppState,
+  DeleteSessionResult,
+  ProjectRecord,
+  SessionKind,
+  SessionRecord,
+  ThemePreference,
+  UpdateCheckResult
+} from '../shared/contracts'
 import { IPC } from '../shared/ipc'
+import type { ExternalLinkTarget } from '../shared/links'
 
 export type CodeFlyApi = {
   getSnapshot(): Promise<AppSnapshot>
@@ -14,6 +25,11 @@ export type CodeFlyApi = {
   deleteSession(sessionId: string): Promise<DeleteSessionResult>
   submitFirstInput(sessionId: string, text: string): Promise<void>
   setTheme(theme: ThemePreference): Promise<void>
+  getAppInfo(): Promise<AppInfo>
+  checkForUpdates(): Promise<UpdateCheckResult>
+  openExternalLink(target: ExternalLinkTarget): Promise<void>
+  getAutoLaunch(): Promise<boolean>
+  setAutoLaunch(enabled: boolean): Promise<boolean>
   writeTerminal(sessionId: string, data: string): void
   resizeTerminal(sessionId: string, cols: number, rows: number): void
   onStateChanged(listener: (state: AppState) => void): () => void
@@ -35,6 +51,11 @@ const api: CodeFlyApi = {
   deleteSession: (sessionId) => ipcRenderer.invoke(IPC.sessionDelete, { sessionId }),
   submitFirstInput: (sessionId, text) => ipcRenderer.invoke(IPC.sessionFirstInput, { sessionId, text }),
   setTheme: (theme) => ipcRenderer.invoke(IPC.themeSet, { theme }),
+  getAppInfo: () => ipcRenderer.invoke(IPC.appInfoGet),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.appUpdateCheck),
+  openExternalLink: (target) => ipcRenderer.invoke(IPC.appOpenLink, { target }),
+  getAutoLaunch: () => ipcRenderer.invoke(IPC.appAutoLaunchGet),
+  setAutoLaunch: (enabled) => ipcRenderer.invoke(IPC.appAutoLaunchSet, { enabled }),
 
   writeTerminal: (sessionId, data) => {
     ipcRenderer.send(IPC.terminalWrite, { sessionId, data })

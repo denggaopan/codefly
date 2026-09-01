@@ -117,6 +117,28 @@ on `PATH`, then the standard per-user and machine-wide install locations; if non
 the action is disabled with an install hint. The folder action opens the directory in Windows
 File Explorer via `shell.openPath` and has no such dependency.
 
+## Settings
+
+The title bar's gear button opens the settings dialog.
+
+- **Launch at startup** registers (or removes) CodeFly as a Windows login item. The switch
+  shows the value read back from the system *after* the write, so a change the OS refuses is
+  never displayed as if it had taken effect.
+- **Appearance** switches between the dark and light token sets.
+- **Language** switches the interface between English and 简体中文. Like the theme, the
+  preference is renderer-owned (`localStorage`) and never enters the persisted state file. It
+  defaults to English rather than following the OS language, which keeps first launch — and
+  the test suites, which assert English copy — deterministic. It covers static interface copy
+  only: main-process text (tool-availability hints, session errors) and already-persisted
+  session titles stay in the language they were produced in.
+- **Version** shows the installed version and, on demand, queries GitHub's latest-release
+  API. CodeFly never downloads or installs an update by itself; a newer version simply links
+  out to the download page.
+- **About CodeFly** links to the project repository, the changelog (the releases page), and
+  the downloads page. The renderer can only ask for one of those three *named targets* — the
+  main process resolves each to a URL from `src/shared/links.ts` before handing it to
+  `shell.openExternal`, so the renderer can never make the app open an arbitrary address.
+
 ## Persistence
 
 Projects and session metadata (not terminal scrollback, not PTY handles, not credentials)
@@ -179,3 +201,9 @@ CLIs:
   install.
 - Project paths containing spaces and paths containing Chinese characters work correctly
   end to end (add project, create a worktree session, delete it).
+- Toggling **Launch at startup** really adds/removes CodeFly under Windows' startup apps, and
+  reopening the dialog still shows the system's actual state.
+- **Check for updates** reaches GitHub over the network and reports a sensible result, both
+  when a release exists and when none has been published yet.
+- Switching the language to 简体中文 translates the sidebar, launcher, terminal header, and
+  dialogs, and the choice survives a restart.

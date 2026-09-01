@@ -8,7 +8,9 @@ import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
 
 import type { SessionRecord, ThemePreference } from '../../../shared/contracts'
-import { BYPASS_WARNING_TEXT, isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
+import type { Translator } from '../i18n'
+import { useTranslation } from '../i18n/use-translation'
+import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
 
@@ -38,16 +40,16 @@ const XTERM_THEMES: Record<ThemePreference, { background: string; foreground: st
 const MAX_PENDING_DATA_PER_SESSION = 65_536
 const MAX_PENDING_SESSIONS = 32
 
-const sessionKindLabel = (kind: SessionRecord['kind']): string => {
+const sessionKindLabel = (t: Translator, kind: SessionRecord['kind']): string => {
   switch (kind) {
     case 'powershell':
-      return 'PowerShell'
+      return t('sessionKind.powershell')
     case 'cmd':
-      return 'Command Prompt'
+      return t('sessionKind.cmd')
     case 'claude':
-      return 'Claude'
+      return t('sessionKind.claude')
     case 'codex':
-      return 'Codex'
+      return t('sessionKind.codex')
     default:
       return kind
   }
@@ -59,6 +61,7 @@ type TerminalHeaderProps = {
 }
 
 function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
+  const { t } = useTranslation()
   const agentIdle = useAppStore((state) => state.idleAgentSessionIds[session.id] === true)
   const running = session.status === 'running'
   const showBypass = running && (session.kind === 'claude' || session.kind === 'codex')
@@ -70,22 +73,18 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
         <span className="terminal-header-title" title={session.title}>
           {session.title}
         </span>
-        <span className="terminal-header-kind">{sessionKindLabel(session.kind)}</span>
+        <span className="terminal-header-kind">{sessionKindLabel(t, session.kind)}</span>
         <span className="terminal-header-status" data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}>
-          {sessionStatusLabel(session, agentIdle)}
+          {sessionStatusLabel(t, session, agentIdle)}
         </span>
         {showBypass && (
-          <span
-            className="terminal-header-bypass"
-            role="status"
-            title="This agent runs with its fixed bypass flag (--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox): it edits files and runs commands without asking for confirmation."
-          >
-            {BYPASS_WARNING_TEXT}
+          <span className="terminal-header-bypass" role="status" title={t('terminal.bypassTooltip')}>
+            {t('terminal.bypassWarning')}
           </span>
         )}
         {canRestart && (
           <button type="button" className="terminal-restart-button" onClick={onRestart}>
-            Restart session
+            {t('terminal.restartSession')}
           </button>
         )}
       </div>
@@ -108,6 +107,7 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
  * entry by session ID, matching the main process's per-window, per-session PTY routing.
  */
 export default function TerminalWorkspace() {
+  const { t } = useTranslation()
   const sessions = useAppStore((state) => state.appState.sessions)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
   const restoreSession = useAppStore((state) => state.restoreSession)
@@ -296,7 +296,7 @@ export default function TerminalWorkspace() {
     <div className="terminal-workspace" data-testid="terminal-workspace">
       {mountedSessionIds.length === 0 && (
         <div className="terminal-empty-state">
-          <p>Select or start a session to see its terminal here.</p>
+          <p>{t('terminal.emptyState')}</p>
         </div>
       )}
       {mountedSessionIds.map((id) => {

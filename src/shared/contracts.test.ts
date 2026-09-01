@@ -9,6 +9,8 @@ import {
   reorderProjectsRequestSchema,
   sessionRecordSchema,
   sessionIdRequestSchema,
+  openExternalLinkRequestSchema,
+  setAutoLaunchRequestSchema,
   setThemeRequestSchema,
   terminalWriteRequestSchema,
   terminalResizeRequestSchema
@@ -173,6 +175,25 @@ describe('shared contracts', () => {
     expect(setThemeRequestSchema.safeParse({}).success).toBe(false)
   })
 
+  // The named targets are the whole point of the schema: the renderer never sends a URL,
+  // so anything that is not one of the three known keys must be rejected here.
+  it('accepts only the three whitelisted external link targets', () => {
+    expect(openExternalLinkRequestSchema.safeParse({ target: 'repository' }).success).toBe(true)
+    expect(openExternalLinkRequestSchema.safeParse({ target: 'changelog' }).success).toBe(true)
+    expect(openExternalLinkRequestSchema.safeParse({ target: 'download' }).success).toBe(true)
+    expect(openExternalLinkRequestSchema.safeParse({ target: 'https://example.test' }).success).toBe(false)
+    expect(openExternalLinkRequestSchema.safeParse({}).success).toBe(false)
+    expect(openExternalLinkRequestSchema.safeParse({ target: 'repository', extra: true }).success).toBe(false)
+  })
+
+  it('accepts only a boolean auto-launch request', () => {
+    expect(setAutoLaunchRequestSchema.safeParse({ enabled: true }).success).toBe(true)
+    expect(setAutoLaunchRequestSchema.safeParse({ enabled: false }).success).toBe(true)
+    expect(setAutoLaunchRequestSchema.safeParse({ enabled: 'true' }).success).toBe(false)
+    expect(setAutoLaunchRequestSchema.safeParse({}).success).toBe(false)
+    expect(setAutoLaunchRequestSchema.safeParse({ enabled: true, extra: 1 }).success).toBe(false)
+  })
+
   it('defines every IPC channel once', () => {
     expect(IPC).toEqual({
       snapshotGet: 'snapshot:get',
@@ -185,6 +206,11 @@ describe('shared contracts', () => {
       sessionDelete: 'session:delete',
       sessionFirstInput: 'session:first-input',
       themeSet: 'theme:set',
+      appInfoGet: 'app:info',
+      appUpdateCheck: 'app:update-check',
+      appOpenLink: 'app:open-link',
+      appAutoLaunchGet: 'app:auto-launch-get',
+      appAutoLaunchSet: 'app:auto-launch-set',
       terminalWrite: 'terminal:write',
       terminalResize: 'terminal:resize',
       stateChanged: 'state:changed',

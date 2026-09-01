@@ -1,17 +1,28 @@
 import type { BrowserWindow, Dialog, IpcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 
-import type { AppSnapshot, DeleteSessionResult, ProjectRecord, SessionRecord, ThemePreference } from '../../shared/contracts'
+import type {
+  AppInfo,
+  AppSnapshot,
+  DeleteSessionResult,
+  ProjectRecord,
+  SessionRecord,
+  ThemePreference,
+  UpdateCheckResult
+} from '../../shared/contracts'
 import {
   createSessionRequestSchema,
   firstInputRequestSchema,
+  openExternalLinkRequestSchema,
   projectIdRequestSchema,
   reorderProjectsRequestSchema,
   sessionIdRequestSchema,
+  setAutoLaunchRequestSchema,
   setThemeRequestSchema,
   terminalResizeRequestSchema,
   terminalWriteRequestSchema
 } from '../../shared/contracts'
 import { IPC } from '../../shared/ipc'
+import type { AppInfoService } from '../services/app-info-service'
 import type { ExternalAppService } from '../services/external-app-service'
 import type { ProjectService } from '../services/project-service'
 import type { SessionCoordinator } from '../services/session-coordinator'
@@ -24,6 +35,7 @@ export type RegisterIpcDependencies = {
   projectService: ProjectService
   coordinator: SessionCoordinator
   externalAppService: ExternalAppService
+  appInfoService: AppInfoService
   terminalService: TerminalService
   getSnapshot: () => Promise<AppSnapshot>
   applyTheme: (theme: ThemePreference) => void
@@ -45,7 +57,8 @@ const publish = (window: BrowserWindow, channel: string, payload: unknown): void
  * disposer that removes every handler/listener registered by this call.
  */
 export function registerIpc(deps: RegisterIpcDependencies): () => void {
-  const { ipcMain, dialog, window, projectService, coordinator, externalAppService, terminalService, getSnapshot, applyTheme } = deps
+  const { ipcMain, dialog, window, projectService, coordinator, externalAppService, appInfoService, terminalService, getSnapshot, applyTheme } =
+    deps
 
   const invokeHandlers: ReadonlyArray<readonly [string, InvokeHandler]> = [
     [IPC.snapshotGet, async (): Promise<AppSnapshot> => getSnapshot()],
@@ -123,6 +136,28 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
       async (_event, payload): Promise<void> => {
         const { theme } = setThemeRequestSchema.parse(payload)
         applyTheme(theme)
+      }
+    ],
+
+    [IPC.appInfoGet, async (): Promise<AppInfo> => appInfoService.info()],
+
+    [IPC.appUpdateCheck, async (): Promise<UpdateCheckResult> => appInfoService.checkForUpdates()],
+
+    [
+      IPC.appOpenLink,
+      async (_event, payload): Promise<void> => {
+        const { target } = openExternalLinkRequestSchema.parse(payload)
+        await appInfoService.openLink(target)
+      }
+    ],
+
+    [IPC.appAutoLaunchGet, async (): Promise<boolean> => appInfoService.autoLaunch()],
+
+    [
+      IPC.appAutoLaunchSet,
+      async (_event, payload): Promise<boolean> => {
+        const { enabled } = setAutoLaunchRequestSchema.parse(payload)
+        return appInfoService.setAutoLaunch(enabled)
       }
     ]
   ]

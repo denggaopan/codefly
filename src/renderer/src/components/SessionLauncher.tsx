@@ -1,21 +1,25 @@
 import { useEffect, useState } from 'react'
 
 import type { SessionKind } from '../../../shared/contracts'
+import type { TranslationKey } from '../i18n'
+import { useTranslation } from '../i18n/use-translation'
 import { sessionKindIconUrl } from '../session-kind-icons'
 import { useAppStore } from '../store/use-app-store'
 
 type LauncherItem = {
   kind: SessionKind
-  label: string
+  // A dictionary key, not a string: the table is module-level, so it cannot be rebuilt when
+  // the locale changes — the label is resolved at render time instead.
+  labelKey: TranslationKey
   shortcut?: string
 }
 
 // Fixed order per spec: PowerShell, Command Prompt, Claude, Codex.
 const LAUNCHER_ITEMS: readonly LauncherItem[] = [
-  { kind: 'powershell', label: 'PowerShell', shortcut: 'Ctrl+T' },
-  { kind: 'cmd', label: 'Command Prompt' },
-  { kind: 'claude', label: 'Claude' },
-  { kind: 'codex', label: 'Codex' }
+  { kind: 'powershell', labelKey: 'sessionKind.powershell', shortcut: 'Ctrl+T' },
+  { kind: 'cmd', labelKey: 'sessionKind.cmd' },
+  { kind: 'claude', labelKey: 'sessionKind.claude' },
+  { kind: 'codex', labelKey: 'sessionKind.codex' }
 ]
 
 type SessionLauncherProps = {
@@ -30,6 +34,7 @@ type SessionLauncherProps = {
  * always available.
  */
 export default function SessionLauncher({ projectId }: SessionLauncherProps) {
+  const { t } = useTranslation()
   const capabilities = useAppStore((state) => state.capabilities)
   const createSession = useAppStore((state) => state.createSession)
   const closeLauncher = useAppStore((state) => state.closeLauncher)
@@ -66,10 +71,10 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   }
 
   return (
-    <div className="session-launcher" aria-label="Create session">
+    <div className="session-launcher" aria-label={t('launcher.createSession')}>
       <div className="session-launcher-header">
-        <span>New session</span>
-        <button type="button" className="session-launcher-close" aria-label="Close launcher" onClick={closeLauncher}>
+        <span>{t('launcher.newSession')}</span>
+        <button type="button" className="session-launcher-close" aria-label={t('launcher.close')} onClick={closeLauncher}>
           ×
         </button>
       </div>
@@ -80,7 +85,8 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
             <li key={item.kind} className="session-launcher-item" data-launcher-item>
               <button type="button" disabled={!info.available || pending} onClick={() => handleSelect(item.kind)}>
                 <img src={sessionKindIconUrl(item.kind)} alt="" width={16} height={16} className="session-launcher-icon" />
-                <span className="session-launcher-label">{item.label}</span>
+                <span className="session-launcher-label">{t(item.labelKey)}</span>
+                {/* The accelerator is a literal key combination, identical in every language. */}
                 {item.shortcut && (
                   <span className="session-launcher-shortcut" aria-hidden="true">
                     {item.shortcut}

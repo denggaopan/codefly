@@ -43,6 +43,8 @@ npm run package:win   # build + electron-builder 产出 release/ 下的 NSIS 安
 - `store/use-app-store.ts`（zustand）：action 调 `window.codefly` 并把返回记录立即合入 appState（返回值就是主进程刚持久化的内容）；`onStateChanged` 广播则整体替换 appState，作为最终事实来源。跨 `ipcRenderer.invoke` 的 rejection 会被 Electron 抹掉子类信息，**只能读 `error.message`，不能按错误类型分支**。
 - `terminal/first-input-tracker.ts`：从 PTY 输入流中剥离 ANSI 转义序列、捕获首行提交文本（用于标题生成），之后纯透传。
 - 组件：`ProjectSidebar`（项目手风琴 + 会话行，停止的会话显示 "Click to restore"）、`TerminalWorkspace`（xterm 实例管理）、`SessionLauncher`、`ConfirmDialog`。
+- `i18n/`：自建类型安全字典，不引库。`en.ts` 是 key 的唯一来源（`TranslationKey` 由它推导），`zh-CN.ts` 被类型约束为必须全量实现——**新增 UI 文案必须同时加两个字典的 key**，否则编译不过。组件用 `useTranslation()` 取 `t`，纯函数（如 `session-status.ts`、store 的 notice）改为接收 `Translator` 或直接调 `translate(locale, ...)`。语言存 localStorage（与 theme 同源，不进持久化 AppState），**默认 en 且不跟随系统语言**：全部单测与 e2e 都断言英文文案，改默认值会全线挂。
+- `SettingsDialog`：开机自启动 / 外观 / 语言 / 版本与检查更新 / 关于链接。后三块的数据由主进程 `AppInfoService` 提供，对话框每次打开时重新拉取；外链只接受 `shared/links.ts` 里的三个具名 target，URL 由主进程查表得到，renderer 不能让它打开任意地址。
 
 ### 关键产品约定（改动前先读 README.md 对应章节）
 

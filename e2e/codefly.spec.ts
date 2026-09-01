@@ -17,7 +17,7 @@ import { createRepo } from './create-repo'
  * file, worktree lifecycle) is the real production implementation. Production builds
  * without CODEFLY_E2E never exercise any of this file's env-driven wiring.
  *
- * The 8 tests below run in one serial journey against one fixture repository/project so
+ * The 12 tests below run in one serial journey against one fixture repository/project so
  * that worktree sequence numbers, title generation, restart persistence, and deletion all
  * build on realistic prior state, the same way a user would experience them. Test 6
  * (relaunch) closes and re-opens the Electron app in the middle of the journey while
@@ -132,6 +132,52 @@ test('keeps Settings interactive outside the draggable title bar', async () => {
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'dark')
   await window.keyboard.press('Escape')
 })
+/**
+ * The startup switch, update check, and About links all read through the main process. Under
+ * CODEFLY_E2E their seams are test doubles (in-memory login item, an offline 404 for the
+ * GitHub release endpoint, a no-op openExternal — see buildE2EAppInfoService), so the real
+ * IPC, schema validation, and result mapping still run while nothing touches the registry or
+ * the network. The language switch must be returned to English before this test ends: the
+ * preference persists in the user-data dir, and every later assertion is English copy.
+ */
+test('exposes the startup toggle, version check, About links, and language switch in Settings', async () => {
+  const trigger = window.getByRole('button', { name: 'Settings' })
+  const dialog = window.getByRole('dialog', { name: 'Settings' })
+
+  await trigger.click()
+  await expect(dialog).toBeVisible()
+
+  const startup = dialog.getByRole('switch', { name: 'Launch at startup' })
+  await expect(startup).toBeEnabled()
+  await expect(startup).toHaveAttribute('aria-checked', 'false')
+  await startup.click()
+  await expect(startup).toHaveAttribute('aria-checked', 'true')
+  await startup.click()
+  await expect(startup).toHaveAttribute('aria-checked', 'false')
+
+  // Comes from app.getVersion(), so assert the shape rather than pinning a version number.
+  await expect(dialog.locator('.settings-version-value')).toHaveText(/^\d+\.\d+\.\d+/)
+
+  await dialog.getByRole('button', { name: 'Check for updates' }).click()
+  await expect(dialog.getByRole('status')).toHaveText('No release has been published yet.')
+
+  await expect(dialog.getByText('https://github.com/denggaopan/codefly', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('https://github.com/denggaopan/codefly/releases', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('https://github.com/denggaopan/codefly/releases/latest', { exact: true })).toBeVisible()
+
+  await dialog.getByRole('button', { name: '简体中文' }).click()
+  await expect(window.getByRole('dialog', { name: '设置' })).toBeVisible()
+  await expect(window.getByRole('switch', { name: '开机自动启动' })).toBeVisible()
+  // The whole window re-renders, not just the dialog.
+  await expect(window.getByPlaceholder('搜索会话')).toBeVisible()
+
+  await window.getByRole('button', { name: 'English' }).click()
+  await expect(window.getByRole('dialog', { name: 'Settings' })).toBeVisible()
+  await expect(window.getByPlaceholder('Search sessions')).toBeVisible()
+  await window.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+})
+
 
 test('adds the fixture project and creates a Claude session as the first worktree', async () => {
   await window.getByRole('button', { name: 'Add Project' }).click()

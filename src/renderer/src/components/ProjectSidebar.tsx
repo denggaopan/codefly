@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { SessionRecord } from '../../../shared/contracts'
 import sessionIconUrl from '../assets/session.svg'
 import vscodeIconUrl from '../assets/vscode.svg'
+import { useTranslation } from '../i18n/use-translation'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { sessionKindIconUrl } from '../session-kind-icons'
 import { useAppStore } from '../store/use-app-store'
@@ -27,8 +28,11 @@ type SessionRowProps = {
 }
 
 function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRowProps) {
+  const { t } = useTranslation()
   const agentIdle = useAppStore((state) => state.idleAgentSessionIds[session.id] === true)
-  const secondary = session.mode === 'worktree' ? session.worktreeName : 'Ordinary session'
+  // A worktree's branch name is user data, never translated; only the ordinary-session
+  // fallback is UI copy.
+  const secondary = session.mode === 'worktree' ? session.worktreeName : t('sidebar.ordinarySession')
 
   // The row is a plain <li>: its label and delete action are SIBLING <button> elements
   // rather than a delete button nested inside a role="button" container. An element with
@@ -48,13 +52,13 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
           {secondary}
         </span>
         <span className="session-status" data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}>
-          {sessionStatusLabel(session, agentIdle)}
+          {sessionStatusLabel(t, session, agentIdle)}
         </span>
       </button>
       <button
         type="button"
         className="session-delete"
-        aria-label={`Delete ${session.title}`}
+        aria-label={t('sidebar.deleteSessionAria', { title: session.title })}
         onClick={(event) => {
           event.stopPropagation()
           onRequestDelete(event.currentTarget)
@@ -76,6 +80,7 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
  * nesting changes later.
  */
 export default function ProjectSidebar() {
+  const { t } = useTranslation()
   const appState = useAppStore((state) => state.appState)
   const capabilities = useAppStore((state) => state.capabilities)
   const activeProjectId = useAppStore((state) => state.activeProjectId)
@@ -210,8 +215,8 @@ export default function ProjectSidebar() {
         <input
           type="search"
           className="session-search"
-          aria-label="Search sessions"
-          placeholder="Search sessions"
+          aria-label={t('sidebar.searchSessions')}
+          placeholder={t('sidebar.searchSessions')}
           value={searchQuery}
           onChange={(event) => setSearchQuery(event.target.value)}
         />
@@ -220,7 +225,7 @@ export default function ProjectSidebar() {
       {notice && (
         <div className="sidebar-notice" role="alert">
           <span>{notice.message}</span>
-          <button type="button" aria-label="Dismiss notice" onClick={dismissNotice}>
+          <button type="button" aria-label={t('sidebar.dismissNotice')} onClick={dismissNotice}>
             ×
           </button>
         </div>
@@ -271,7 +276,7 @@ export default function ProjectSidebar() {
                 <div className="project-actions" data-project-actions onDragStart={stopRowDrag}>
                   <button
                     type="button"
-                    aria-label="New session"
+                    aria-label={t('sidebar.newSession')}
                     aria-haspopup="true"
                     aria-expanded={launcherOpen && project.id === activeProjectId}
                     onClick={(event) => {
@@ -289,7 +294,7 @@ export default function ProjectSidebar() {
                   </button>
                   <button
                     type="button"
-                    aria-label="Open project in VS Code"
+                    aria-label={t('sidebar.openInVSCode')}
                     title={capabilities.vscode.available ? undefined : capabilities.vscode.detail}
                     aria-describedby={capabilities.vscode.available ? undefined : vscodeHintId(project.id)}
                     disabled={!capabilities.vscode.available}
@@ -302,7 +307,7 @@ export default function ProjectSidebar() {
                   </button>
                   <button
                     type="button"
-                    aria-label="Open project folder"
+                    aria-label={t('sidebar.openProjectFolder')}
                     onClick={(event) => {
                       event.stopPropagation()
                       void openProjectFolder(project.id)
@@ -345,16 +350,22 @@ export default function ProjectSidebar() {
       </div>
 
       <div className="project-sidebar-footer">
-        <button type="button" className="add-project-fab" aria-label="Add Project" title="Add Project" onClick={() => void addProject()}>
+        <button
+          type="button"
+          className="add-project-fab"
+          aria-label={t('sidebar.addProject')}
+          title={t('sidebar.addProject')}
+          onClick={() => void addProject()}
+        >
           +
         </button>
       </div>
 
       <ConfirmDialog
         open={pendingDelete !== null}
-        title="Delete session"
-        description={pendingDelete ? `Delete "${pendingDelete.title}"? This cannot be undone.` : undefined}
-        confirmLabel="Delete"
+        title={t('sidebar.deleteSessionTitle')}
+        description={pendingDelete ? t('sidebar.deleteSessionPrompt', { title: pendingDelete.title }) : undefined}
+        confirmLabel={t('common.delete')}
         destructive
         onConfirm={() => void handleConfirmDelete()}
         onCancel={handleCancelDelete}

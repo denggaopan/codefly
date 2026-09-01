@@ -1,7 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AppSnapshot, AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../../shared/contracts'
+import type {
+  AppInfo,
+  AppSnapshot,
+  AppState,
+  CapabilityState,
+  DeleteSessionResult,
+  ProjectRecord,
+  SessionRecord,
+  UpdateCheckResult
+} from '../../../shared/contracts'
+import { EXTERNAL_LINKS } from '../../../shared/links'
 import { AGENT_IDLE_MS, useAppStore } from './use-app-store'
 
 const defaultCapabilities = (): CapabilityState => ({
@@ -50,6 +60,11 @@ const createFakeApi = () => {
     reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
     deleteSession: vi.fn(async (): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
+    getAppInfo: vi.fn(async (): Promise<AppInfo> => ({ version: '0.0.0-test', links: EXTERNAL_LINKS })),
+    checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: '0.0.0-test' })),
+    openExternalLink: vi.fn(async (): Promise<void> => undefined),
+    getAutoLaunch: vi.fn(async (): Promise<boolean> => false),
+    setAutoLaunch: vi.fn(async (enabled: boolean): Promise<boolean> => enabled),
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
     onStateChanged: vi.fn(() => () => undefined),

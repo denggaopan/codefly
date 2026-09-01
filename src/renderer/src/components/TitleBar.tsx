@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { useTranslation } from '../i18n/use-translation'
 import SettingsDialog from './SettingsDialog'
 
 /**
@@ -11,6 +12,7 @@ import SettingsDialog from './SettingsDialog'
  * button — the strip's last flex child — directly left of the native minimize button.
  */
 export default function TitleBar() {
+  const { t } = useTranslation()
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   return (
@@ -19,8 +21,8 @@ export default function TitleBar() {
       <button
         type="button"
         className="title-bar-settings"
-        aria-label="Settings"
-        title="Settings"
+        aria-label={t('titleBar.settings')}
+        title={t('titleBar.settings')}
         aria-haspopup="dialog"
         onClick={() => setSettingsOpen(true)}
       >

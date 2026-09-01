@@ -8,6 +8,7 @@ import type { AppSnapshot, CapabilityState } from '../shared/contracts'
 import { cliLocator, type CliLocator } from './infrastructure/cli-locator'
 import { registerIpc } from './ipc/register-ipc'
 import { createBeforeQuitHandler } from './shutdown-controller'
+import { AppInfoService } from './services/app-info-service'
 import { ExternalAppService } from './services/external-app-service'
 import { ProjectService } from './services/project-service'
 import { SessionCoordinator } from './services/session-coordinator'
@@ -107,6 +108,28 @@ const buildE2EExternalAppService = (): ExternalAppService =>
     async () => ''
   )
 
+const buildE2EAppInfoService = (): AppInfoService =>
+  new AppInfoService(
+    () => app.getVersion(),
+    // Offline stand-in for the GitHub releases API. 404 is what that endpoint really answers
+    // for this repository today, so the production mapping (404 -> `none`) is still the code
+    // path under test; only the network round trip is removed.
+    async () => ({ ok: false, status: 404, json: async () => null }),
+    async () => {
+      // Mocked launch: E2E asserts the Settings action fires, never that a real browser opens.
+    },
+    // In-memory login item: the suite must never write the real Windows "Run" registry key.
+    (() => {
+      let openAtLogin = false
+      return {
+        getOpenAtLogin: () => openAtLogin,
+        setOpenAtLogin: (next: boolean) => {
+          openAtLogin = next
+        }
+      }
+    })()
+  )
+
 const buildE2EDialog = (projectPath: string | undefined): Dialog =>
   ({
     showOpenDialog: async () =>
@@ -127,6 +150,7 @@ app.whenReady().then(() => {
     ? new TitleService(buildE2ETitleAdapters(e2eAgentCommand, process.env.CODEFLY_E2E_TITLE_ARGV_LOG))
     : new TitleService()
   const externalAppService = isE2E ? buildE2EExternalAppService() : new ExternalAppService()
+  const appInfoService = isE2E ? buildE2EAppInfoService() : new AppInfoService()
   const dialogForIpc = isE2E ? buildE2EDialog(process.env.CODEFLY_E2E_PROJECT) : dialog
 
   const coordinator = new SessionCoordinator(store, projectService, worktreeService, terminalService, titleService)
@@ -140,6 +164,7 @@ app.whenReady().then(() => {
     projectService,
     coordinator,
     externalAppService,
+    appInfoService,
     terminalService,
     getSnapshot: buildGetSnapshot(coordinator, externalAppService, agentLocator, store),
     applyTheme: (theme) => applyWindowTheme(window, theme)
