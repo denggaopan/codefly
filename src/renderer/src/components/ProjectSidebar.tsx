@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { SessionRecord } from '../../../shared/contracts'
 import optionsIconUrl from '../assets/options.svg'
@@ -11,6 +11,12 @@ import ConfirmDialog from './ConfirmDialog'
 import SessionLauncher from './SessionLauncher'
 
 const vscodeHintId = (projectId: string): string => `vscode-hint-${projectId}`
+const PROJECT_OPTIONS_GAP = 6
+
+type ProjectOptionsLayout = {
+  placement: 'below' | 'above'
+  maxHeight: number | null
+}
 
 function FolderGlyph() {
   return (
@@ -97,9 +103,11 @@ export default function ProjectSidebar() {
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
+  const [optionsMenuLayout, setOptionsMenuLayout] = useState<ProjectOptionsLayout>({ placement: 'below', maxHeight: null })
   const [launcherFocusRequest, setLauncherFocusRequest] = useState(0)
   const optionsTriggerRef = useRef<HTMLButtonElement | null>(null)
   const optionsMenuRef = useRef<HTMLDivElement | null>(null)
+  const projectGroupsRef = useRef<HTMLDivElement | null>(null)
 
   const closeProjectOptions = (restoreFocus = false): void => {
     if (restoreFocus) optionsTriggerRef.current?.focus()
@@ -151,6 +159,40 @@ export default function ProjectSidebar() {
 
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [openOptionsProjectId])
+
+  // The menu remains inside the sidebar's scrolling project area even when its row sits at
+  // the scrollport edge. Layout timing prevents a visible below-then-above placement flash.
+  useLayoutEffect(() => {
+    if (!openOptionsProjectId) return
+
+    const menu = optionsMenuRef.current
+    const scrollport = projectGroupsRef.current
+    const row = menu?.closest<HTMLElement>('[data-project-row]')
+    if (!menu || !scrollport || !row) return
+
+    const updateLayout = (): void => {
+      const rowRect = row.getBoundingClientRect()
+      const scrollportRect = scrollport.getBoundingClientRect()
+      const naturalMenuHeight = Math.max(menu.scrollHeight, menu.getBoundingClientRect().height)
+      const belowSpace = Math.max(0, scrollportRect.bottom - rowRect.bottom - PROJECT_OPTIONS_GAP)
+      const aboveSpace = Math.max(0, rowRect.top - scrollportRect.top - PROJECT_OPTIONS_GAP)
+      const placement = belowSpace >= naturalMenuHeight || belowSpace >= aboveSpace ? 'below' : 'above'
+      const availableSpace = placement === 'below' ? belowSpace : aboveSpace
+      const maxHeight = availableSpace >= naturalMenuHeight ? null : Math.floor(availableSpace)
+
+      setOptionsMenuLayout((current) =>
+        current.placement === placement && current.maxHeight === maxHeight ? current : { placement, maxHeight }
+      )
+    }
+
+    updateLayout()
+    scrollport.addEventListener('scroll', updateLayout)
+    window.addEventListener('resize', updateLayout)
+    return () => {
+      scrollport.removeEventListener('scroll', updateLayout)
+      window.removeEventListener('resize', updateLayout)
+    }
   }, [openOptionsProjectId])
 
   useEffect(() => {
@@ -318,7 +360,7 @@ export default function ProjectSidebar() {
         </div>
       )}
 
-      <div className="project-groups">
+      <div className="project-groups" ref={projectGroupsRef}>
         {appState.projects.map((project) => {
           // Accordion: activating a project (clicking its row, creating a session, or one of
           // its sessions) expands it and collapses every other project. Before anything is
@@ -379,6 +421,7 @@ export default function ProjectSidebar() {
                       if (openOptionsProjectId === project.id) {
                         closeProjectOptions(true)
                       } else {
+                        setOptionsMenuLayout({ placement: 'below', maxHeight: null })
                         setOpenOptionsProjectId(project.id)
                       }
                     }}
@@ -391,6 +434,14 @@ export default function ProjectSidebar() {
                     className="project-options-menu"
                     role="menu"
                     aria-label={`Project options for ${project.name}`}
+                    data-placement={optionsMenuLayout.placement}
+                    data-clamped={optionsMenuLayout.maxHeight !== null}
+                    style={
+                      {
+                        '--project-options-menu-max-height':
+                          optionsMenuLayout.maxHeight === null ? undefined : `${optionsMenuLayout.maxHeight}px`
+                      } as React.CSSProperties
+                    }
                     ref={optionsMenuRef}
                     onClick={(event) => event.stopPropagation()}
                     onKeyDown={handleProjectOptionsMenuKeyDown}

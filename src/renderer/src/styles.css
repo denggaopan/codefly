@@ -437,11 +437,18 @@ input {
   flex-direction: column;
   width: 220px;
   max-width: calc(100% - 16px);
+  max-height: var(--project-options-menu-max-height, none);
   padding: 6px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-panel);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+
+.project-options-menu[data-placement='above'] {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 .icon-options {

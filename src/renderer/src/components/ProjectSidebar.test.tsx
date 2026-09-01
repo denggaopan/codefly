@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AppSnapshot, AppState, CapabilityState, DeleteSessionResult, ProjectRecord, SessionRecord } from '../../../shared/contracts'
 import { useAppStore } from '../store/use-app-store'
@@ -83,6 +83,10 @@ beforeEach(() => {
   window.codefly = api
 })
 
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 const projectOptionsName = (projectName: string): string => `Project options for ${projectName}`
 
 const openProjectOptions = async (
@@ -91,6 +95,36 @@ const openProjectOptions = async (
 ): Promise<HTMLElement> => {
   await user.click(screen.getByRole('button', { name: projectOptionsName(projectName) }))
   return screen.getByRole('menu', { name: projectOptionsName(projectName) })
+}
+
+const geometry = (top: number, bottom: number, left = 0, right = 300): DOMRect =>
+  ({
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+    top,
+    right,
+    bottom,
+    left,
+    toJSON: () => ({})
+  }) as DOMRect
+
+const controlProjectOptionsGeometry = (state: {
+  rowTop: number
+  rowBottom: number
+  scrollportTop: number
+  scrollportBottom: number
+  menuHeight: number
+}): void => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    if (this.classList.contains('project-groups')) return geometry(state.scrollportTop, state.scrollportBottom)
+    if (this.hasAttribute('data-project-row')) return geometry(state.rowTop, state.rowBottom)
+    return geometry(0, 0)
+  })
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains('project-options-menu') ? state.menuHeight : 0
+  })
 }
 
 describe('ProjectSidebar', () => {
@@ -159,6 +193,83 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(trigger).toHaveFocus()
+  })
+
+  it('places the options menu below its row when the scrollport has room', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+
+    expect(menu).toHaveAttribute('data-placement', 'below')
+    expect(menu).toHaveAttribute('data-clamped', 'false')
+  })
+
+  it('places the options menu above a lower row when below space is insufficient', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 240, rowBottom: 272, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+
+    expect(menu).toHaveAttribute('data-placement', 'above')
+    expect(menu).toHaveAttribute('data-clamped', 'false')
+  })
+
+  it('clamps the menu to the roomier side and keeps keyboard navigation available when neither side fits', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 160, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const newSession = within(menu).getByRole('menuitem', { name: 'New session' })
+    const vscode = within(menu).getByRole('menuitem', { name: 'Open project in VS Code' })
+
+    expect(menu).toHaveAttribute('data-placement', 'below')
+    expect(menu).toHaveAttribute('data-clamped', 'true')
+    expect(menu.style.getPropertyValue('--project-options-menu-max-height')).toBe('42px')
+    await user.keyboard('{ArrowDown}')
+    expect(vscode).toHaveFocus()
+    expect(newSession).not.toHaveFocus()
+  })
+
+  it('clamps the menu above its row when above has more room than below', async () => {
+    const user = userEvent.setup()
+    controlProjectOptionsGeometry({ rowTop: 100, rowBottom: 132, scrollportTop: 40, scrollportBottom: 160, menuHeight: 100 })
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+
+    expect(menu).toHaveAttribute('data-placement', 'above')
+    expect(menu).toHaveAttribute('data-clamped', 'true')
+    expect(menu.style.getPropertyValue('--project-options-menu-max-height')).toBe('54px')
+  })
+
+  it('recomputes placement while open after scroll and resize geometry changes', async () => {
+    const user = userEvent.setup()
+    const state = { rowTop: 80, rowBottom: 112, scrollportTop: 40, scrollportBottom: 300, menuHeight: 100 }
+    controlProjectOptionsGeometry(state)
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const scrollport = document.querySelector('.project-groups') as HTMLElement
+    expect(menu).toHaveAttribute('data-placement', 'below')
+
+    state.rowTop = 240
+    state.rowBottom = 272
+    fireEvent.scroll(scrollport)
+    expect(menu).toHaveAttribute('data-placement', 'above')
+
+    state.rowTop = 80
+    state.rowBottom = 112
+    fireEvent(window, new Event('resize'))
+    expect(menu).toHaveAttribute('data-placement', 'below')
   })
 
   it('focuses the first enabled menu item and supports wrapping keyboard navigation', async () => {

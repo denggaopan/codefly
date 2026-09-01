@@ -244,6 +244,36 @@ test('keeps the terminal workflow usable at the 900 by 600 minimum window size',
 
   await window.keyboard.press('Escape')
   await expect(launcher).toHaveCount(0)
+
+  const projectGroup = window.locator('.project-group')
+  await projectGroup.evaluate((element) => {
+    const scrollport = element.closest<HTMLElement>('.project-groups')
+    const row = element.querySelector<HTMLElement>('[data-project-row]')
+    if (!scrollport || !row) throw new Error('Project scrollport or row is missing')
+
+    const scrollportRect = scrollport.getBoundingClientRect()
+    const rowRect = row.getBoundingClientRect()
+    const targetTop = scrollportRect.bottom - rowRect.height - 2
+    element.style.marginTop = `${Math.max(0, targetTop - rowRect.top)}px`
+  })
+  await expect(projectOptionsTrigger()).toBeVisible()
+
+  const lowerRowOptionsMenu = await openProjectOptions()
+  await expect(lowerRowOptionsMenu).toHaveAttribute('data-placement', 'above')
+  const [lowerMenuBounds, scrollportBounds] = await Promise.all([
+    lowerRowOptionsMenu.boundingBox(),
+    window.locator('.project-groups').boundingBox()
+  ])
+  expect(lowerMenuBounds).not.toBeNull()
+  expect(scrollportBounds).not.toBeNull()
+  expect(lowerMenuBounds!.x).toBeGreaterThanOrEqual(scrollportBounds!.x)
+  expect(lowerMenuBounds!.y).toBeGreaterThanOrEqual(scrollportBounds!.y)
+  expect(lowerMenuBounds!.x + lowerMenuBounds!.width).toBeLessThanOrEqual(scrollportBounds!.x + scrollportBounds!.width)
+  expect(lowerMenuBounds!.y + lowerMenuBounds!.height).toBeLessThanOrEqual(scrollportBounds!.y + scrollportBounds!.height)
+
+  await window.keyboard.press('Escape')
+  await expect(lowerRowOptionsMenu).toHaveCount(0)
+  await projectGroup.evaluate((element) => element.style.removeProperty('margin-top'))
   await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1180, 760))
 })
 
