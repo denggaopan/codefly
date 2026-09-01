@@ -174,7 +174,20 @@ export default function ProjectSidebar() {
     const updateLayout = (): void => {
       const rowRect = row.getBoundingClientRect()
       const scrollportRect = scrollport.getBoundingClientRect()
-      const naturalMenuHeight = Math.max(menu.scrollHeight, menu.getBoundingClientRect().height)
+      if (scrollportRect.height > 0 && (rowRect.bottom <= scrollportRect.top || rowRect.top >= scrollportRect.bottom)) {
+        // The trigger is no longer visible, so leave focus alone rather than restoring it to
+        // an offscreen row while dismissing the clipped menu.
+        setOpenOptionsProjectId(null)
+        return
+      }
+
+      const menuRect = menu.getBoundingClientRect()
+      const menuScrollHeight = menu.scrollHeight
+      const menuStyle = window.getComputedStyle(menu)
+      const verticalBorders = (Number.parseFloat(menuStyle.borderTopWidth) || 0) + (Number.parseFloat(menuStyle.borderBottomWidth) || 0)
+      // scrollHeight excludes borders, while max-height uses the app-wide border-box sizing.
+      // It therefore remains the stable natural content/padding height after a prior clamp.
+      const naturalMenuHeight = menuScrollHeight > 0 ? menuScrollHeight + verticalBorders : menuRect.height
       const belowSpace = Math.max(0, scrollportRect.bottom - rowRect.bottom - PROJECT_OPTIONS_GAP)
       const aboveSpace = Math.max(0, rowRect.top - scrollportRect.top - PROJECT_OPTIONS_GAP)
       const placement = belowSpace >= naturalMenuHeight || belowSpace >= aboveSpace ? 'below' : 'above'

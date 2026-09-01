@@ -140,7 +140,7 @@ The end-to-end suite (`e2e/codefly.spec.ts`) drives a real Electron window throu
 project, creating Claude/Codex/PowerShell/Command-Prompt sessions, verifying the exact
 bypass argv Claude and Codex receive (and that title-generation processes never receive
 either flag), the persistent bypass warning, worktree sequence numbering, restart
-persistence, VS Code/Explorer row actions, and dirty-worktree delete protection followed by
+persistence, VS Code/Explorer options-menu actions, and dirty-worktree delete protection followed by
 a clean delete that retains the branch.
 
 It runs with `CODEFLY_E2E=1`, which (only in `src/main/index.ts`, the app's composition
