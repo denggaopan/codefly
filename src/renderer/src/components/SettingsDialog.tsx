@@ -53,10 +53,10 @@ const failureReason = (error: unknown, fallback: string): string => (error insta
  * `open` is false. Follows ConfirmDialog's modal conventions: fixed full-window backdrop
  * (click closes), Escape closes, and clicks inside the panel never bubble to the backdrop.
  *
- * Sections, in order: startup behaviour (a system-level setting, so it leads), the per-kind
- * session switches that decide which entries the New session launcher offers, the
+ * Sections, in order: startup behaviour (a system-level setting, so it leads), the
  * presentation preferences that live in the app store (theme, language), the installed
- * version with its update check, and the About links. Everything the main process owns —
+ * version with its update check, the per-kind session switches that decide which entries the
+ * New session launcher offers, and the About links. Everything the main process owns —
  * version, update check, startup flag, link opening — is read lazily when the dialog opens
  * rather than kept in the app store, since none of it is needed until the user looks.
  */
@@ -191,54 +191,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </p>
         )}
 
-        <div className="settings-dialog-group">
-          <span className="settings-dialog-label" id="settings-session-kinds-label">
-            {t('settings.sessionKinds')}
-          </span>
-          <p className="settings-dialog-hint">{t('settings.sessionKindsHint')}</p>
-          <ul className="settings-kind-list" aria-labelledby="settings-session-kinds-label">
-            {/* Column captions only: each switch below carries its own full accessible name
-                ("Enable Claude", "New worktree for Claude"), so these are decorative. */}
-            <li className="settings-kind-row settings-kind-head" aria-hidden="true">
-              <span />
-              <span>{t('settings.columnEnabled')}</span>
-              <span>{t('settings.columnWorktree')}</span>
-            </li>
-            {SESSION_KIND_ITEMS.map((item) => {
-              const preference = sessionKindPreferences[item.kind]
-              const kindLabel = t(item.labelKey)
-              return (
-                <li key={item.kind} className="settings-kind-row">
-                  <span className="settings-kind-name">{kindLabel}</span>
-                  <button
-                    type="button"
-                    className="settings-switch"
-                    role="switch"
-                    aria-checked={preference.enabled}
-                    aria-label={t('settings.enableKind', { kind: kindLabel })}
-                    onClick={() => setSessionKindPreference(item.kind, { enabled: !preference.enabled })}
-                  >
-                    <span className="settings-switch-thumb" aria-hidden="true" />
-                  </button>
-                  {/* A kind that is not offered at all cannot offer a worktree variant: the
-                      switch keeps its stored value but is disabled until the kind is back on. */}
-                  <button
-                    type="button"
-                    className="settings-switch"
-                    role="switch"
-                    aria-checked={preference.worktree}
-                    aria-label={t('settings.worktreeForKind', { kind: kindLabel })}
-                    disabled={!preference.enabled}
-                    onClick={() => setSessionKindPreference(item.kind, { worktree: !preference.worktree })}
-                  >
-                    <span className="settings-switch-thumb" aria-hidden="true" />
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-
         <div className="settings-dialog-section">
           <span className="settings-dialog-label" id="settings-appearance-label">
             {t('settings.appearance')}
@@ -290,6 +242,54 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             )}
           </p>
         )}
+
+        <div className="settings-dialog-group">
+          <span className="settings-dialog-label" id="settings-session-kinds-label">
+            {t('settings.sessionKinds')}
+          </span>
+          <p className="settings-dialog-hint">{t('settings.sessionKindsHint')}</p>
+          <ul className="settings-kind-list" aria-labelledby="settings-session-kinds-label">
+            {/* Column captions only: each switch below carries its own full accessible name
+                ("Enable Claude", "New worktree for Claude"), so these are decorative. */}
+            <li className="settings-kind-row settings-kind-head" aria-hidden="true">
+              <span />
+              <span>{t('settings.columnEnabled')}</span>
+              <span>{t('settings.columnWorktree')}</span>
+            </li>
+            {SESSION_KIND_ITEMS.map((item) => {
+              const preference = sessionKindPreferences[item.kind]
+              const kindLabel = t(item.labelKey)
+              return (
+                <li key={item.kind} className="settings-kind-row">
+                  <span className="settings-kind-name">{kindLabel}</span>
+                  <button
+                    type="button"
+                    className="settings-switch"
+                    role="switch"
+                    aria-checked={preference.enabled}
+                    aria-label={t('settings.enableKind', { kind: kindLabel })}
+                    onClick={() => setSessionKindPreference(item.kind, { enabled: !preference.enabled })}
+                  >
+                    <span className="settings-switch-thumb" aria-hidden="true" />
+                  </button>
+                  {/* A kind that is not offered at all cannot offer a worktree variant: the
+                      switch keeps its stored value but is disabled until the kind is back on. */}
+                  <button
+                    type="button"
+                    className="settings-switch"
+                    role="switch"
+                    aria-checked={preference.worktree}
+                    aria-label={t('settings.worktreeForKind', { kind: kindLabel })}
+                    disabled={!preference.enabled}
+                    onClick={() => setSessionKindPreference(item.kind, { worktree: !preference.worktree })}
+                  >
+                    <span className="settings-switch-thumb" aria-hidden="true" />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
 
         <div className="settings-dialog-about">
           <span className="settings-dialog-label">{t('settings.about')}</span>
