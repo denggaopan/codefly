@@ -1,10 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
-import type { SessionRecord } from '../../../shared/contracts'
+import type { ProjectRecord, SessionRecord } from '../../../shared/contracts'
+import closeIconUrl from '../assets/close.svg'
 import optionsIconUrl from '../assets/options.svg'
+import removeIconUrl from '../assets/remove.svg'
 import sessionIconUrl from '../assets/session.svg'
 import vscodeIconUrl from '../assets/vscode.svg'
 import { useTranslation } from '../i18n/use-translation'
+import { repoHostIcon } from '../repo-host-icons'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { sessionKindIconUrl } from '../session-kind-icons'
 import { useAppStore } from '../store/use-app-store'
@@ -119,12 +122,15 @@ export default function ProjectSidebar() {
   const deleteSession = useAppStore((state) => state.deleteSession)
   const openProjectInVSCode = useAppStore((state) => state.openProjectInVSCode)
   const openProjectFolder = useAppStore((state) => state.openProjectFolder)
+  const openProjectRepository = useAppStore((state) => state.openProjectRepository)
+  const removeProject = useAppStore((state) => state.removeProject)
   const dismissNotice = useAppStore((state) => state.dismissNotice)
   const launcherOpen = useAppStore((state) => state.launcherOpen)
   const openLauncher = useAppStore((state) => state.openLauncher)
   const closeLauncher = useAppStore((state) => state.closeLauncher)
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
+  const [pendingRemove, setPendingRemove] = useState<ProjectRecord | null>(null)
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
   const [optionsMenuLayout, setOptionsMenuLayout] = useState<ProjectOptionsLayout>({ placement: 'below', maxHeight: null })
   const [launcherFocusRequest, setLauncherFocusRequest] = useState(0)
@@ -291,6 +297,36 @@ export default function ProjectSidebar() {
     setPendingDelete(null)
     restoreDeleteTriggerFocus()
   }
+
+  // "Remove from list" is the one project action that goes through a confirmation: the
+  // options menu closes first (returning focus to its trigger, which is also where focus goes
+  // back to on Cancel), then the dialog takes over. On confirm the row is gone, so there is
+  // nothing to restore focus to.
+  const handleRequestRemove = (project: ProjectRecord): void => {
+    closeProjectOptions(true)
+    setPendingRemove(project)
+  }
+
+  const handleConfirmRemove = async (): Promise<void> => {
+    if (!pendingRemove) return
+    const project = pendingRemove
+    setPendingRemove(null)
+    await removeProject(project.id)
+  }
+
+  const handleCancelRemove = (): void => {
+    setPendingRemove(null)
+    optionsTriggerRef.current?.focus()
+  }
+
+  const pendingRemoveSessionCount = pendingRemove
+    ? appState.sessions.filter((session) => session.projectId === pendingRemove.id).length
+    : 0
+  const removePrompt = pendingRemove
+    ? pendingRemoveSessionCount > 0
+      ? t('sidebar.removeProjectWithSessionsPrompt', { project: pendingRemove.name, count: pendingRemoveSessionCount })
+      : t('sidebar.removeProjectPrompt', { project: pendingRemove.name })
+    : undefined
 
   const normalizedQuery = searchQuery.trim().toLowerCase()
   const dragEnabled = normalizedQuery === ''
@@ -483,7 +519,13 @@ export default function ProjectSidebar() {
                       }
                     }}
                   >
-                    <img src={optionsIconUrl} alt="" width={16} height={16} className="icon icon-options" />
+                    <img
+                      src={openOptionsProjectId === project.id ? closeIconUrl : optionsIconUrl}
+                      alt=""
+                      width={16}
+                      height={16}
+                      className="icon icon-options"
+                    />
                   </button>
                 </div>
                 {openOptionsProjectId === project.id && (
@@ -555,6 +597,41 @@ export default function ProjectSidebar() {
                       <FolderGlyph />
                       {t('sidebar.openProjectFolder')}
                     </button>
+                    {project.repoRemote && (
+                      <button
+                        type="button"
+                        className="project-options-menu-item"
+                        role="menuitem"
+                        tabIndex={-1}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          closeProjectOptions(true)
+                          void openProjectRepository(project.id)
+                        }}
+                      >
+                        <img
+                          src={repoHostIcon(project.repoRemote.host).url}
+                          alt=""
+                          width={16}
+                          height={16}
+                          className={repoHostIcon(project.repoRemote.host).className}
+                        />
+                        {t('sidebar.openRepository')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="project-options-menu-item"
+                      role="menuitem"
+                      tabIndex={-1}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        handleRequestRemove(project)
+                      }}
+                    >
+                      <img src={removeIconUrl} alt="" width={16} height={16} className="icon icon-remove icon-mono" />
+                      {t('sidebar.removeProject')}
+                    </button>
                   </div>
                 )}
                 {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} />}
@@ -610,6 +687,16 @@ export default function ProjectSidebar() {
         destructive
         onConfirm={() => void handleConfirmDelete()}
         onCancel={handleCancelDelete}
+      />
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        title={t('sidebar.removeProjectTitle')}
+        description={removePrompt}
+        confirmLabel={t('common.remove')}
+        destructive
+        onConfirm={() => void handleConfirmRemove()}
+        onCancel={handleCancelRemove}
       />
     </aside>
   )

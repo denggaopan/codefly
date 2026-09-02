@@ -23,6 +23,11 @@ export type CodeFlyApi = {
   reorderProjects(orderedProjectIds: readonly string[]): Promise<ProjectRecord[]>
   openProjectInVSCode(projectId: string): Promise<void>
   openProjectFolder(projectId: string): Promise<void>
+  // Only the project id crosses IPC: the main process opens the remote URL it recorded for the
+  // project itself, so the renderer can never name the URL that reaches the browser.
+  openProjectRepository(projectId: string): Promise<void>
+  // Forgets the project and its session records; nothing on disk is touched.
+  removeProject(projectId: string): Promise<void>
   createSession(projectId: string, kind: SessionKind, worktree: boolean): Promise<SessionRecord>
   restoreSession(sessionId: string): Promise<SessionRecord>
   deleteSession(sessionId: string): Promise<DeleteSessionResult>
@@ -55,6 +60,8 @@ const api: CodeFlyApi = {
   reorderProjects: (orderedProjectIds) => ipcRenderer.invoke(IPC.projectReorder, { orderedProjectIds: [...orderedProjectIds] }),
   openProjectInVSCode: (projectId) => ipcRenderer.invoke(IPC.projectOpenVSCode, { projectId }),
   openProjectFolder: (projectId) => ipcRenderer.invoke(IPC.projectOpenFolder, { projectId }),
+  openProjectRepository: (projectId) => ipcRenderer.invoke(IPC.projectOpenRepository, { projectId }),
+  removeProject: (projectId) => ipcRenderer.invoke(IPC.projectRemove, { projectId }),
   createSession: (projectId, kind, worktree) => ipcRenderer.invoke(IPC.sessionCreate, { projectId, kind, worktree }),
   restoreSession: (sessionId) => ipcRenderer.invoke(IPC.sessionRestore, { sessionId }),
   deleteSession: (sessionId) => ipcRenderer.invoke(IPC.sessionDelete, { sessionId }),

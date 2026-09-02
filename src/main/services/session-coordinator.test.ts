@@ -722,3 +722,55 @@ describe('SessionCoordinator.snapshot and onStateChanged', () => {
     expect(seen.length).toBe(before)
   })
 })
+
+describe('SessionCoordinator.removeProject', () => {
+  const otherProject: ProjectRecord = { ...project, id: 'project-2', name: 'Other', path: 'C:\\Projects\\Other' }
+
+  it('stops running sessions, then drops the project and all of its sessions in one persisted write', async () => {
+    const running = runningSession({ id: 'running', status: 'running' })
+    const stopped = runningSession({ id: 'stopped', status: 'stopped' })
+    const foreign = runningSession({ id: 'foreign', projectId: 'project-2', status: 'running' })
+    const { store, terminalService, titleService, coordinator } = buildHarness({
+      initial: { ...emptyState(), projects: [project, otherProject], sessions: [running, stopped, foreign] }
+    })
+    const seen: AppState[] = []
+    coordinator.onStateChanged((state) => seen.push(state))
+
+    await coordinator.removeProject('project-1')
+
+    // Only the PTY that is actually alive is stopped; the other project's session is untouched.
+    expect(terminalService.stop.mock.calls).toEqual([['running']])
+    expect(titleService.cancel.mock.calls.map(([id]) => id).sort()).toEqual(['running', 'stopped'])
+    expect(terminalService.stop.mock.invocationCallOrder[0]).toBeLessThan(store.update.mock.invocationCallOrder[0]!)
+    expect(store.update).toHaveBeenCalledTimes(1)
+
+    const persisted = await store.load()
+    expect(persisted.projects).toEqual([otherProject])
+    expect(persisted.sessions).toEqual([foreign])
+    expect(seen).toEqual([persisted])
+  })
+
+  it('rejects an unknown project without touching the store or any PTY', async () => {
+    const { store, terminalService, coordinator } = buildHarness()
+
+    await expect(coordinator.removeProject('ghost')).rejects.toThrow('Project not found: ghost')
+    expect(store.update).not.toHaveBeenCalled()
+    expect(terminalService.stop).not.toHaveBeenCalled()
+  })
+
+  it('still forgets the project when stopping one of its PTYs fails', async () => {
+    const running = runningSession({ id: 'running', status: 'running' })
+    const { store, terminalService, coordinator } = buildHarness({
+      initial: { ...emptyState(), projects: [project], sessions: [running] }
+    })
+    terminalService.stop.mockRejectedValueOnce(new Error('force kill timed out'))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      await expect(coordinator.removeProject('project-1')).resolves.toBeUndefined()
+    } finally {
+      errorSpy.mockRestore()
+    }
+    await expect(store.load()).resolves.toEqual(emptyState())
+  })
+})

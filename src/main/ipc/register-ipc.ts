@@ -115,6 +115,23 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
     ],
 
     [
+      IPC.projectOpenRepository,
+      async (_event, payload): Promise<void> => {
+        const { projectId } = projectIdRequestSchema.parse(payload)
+        const project = await projectService.get(projectId)
+        await externalAppService.openRepository(project)
+      }
+    ],
+
+    [
+      IPC.projectRemove,
+      async (_event, payload): Promise<void> => {
+        const { projectId } = projectIdRequestSchema.parse(payload)
+        await coordinator.removeProject(projectId)
+      }
+    ],
+
+    [
       IPC.sessionCreate,
       async (_event, payload): Promise<SessionRecord> => {
         const { projectId, kind, worktree } = createSessionRequestSchema.parse(payload)

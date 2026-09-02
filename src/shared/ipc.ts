@@ -4,6 +4,8 @@ export const IPC = {
   projectReorder: 'project:reorder',
   projectOpenVSCode: 'project:open-vscode',
   projectOpenFolder: 'project:open-folder',
+  projectOpenRepository: 'project:open-repository',
+  projectRemove: 'project:remove',
   sessionCreate: 'session:create',
   sessionRestore: 'session:restore',
   sessionDelete: 'session:delete',

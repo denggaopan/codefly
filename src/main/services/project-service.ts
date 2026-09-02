@@ -2,9 +2,10 @@ import { realpath, stat } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-import type { ProjectRecord } from '../../shared/contracts'
+import type { ProjectRecord, RepoRemote } from '../../shared/contracts'
 import { commandRunner } from '../infrastructure/command-runner'
 import type { CommandRunner } from '../infrastructure/command-runner'
+import { parseRemoteWebUrl } from './git-remote'
 import { SessionStore } from './session-store'
 
 export interface ProjectFileSystem {
@@ -47,6 +48,9 @@ const normalizeProjectPath = (value: string): string => {
   return (withoutTrailingSeparators || withWindowsSeparators).toLocaleLowerCase('en-US')
 }
 
+const sameRemote = (left: RepoRemote | undefined, right: RepoRemote | undefined): boolean =>
+  left === right || (left !== undefined && right !== undefined && left.host === right.host && left.webUrl === right.webUrl)
+
 const projectWithPath = (projects: readonly ProjectRecord[], candidatePath: string): ProjectRecord | undefined => {
   const normalizedCandidate = normalizeProjectPath(candidatePath)
   return projects.find((project) => normalizeProjectPath(project.path) === normalizedCandidate)
@@ -83,12 +87,14 @@ export class ProjectService {
     if (existing) return existing
 
     const repoRoot = await this.findRepoRoot(realPath)
+    const repoRemote = repoRoot ? await this.findRepoRemote(realPath).catch(() => undefined) : undefined
     const name = basename(realPath) || realPath
     const project: ProjectRecord = {
       id: this.createId(),
       name,
       path: realPath,
       ...(repoRoot ? { repoRoot } : {}),
+      ...(repoRemote ? { repoRemote } : {}),
       createdAt: this.clock().toISOString()
     }
 
@@ -130,6 +136,59 @@ export class ProjectService {
     const project = (await this.store.load()).projects.find((candidate) => candidate.id === projectId)
     if (!project) throw new ProjectNotFoundError(projectId)
     return project
+  }
+
+  /**
+   * Re-resolves every project's browsable remote and persists the result in one write when
+   * anything differs. Run on startup so projects registered before remotes were recorded
+   * pick theirs up, and so a remote that was added, changed, or removed since the last run
+   * is reflected. A project whose `git` invocation fails (folder gone, git missing) keeps
+   * whatever it had — a transient failure must not strip the menu entry. Never rejects: the
+   * snapshot this feeds must still load when Git is unavailable altogether.
+   */
+  async refreshRemotes(): Promise<void> {
+    try {
+      const { projects } = await this.store.load()
+      const resolved = await Promise.all(
+        projects.map(async (project) => {
+          try {
+            return { id: project.id, repoRemote: await this.findRepoRemote(project.path) }
+          } catch {
+            return { id: project.id, repoRemote: project.repoRemote }
+          }
+        })
+      )
+      const remoteById = new Map(resolved.map((entry) => [entry.id, entry.repoRemote]))
+      const changed = projects.some((project) => !sameRemote(project.repoRemote, remoteById.get(project.id)))
+      if (!changed) return
+
+      await this.store.update((latest) => ({
+        ...latest,
+        projects: latest.projects.map((project) => {
+          if (!remoteById.has(project.id)) return project
+          const { repoRemote: _previous, ...rest } = project
+          const repoRemote = remoteById.get(project.id)
+          return repoRemote ? { ...rest, repoRemote } : rest
+        })
+      }))
+    } catch (error) {
+      console.error('ProjectService: failed to refresh repository remotes.', error)
+    }
+  }
+
+  /**
+   * The browsable page of the project's remote, preferring `origin` and otherwise the first
+   * remote Git lists. Resolves `undefined` when there is no remote or it is not a web URL
+   * (see parseRemoteWebUrl); rejects only when `git` itself fails to run.
+   */
+  private async findRepoRemote(realPath: string): Promise<RepoRemote | undefined> {
+    const listed = await this.runner.run('git', ['-C', realPath, 'remote'])
+    const names = listed.stdout.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.length > 0)
+    const name = names.includes('origin') ? 'origin' : names[0]
+    if (!name) return undefined
+
+    const url = await this.runner.run('git', ['-C', realPath, 'remote', 'get-url', name])
+    return parseRemoteWebUrl(url.stdout)
   }
 
   private async findRepoRoot(realPath: string): Promise<string | undefined> {

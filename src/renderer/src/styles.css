@@ -494,12 +494,19 @@ input {
   bottom: calc(100% + 6px);
 }
 
-.icon-options {
-  opacity: 0.7;
+/* Single-color black glyphs (options/close trigger, GitHub mark, trash) are inverted for the
+   dark theme and left as drawn for the light one; brand-colored marks keep their own fill. */
+.icon-options,
+.icon-mono {
   filter: invert(1);
 }
 
-:root[data-theme='light'] .icon-options {
+.icon-options {
+  opacity: 0.7;
+}
+
+:root[data-theme='light'] .icon-options,
+:root[data-theme='light'] .icon-mono {
   filter: none;
 }
 

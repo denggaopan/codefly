@@ -8,13 +8,19 @@ import { shell } from 'electron'
 import type { CapabilityState, ProjectRecord } from '../../shared/contracts'
 import { cliLocator, type CliLocator } from '../infrastructure/cli-locator'
 
-type ExternalApp = 'vscode' | 'explorer'
+type ExternalApp = 'vscode' | 'explorer' | 'browser'
+
+const APP_NAMES: Readonly<Record<ExternalApp, string>> = {
+  vscode: 'Visual Studio Code',
+  explorer: 'Windows File Explorer',
+  browser: 'the default browser'
+}
 
 export class ExternalAppUnavailableError extends Error {
   readonly app: ExternalApp
 
   constructor(app: ExternalApp) {
-    super(app === 'vscode' ? 'Visual Studio Code is not available.' : 'Windows File Explorer is not available.')
+    super(`${APP_NAMES[app]} is not available.`)
     this.name = 'ExternalAppUnavailableError'
     this.app = app
   }
@@ -28,7 +34,7 @@ export class ExternalAppLaunchError extends Error {
   // serialized by ipcRenderer.invoke), so everything a user needs to act on — the target,
   // the launcher executable, and the underlying failure — must be part of the message.
   constructor(app: ExternalApp, target: string, cause?: unknown, launcher?: string) {
-    const appName = app === 'vscode' ? 'Visual Studio Code' : 'Windows File Explorer'
+    const appName = APP_NAMES[app]
     const launcherText = launcher ? ` (launcher: ${launcher})` : ''
     const causeMessage = cause instanceof Error ? cause.message : cause !== undefined ? String(cause) : ''
     const causeText = causeMessage ? `: ${causeMessage}` : '.'
@@ -43,6 +49,7 @@ export class ExternalAppLaunchError extends Error {
 export type SpawnDetachedOptions = { windowsVerbatimArguments?: boolean }
 export type SpawnDetached = (file: string, args: readonly string[], options?: SpawnDetachedOptions) => Promise<void>
 export type OpenPath = (path: string) => Promise<string>
+export type OpenExternal = (url: string) => Promise<void>
 export type PathExists = (path: string) => Promise<boolean>
 
 export type SpawnedProcess = {
@@ -69,6 +76,7 @@ const defaultPathExists: PathExists = async (candidate) => {
 }
 
 const defaultOpenPath: OpenPath = (candidate) => shell.openPath(candidate)
+const defaultOpenExternal: OpenExternal = (url) => shell.openExternal(url)
 
 export const createSpawnDetached = (processSpawner: ProcessSpawner = spawn): SpawnDetached =>
   (file, args, options) => new Promise<void>((resolve, reject) => {
@@ -117,7 +125,8 @@ export class ExternalAppService {
     private readonly pathExists: PathExists = defaultPathExists,
     private readonly spawnDetached: SpawnDetached = defaultSpawnDetached,
     private readonly openPath: OpenPath = defaultOpenPath,
-    private readonly environment: NodeJS.ProcessEnv = process.env
+    private readonly environment: NodeJS.ProcessEnv = process.env,
+    private readonly openExternal: OpenExternal = defaultOpenExternal
   ) {}
 
   async capabilities(): Promise<Pick<CapabilityState, 'vscode'>> {
@@ -160,6 +169,27 @@ export class ExternalAppService {
       if (result.length > 0) throw new Error(result)
     } catch (cause) {
       throw new ExternalAppLaunchError('explorer', project.path, cause)
+    }
+  }
+
+  /**
+   * Opens the project's recorded remote repository page in the default browser. The URL is
+   * the one ProjectService persisted (the renderer only names the project), and it is
+   * re-checked to be http(s) here: the state file is user-editable, and shell.openExternal
+   * would happily hand a file: or custom-scheme URL to the OS.
+   */
+  async openRepository(project: ProjectRecord): Promise<void> {
+    const webUrl = project.repoRemote?.webUrl
+    if (!webUrl) {
+      throw new ExternalAppLaunchError('browser', project.path, new Error('The project has no remote Git repository.'))
+    }
+    if (!/^https?:\/\//iu.test(webUrl)) {
+      throw new ExternalAppLaunchError('browser', webUrl, new Error('Only http(s) repository URLs can be opened.'))
+    }
+    try {
+      await this.openExternal(webUrl)
+    } catch (cause) {
+      throw new ExternalAppLaunchError('browser', webUrl, cause)
     }
   }
 

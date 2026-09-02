@@ -6,11 +6,24 @@ export const sessionKindSchema = z.enum(['powershell', 'cmd', 'claude', 'codex']
 export const runtimeStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'missing'])
 export const titleStateSchema = z.enum(['pending', 'complete'])
 
+// Where the project's Git remote is hosted, derived from the remote URL's hostname (any host
+// containing "github"/"gitlab" counts, so self-hosted instances pick up their brand mark too).
+export const repoHostSchema = z.enum(['github', 'gitlab', 'git'])
+
+// The browsable page for the project's remote. `webUrl` is what the main process hands to
+// shell.openExternal — the renderer only ever names the project, never a URL — so it is
+// always http(s), never a local path or file: URL (see main/services/git-remote.ts).
+export const repoRemoteSchema = z.strictObject({
+  host: repoHostSchema,
+  webUrl: z.string().url()
+})
+
 export const projectRecordSchema = z.strictObject({
   id: z.string().min(1),
   name: z.string().min(1),
   path: z.string().min(1),
   repoRoot: z.string().min(1).optional(),
+  repoRemote: repoRemoteSchema.optional(),
   createdAt: z.string().datetime()
 })
 
@@ -165,6 +178,8 @@ export const setAutoLaunchRequestSchema = z.strictObject({
 
 export type AppState = z.infer<typeof appStateSchema>
 export type ProjectRecord = z.infer<typeof projectRecordSchema>
+export type RepoHost = z.infer<typeof repoHostSchema>
+export type RepoRemote = z.infer<typeof repoRemoteSchema>
 export type SessionRecord = z.infer<typeof sessionRecordSchema>
 export type SessionKind = z.infer<typeof sessionKindSchema>
 export type CapabilityState = z.infer<typeof capabilityStateSchema>

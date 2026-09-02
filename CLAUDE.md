@@ -31,7 +31,8 @@ npm run package:win   # build + electron-builder 产出 release/ 下的 NSIS 安
 
 ### 主进程服务（src/main/services/）
 
-- **SessionCoordinator**：会话全生命周期编排（create / restore / stop / delete / submitFirstInput / shutdown）。`create` 的第三参 `{ worktree }` 决定是否找 WorktreeService 要位置——为 false 时**根本不调用它**，直接落在项目目录（不建分支、不写 exclude）。关键约束：状态变更**先持久化成功再广播**（`emit`）；每个会话/项目用 promise 链实现互斥锁（`withLock`）；PTY 启动后持久化失败要补偿（停 PTY + 落 error 状态）。
+- **ProjectService**：项目注册与派生信息。`register` 时用 `git rev-parse` 记 `repoRoot`，并解析远程为 `repoRemote: { host, webUrl }`（`git-remote.ts` 的纯函数 `parseRemoteWebUrl`：origin 优先否则第一个 remote，ssh/scp 形式转 https，hostname 含 github/gitlab 判 host，本地路径/`file:` 返回 undefined）。`refreshRemotes()` 在每次组装 snapshot 时对所有项目重算并只在变化时写回一次，**永不 reject**；单个项目 git 命令失败则保留旧值。「打开 Git 仓库」的 IPC 只传 projectId，主进程从持久化记录取 `webUrl` 并在 `ExternalAppService.openRepository` 再校验 http(s) 才 `shell.openExternal`——renderer 永远指定不了 URL。
+- **SessionCoordinator**：会话全生命周期编排（create / restore / stop / delete / removeProject / submitFirstInput / shutdown）。`removeProject` 只停掉该项目仍在运行的 PTY 并一次写入删掉项目和它全部会话记录，**不碰磁盘**（worktree 与分支原样保留）；PTY 停止失败只记日志不阻止移除。`create` 的第三参 `{ worktree }` 决定是否找 WorktreeService 要位置——为 false 时**根本不调用它**，直接落在项目目录（不建分支、不写 exclude）。关键约束：状态变更**先持久化成功再广播**（`emit`）；每个会话/项目用 promise 链实现互斥锁（`withLock`）；PTY 启动后持久化失败要补偿（停 PTY + 落 error 状态）。
 - **TerminalService**：node-pty 封装与启动适配。Windows 上对 npm shim 有一条解析链：`.exe`/`.com` 直接跑 → `.cmd`/`.bat` 优先找同名 `.exe`，否则经 ComSpec 双引号包裹托管 → 无扩展名依次探测。**恢复会话时传 `{ resume: true }`**：claude 追加 `--continue`，codex 改用 `resume --last` 子命令，shell 会话不变。
 - **WorktreeService**：worktree 创建（`worktree-YYMMDD-N` 命名，写入 `.git/info/exclude` 而非 `.gitignore`）、restore 前校验、删除保护（脏 worktree 阻止删除；**分支永不删除**；从不 `--force`）。非 Git 项目或无 commit 的仓库回退为 ordinary session（直接跑在项目目录）。
 - **SessionStore**：版本化 JSON（Electron `userData/state.json`），写入前经 `appStateSchema` 校验，损坏时带 recoveryWarning 恢复。
@@ -48,7 +49,7 @@ npm run package:win   # build + electron-builder 产出 release/ 下的 NSIS 安
 
 - `store/use-app-store.ts`（zustand）：action 调 `window.codefly` 并把返回记录立即合入 appState（返回值就是主进程刚持久化的内容）；`onStateChanged` 广播则整体替换 appState，作为最终事实来源。跨 `ipcRenderer.invoke` 的 rejection 会被 Electron 抹掉子类信息，**只能读 `error.message`，不能按错误类型分支**。
 - `terminal/first-input-tracker.ts`：从 PTY 输入流中剥离 ANSI 转义序列、捕获首行提交文本（用于标题生成），之后纯透传。
-- 组件：`ProjectSidebar`（项目手风琴 + 会话行；状态由标题前的彩色圆点表示，文案只作为圆点的 `aria-label`/`title`，如停止的会话是 "Click to restore"）、`TerminalWorkspace`（xterm 实例管理）、`SessionLauncher`、`ConfirmDialog`、`UpdateDialog`。
+- 组件：`ProjectSidebar`（项目手风琴 + 会话行；状态由标题前的彩色圆点表示，文案只作为圆点的 `aria-label`/`title`，如停止的会话是 "Click to restore"。项目操作菜单固定四项 New session / Open in VS Code / Open project folder / Remove from list，`project.repoRemote` 存在时在 folder 与 remove 之间多一项 Open Git repository，图标由 `repo-host-icons.ts` 按 host 选：GitHub 是单色 glyph 走 `.icon-mono` 暗色反白，GitLab/Git 用品牌色；菜单打开时触发按钮的 ⋯ 换成 ✕ 图标；Remove 走 `ConfirmDialog` 二次确认，文案按该项目会话数选带/不带计数的 key）、`TerminalWorkspace`（xterm 实例管理）、`SessionLauncher`、`ConfirmDialog`、`UpdateDialog`。
 - `UpdateDialog` + store 的 `updater` 状态机（`idle → available → downloading → ready → installing`，外加 `error`）：整个更新流程只有这一个界面，启动时的后台检查与 Settings 的手动检查都汇入它。**后台检查静默**——只有 `available` 才会改状态，失败/最新/无发布一律留在 `idle` 且不发 notice。进度事件只在 phase 仍是 `downloading` 时合并（避免过期事件把对话框拉回下载态），版本以事件为准而不是拿存的版本去比对——主进程在下载开始时会重新解析 release，检查与点击之间发布了新版本时用旧版本号过滤会让进度条整场停在 0。「稍后更新」只回 `idle`，已下载的安装包留在磁盘由主进程复用。`downloading` 与 `installing` 期间背景点击和 Escape **一律无效**：整窗背景对"丢弃一个快下完的下载"来说是太大的误点目标，取消只能走 Cancel 按钮；`installing` 阶段不提供任何按钮（应用正在退出，且防住双击起两个 NSIS 向导）。
 - `i18n/`：自建类型安全字典，不引库。`en.ts` 是 key 的唯一来源（`TranslationKey` 由它推导），`zh-CN.ts` 被类型约束为必须全量实现——**新增 UI 文案必须同时加两个字典的 key**，否则编译不过。组件用 `useTranslation()` 取 `t`，纯函数（如 `session-status.ts`、store 的 notice）改为接收 `Translator` 或直接调 `translate(locale, ...)`。语言存 localStorage（与 theme 同源，不进持久化 AppState），**默认 en 且不跟随系统语言**：全部单测与 e2e 都断言英文文案，改默认值会全线挂。
 - `SettingsDialog`：开机自启动 / 会话类型 / 外观 / 语言 / 版本与检查更新 / 关于链接。「会话类型」每种类型两个开关：`enabled`（关闭则不出现在新建菜单）与 `worktree`（开启则额外提供「X (new worktree)」入口）；存 localStorage（key `codefly.sessionKinds`，与 theme/locale 同源，不进持久化 AppState），默认全部启用、shell 的 worktree 关、agent 的 worktree 开（`DEFAULT_SESSION_KIND_PREFERENCES`）。**worktree 选择由创建请求显式携带（`createSessionRequestSchema.worktree`），主进程从不读这份偏好**。版本/更新/关于三块的数据由主进程 `AppInfoService` 提供，对话框每次打开时重新拉取；外链只接受 `shared/links.ts` 里的三个具名 target，URL 由主进程查表得到，renderer 不能让它打开任意地址。检查结果带 `asset`（该 release 确实发布了 Windows 安装包）时才出现「Update now」，它把版本交给 store 并立刻开始下载、关闭设置框，由 `UpdateDialog` 接手。
@@ -60,7 +61,7 @@ npm run package:win   # build + electron-builder 产出 release/ 下的 NSIS 安
 - 应用启动时所有会话一律标记为 `stopped`；点击恢复在原目录重启同类型 CLI 并续接上次对话（见 TerminalService 的 resume 参数）。
 - 应用启动时后台检查一次更新：只有确实有新版本才弹 `UpdateDialog`，失败/最新/无发布全部静默。「立即更新」在应用内下载安装包（进度可见、可取消），完成后再问一次「立即安装 / 稍后」；「立即安装」= 启动安装包并退出应用。
 - e2e 的更新用例另起一个 Electron 实例（启动检查每次启动只跑一次，模态框会挡住共用窗口的其它用例），用 `CODEFLY_E2E_RELEASE` 离线提供一个 release、`CODEFLY_E2E_INSTALL_LOG` 记录本该被执行的安装包路径；**磁盘写入是真的**（写进套件自己的 user-data 目录），只有网络与 spawn 被替换。
-- e2e 断言了 Claude/Codex 收到的**精确 argv**、标题进程不带 bypass 旗标、worktree 序号（Claude=1、Codex=2、手动开启开关后的 cmd=3；PowerShell 是 ordinary）、会话类型开关的增删条目与重启存活、重启持久化、脏 worktree 删除保护等——改这些行为必须同步改 `e2e/codefly.spec.ts`。
+- e2e 断言了 Claude/Codex 收到的**精确 argv**、标题进程不带 bypass 旗标、worktree 序号（Claude=1、Codex=2、手动开启开关后的 cmd=3；PowerShell 是 ordinary）、会话类型开关的增删条目与重启存活、重启持久化、脏 worktree 删除保护、项目菜单的精确条目（fixture 仓库带一个 GitHub 形态的 `origin`，所以是 5 项且仓库图标为 mono glyph）等——改这些行为必须同步改 `e2e/codefly.spec.ts`。
 
 ## 测试约定
 

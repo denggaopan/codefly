@@ -9,6 +9,7 @@ export const zhCN: Translations = {
   'common.cancel': '取消',
   'common.confirm': '确认',
   'common.delete': '删除',
+  'common.remove': '移除',
 
   'titleBar.settings': '设置',
 
@@ -18,6 +19,11 @@ export const zhCN: Translations = {
   'sidebar.newSession': '新建会话',
   'sidebar.openInVSCode': '在 VS Code 中打开项目',
   'sidebar.openProjectFolder': '打开项目文件夹',
+  'sidebar.openRepository': '打开 Git 仓库',
+  'sidebar.removeProject': '从列表中移除',
+  'sidebar.removeProjectTitle': '移除项目',
+  'sidebar.removeProjectPrompt': '确定将“{project}”从列表中移除吗？不会删除磁盘上的任何内容。',
+  'sidebar.removeProjectWithSessionsPrompt': '确定将“{project}”从列表中移除吗？它的 {count} 个会话也会一并移除。不会删除磁盘上的任何内容。',
   'sidebar.addProject': '添加项目',
   'sidebar.ordinarySession': '普通会话',
   'sidebar.deleteSessionTitle': '删除会话',

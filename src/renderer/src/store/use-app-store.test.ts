@@ -60,6 +60,8 @@ const createFakeApi = () => {
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
     openProjectInVSCode: vi.fn(async (): Promise<void> => undefined),
     openProjectFolder: vi.fn(async (): Promise<void> => undefined),
+    openProjectRepository: vi.fn(async (): Promise<void> => undefined),
+    removeProject: vi.fn(async (): Promise<void> => undefined),
     createSession: vi.fn(async (): Promise<SessionRecord> => claudeSession),
     restoreSession: vi.fn(async (): Promise<SessionRecord> => claudeSession),
     reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
@@ -151,6 +153,70 @@ describe('useAppStore.reorderProjects', () => {
 
     expect(useAppStore.getState().appState.projects).toEqual(before)
     expect(useAppStore.getState().notice).toEqual({ message: 'Project not found: ghost', tone: 'error' })
+  })
+})
+
+describe('useAppStore.openProjectRepository', () => {
+  it('names only the project over IPC and surfaces a rejection as a notice', async () => {
+    await useAppStore.getState().openProjectRepository('project-1')
+    expect(api.openProjectRepository).toHaveBeenCalledWith('project-1')
+    expect(useAppStore.getState().notice).toBeNull()
+
+    api.openProjectRepository.mockRejectedValue(new Error('Could not open https://github.com/me/app in the default browser: boom'))
+    await useAppStore.getState().openProjectRepository('project-1')
+    expect(useAppStore.getState().notice).toEqual({
+      message: 'Could not open https://github.com/me/app in the default browser: boom',
+      tone: 'error'
+    })
+  })
+})
+
+describe('useAppStore.removeProject', () => {
+  const projectAt = (id: string): ProjectRecord => ({ id, name: id, path: `C:\\${id}`, createdAt: '2026-08-20T00:00:00.000Z' })
+
+  beforeEach(() => {
+    useAppStore.setState((state) => ({
+      appState: { ...state.appState, projects: [projectAt('project-1'), projectAt('project-2')] },
+      activeProjectId: 'project-1',
+      activeSessionId: claudeSession.id,
+      launcherOpen: true
+    }))
+  })
+
+  it('forgets the project over IPC and moves the selection off its vanished records', async () => {
+    await useAppStore.getState().removeProject('project-1')
+
+    expect(api.removeProject).toHaveBeenCalledWith('project-1')
+    const state = useAppStore.getState()
+    expect(state.appState.projects.map((project) => project.id)).toEqual(['project-2'])
+    expect(state.appState.sessions).toEqual([])
+    expect(state.activeProjectId).toBe('project-2')
+    expect(state.activeSessionId).toBeNull()
+    expect(state.launcherOpen).toBe(false)
+    expect(state.notice).toBeNull()
+  })
+
+  it('leaves the selection alone when a different project is removed', async () => {
+    await useAppStore.getState().removeProject('project-2')
+
+    const state = useAppStore.getState()
+    expect(state.appState.projects.map((project) => project.id)).toEqual(['project-1'])
+    expect(state.appState.sessions).toHaveLength(2)
+    expect(state.activeProjectId).toBe('project-1')
+    expect(state.activeSessionId).toBe(claudeSession.id)
+    expect(state.launcherOpen).toBe(true)
+  })
+
+  it('keeps everything and surfaces a notice when the main process rejects', async () => {
+    api.removeProject.mockRejectedValue(new Error('Project not found: project-1'))
+
+    await useAppStore.getState().removeProject('project-1')
+
+    const state = useAppStore.getState()
+    expect(state.appState.projects).toHaveLength(2)
+    expect(state.appState.sessions).toHaveLength(2)
+    expect(state.activeProjectId).toBe('project-1')
+    expect(state.notice).toEqual({ message: 'Project not found: project-1', tone: 'error' })
   })
 })
 

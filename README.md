@@ -138,6 +138,24 @@ install locations; if none is found, the menu item is disabled with an install h
 folder action opens the directory in Windows File Explorer via `shell.openPath` and has no
 such dependency.
 
+## Git repository and removing a project
+
+When the project directory is inside a Git repository that has a remote with a web address,
+the options menu also offers **Open Git repository**. CodeFly reads the `origin` remote (or
+the first remote when there is no `origin`), turns ssh/scp-style URLs such as
+`git@github.com:owner/repo.git` into their https page, and opens it in your default browser.
+The entry's icon follows the host: the GitHub mark for hosts containing `github`, the GitLab
+mark for hosts containing `gitlab` (self-hosted instances included), and a plain Git mark
+otherwise. Repositories without a remote, or whose remote is a local directory, get no entry.
+Remotes are re-read every time the app starts, so adding or changing a remote is picked up on
+the next launch. Only the project id ever crosses from the UI to the main process — the URL
+that reaches the browser is always the one CodeFly derived itself, and it must be http(s).
+
+**Remove from list** forgets a project after a confirmation. Any running sessions of that
+project are stopped and all of its session records are removed together with it; nothing on
+disk is touched — the project directory, its worktrees and their branches stay exactly as
+they are. Re-adding the directory later starts with an empty session list.
+
 ## Settings
 
 The title bar's gear button opens the settings dialog.

@@ -41,13 +41,16 @@ type TerminalLocator = Pick<CliLocator, 'resolvePowerShell' | 'resolveAgent'>
 
 const buildGetSnapshot = (
   coordinator: SessionCoordinator,
+  projectService: Pick<ProjectService, 'refreshRemotes'>,
   externalAppService: ExternalAppService,
   agentLocator: AgentLocator,
   store: Pick<SessionStore, 'recoveryWarning'>
 ): (() => Promise<AppSnapshot>) => {
   return async () => {
     const [state, claudePath, codexPath, vscode] = await Promise.all([
-      coordinator.snapshot(),
+      // Remotes are re-read before the state is handed out so the sidebar's repository
+      // entries reflect the working trees as they are now, not as they were when added.
+      projectService.refreshRemotes().then(() => coordinator.snapshot()),
       agentLocator.resolveAgent('claude'),
       agentLocator.resolveAgent('codex'),
       externalAppService.capabilities()
@@ -112,7 +115,11 @@ const buildE2EExternalAppService = (): ExternalAppService =>
       // Mocked launch: E2E coverage asserts the row action fires without toggling the
       // project row, never that a real VS Code window opens.
     },
-    async () => ''
+    async () => '',
+    process.env,
+    async () => {
+      // Mocked browser: the repository action must never open a real browser from the suite.
+    }
   )
 
 /**
@@ -288,7 +295,7 @@ app.whenReady().then(() => {
     appInfoService,
     updaterService,
     terminalService,
-    getSnapshot: buildGetSnapshot(coordinator, externalAppService, agentLocator, store),
+    getSnapshot: buildGetSnapshot(coordinator, projectService, externalAppService, agentLocator, store),
     applyTheme: (theme) => applyWindowTheme(window, theme)
   })
 

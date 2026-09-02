@@ -69,6 +69,8 @@ export type AppStore = {
   reorderProjects: (orderedProjectIds: readonly string[]) => Promise<void>
   openProjectInVSCode: (projectId: string) => Promise<void>
   openProjectFolder: (projectId: string) => Promise<void>
+  openProjectRepository: (projectId: string) => Promise<void>
+  removeProject: (projectId: string) => Promise<void>
 
   openLauncher: () => void
   closeLauncher: () => void
@@ -476,6 +478,37 @@ export const useAppStore = create<AppStore>()((set, get) => {
     openProjectFolder: async (projectId) => {
       try {
         await window.codefly.openProjectFolder(projectId)
+      } catch (error) {
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
+      }
+    },
+
+    openProjectRepository: async (projectId) => {
+      try {
+        await window.codefly.openProjectRepository(projectId)
+      } catch (error) {
+        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
+      }
+    },
+
+    removeProject: async (projectId) => {
+      try {
+        await window.codefly.removeProject(projectId)
+        // The main process has already broadcast the state without this project; this only
+        // moves the selection off the records that vanished (and is a no-op for the state).
+        set((state) => {
+          const projects = state.appState.projects.filter((project) => project.id !== projectId)
+          const sessions = state.appState.sessions.filter((session) => session.projectId !== projectId)
+          const activeProjectRemoved = state.activeProjectId === projectId
+          const activeSessionRemoved =
+            state.activeSessionId !== null && !sessions.some((session) => session.id === state.activeSessionId)
+          return {
+            appState: { ...state.appState, projects, sessions },
+            activeProjectId: activeProjectRemoved ? (projects[0]?.id ?? null) : state.activeProjectId,
+            activeSessionId: activeSessionRemoved ? null : state.activeSessionId,
+            launcherOpen: activeProjectRemoved ? false : state.launcherOpen
+          }
+        })
       } catch (error) {
         set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
       }

@@ -234,6 +234,38 @@ export class SessionCoordinator {
     })
   }
 
+  /**
+   * Forgets a project: stops whichever of its sessions are still alive, then drops the
+   * project and every one of its session records in a single persisted write. Nothing on
+   * disk is touched — the directory, its worktrees, and their branches stay exactly as they
+   * are, which is what "remove from list" promises. A PTY that refuses to stop is logged and
+   * skipped rather than blocking the removal: the record is going away either way.
+   */
+  async removeProject(projectId: string): Promise<void> {
+    return this.withLock(`project:${projectId}`, async () => {
+      await this.projectService.get(projectId)
+      const current = await this.store.load()
+      const sessions = current.sessions.filter((session) => session.projectId === projectId)
+
+      for (const session of sessions) {
+        this.titleService.cancel(session.id)
+        if (session.status !== 'running' && session.status !== 'creating') continue
+        try {
+          await this.terminalService.stop(session.id)
+        } catch (error) {
+          console.error(`SessionCoordinator: failed to stop PTY for session ${session.id} while removing project ${projectId}.`, error)
+        }
+      }
+
+      const next = await this.store.update((state) => ({
+        ...state,
+        projects: state.projects.filter((project) => project.id !== projectId),
+        sessions: state.sessions.filter((session) => session.projectId !== projectId)
+      }))
+      this.emit(next)
+    })
+  }
+
   async shutdown(): Promise<void> {
     const current = await this.store.load()
     for (const session of current.sessions) {

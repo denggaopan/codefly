@@ -30,6 +30,9 @@ export function createRepo(): string {
   writeFileSync(join(repoPath, 'README.md'), '# CodeFly E2E fixture repository\n', 'utf8')
   git(['add', 'README.md'])
   git(['commit', '-m', 'Initial commit'])
+  // A GitHub-shaped remote (never fetched or pushed) so the project menu offers its
+  // "Open Git repository" entry with the GitHub mark; the E2E browser launch is mocked.
+  git(['remote', 'add', 'origin', 'https://github.com/codefly-e2e/fixture.git'])
 
   return repoPath
 }

@@ -84,6 +84,7 @@ class FakeCoordinator {
   readonly create = vi.fn()
   readonly restore = vi.fn()
   readonly delete = vi.fn()
+  readonly removeProject = vi.fn(async () => undefined)
   readonly submitFirstInput = vi.fn()
   private readonly stateListeners = new Set<(state: AppState) => void>()
 
@@ -187,7 +188,7 @@ type Harness = {
   dialog: ReturnType<typeof fakeDialog>
   projectService: { register: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; reorder: ReturnType<typeof vi.fn> }
   coordinator: FakeCoordinator
-  externalAppService: { openInVSCode: ReturnType<typeof vi.fn>; openInExplorer: ReturnType<typeof vi.fn> }
+  externalAppService: { openInVSCode: ReturnType<typeof vi.fn>; openInExplorer: ReturnType<typeof vi.fn>; openRepository: ReturnType<typeof vi.fn> }
   appInfoService: {
     info: ReturnType<typeof vi.fn>
     checkForUpdates: ReturnType<typeof vi.fn>
@@ -213,7 +214,11 @@ const buildHarness = (options: {
   const dialog = fakeDialog(options.dialogResult ?? { canceled: true, filePaths: [] })
   const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project), reorder: vi.fn(async () => [project]) }
   const coordinator = new FakeCoordinator()
-  const externalAppService = { openInVSCode: vi.fn(async () => undefined), openInExplorer: vi.fn(async () => undefined) }
+  const externalAppService = {
+    openInVSCode: vi.fn(async () => undefined),
+    openInExplorer: vi.fn(async () => undefined),
+    openRepository: vi.fn(async () => undefined)
+  }
   const appInfoService = {
     info: vi.fn((): AppInfo => appInfo),
     checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: appInfo.version })),
@@ -376,6 +381,44 @@ describe('registerIpc: project:open-folder', () => {
     await expect(ipcMain.invoke(IPC.projectOpenFolder, { projectId: 42 })).rejects.toBeInstanceOf(z.ZodError)
     expect(projectService.get).not.toHaveBeenCalled()
     expect(externalAppService.openInExplorer).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: project:open-repository', () => {
+  it('parses the request, resolves the project, and opens its recorded remote', async () => {
+    const { ipcMain, projectService, externalAppService } = buildHarness()
+
+    await ipcMain.invoke(IPC.projectOpenRepository, { projectId: 'project-1' })
+
+    expect(projectService.get).toHaveBeenCalledWith('project-1')
+    expect(externalAppService.openRepository).toHaveBeenCalledWith(project)
+  })
+
+  it('rejects a request carrying a URL: only the project id may cross IPC', async () => {
+    const { ipcMain, projectService, externalAppService } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.projectOpenRepository, { projectId: 'p1', url: 'https://evil.example' })).rejects.toBeInstanceOf(z.ZodError)
+    await expect(ipcMain.invoke(IPC.projectOpenRepository, {})).rejects.toBeInstanceOf(z.ZodError)
+    expect(projectService.get).not.toHaveBeenCalled()
+    expect(externalAppService.openRepository).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerIpc: project:remove', () => {
+  it('parses the request and forgets the project through the coordinator', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.projectRemove, { projectId: 'project-1' })).resolves.toBeUndefined()
+
+    expect(coordinator.removeProject).toHaveBeenCalledWith('project-1')
+  })
+
+  it('rejects an invalid request before touching the coordinator', async () => {
+    const { ipcMain, coordinator } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.projectRemove, {})).rejects.toBeInstanceOf(z.ZodError)
+    await expect(ipcMain.invoke(IPC.projectRemove, { projectId: '' })).rejects.toBeInstanceOf(z.ZodError)
+    expect(coordinator.removeProject).not.toHaveBeenCalled()
   })
 })
 

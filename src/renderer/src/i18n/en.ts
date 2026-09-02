@@ -8,6 +8,7 @@ export const en = {
   'common.cancel': 'Cancel',
   'common.confirm': 'Confirm',
   'common.delete': 'Delete',
+  'common.remove': 'Remove',
 
   'titleBar.settings': 'Settings',
 
@@ -17,6 +18,12 @@ export const en = {
   'sidebar.newSession': 'New session',
   'sidebar.openInVSCode': 'Open project in VS Code',
   'sidebar.openProjectFolder': 'Open project folder',
+  'sidebar.openRepository': 'Open Git repository',
+  'sidebar.removeProject': 'Remove from list',
+  'sidebar.removeProjectTitle': 'Remove project',
+  'sidebar.removeProjectPrompt': 'Remove "{project}" from the list? Nothing on disk is deleted.',
+  'sidebar.removeProjectWithSessionsPrompt':
+    'Remove "{project}" from the list? Its {count} session(s) will be removed too. Nothing on disk is deleted.',
   'sidebar.addProject': 'Add Project',
   'sidebar.ordinarySession': 'Ordinary session',
   'sidebar.deleteSessionTitle': 'Delete session',

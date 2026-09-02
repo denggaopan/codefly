@@ -270,7 +270,19 @@ test('keeps the terminal workflow usable at the 900 by 600 minimum window size',
   await expect(visibleBypassWarnings()).toHaveText([BYPASS_WARNING_TEXT])
 
   const optionsMenu = await openProjectOptions()
-  await expect(optionsMenu.getByRole('menuitem')).toHaveCount(3)
+  // Five entries: the fixture repository carries a GitHub-shaped `origin`, so the repository
+  // action is offered (with the GitHub mark) between the folder action and removal.
+  await expect(optionsMenu.getByRole('menuitem')).toHaveText([
+    'New session',
+    'Open project in VS Code',
+    'Open project folder',
+    'Open Git repository',
+    'Remove from list'
+  ])
+  // The built bundle inlines the small SVGs as data URIs, so the mark is identified by its
+  // styling class: only the GitHub glyph is mono (inverted in the dark theme); GitLab/Git are
+  // brand-colored and never carry it.
+  await expect(optionsMenu.getByRole('menuitem', { name: 'Open Git repository' }).locator('img')).toHaveClass(/\bicon-mono\b/)
   expect(await optionsMenu.evaluate((element) => getComputedStyle(element).position)).toBe('absolute')
   const darkMenuBackground = await optionsMenu.evaluate((element) => getComputedStyle(element).backgroundColor)
   const [menuBounds, menuViewport] = await Promise.all([
@@ -543,7 +555,7 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
   await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_RESTORE_FOCUS_CHECK', { timeout: 20_000 })
 })
 
-test('mocked VS Code and Explorer project-row actions do not toggle the row or change the active session', async () => {
+test('mocked VS Code, Explorer, and repository project-row actions do not toggle the row or change the active session', async () => {
   const activeRowBefore = window.locator('.session-row-content[aria-current="true"]')
   const activeKindBefore = await activeRowBefore.locator('.session-kind-icon').getAttribute('data-kind')
   expect(activeKindBefore).not.toBeNull()
@@ -561,6 +573,14 @@ test('mocked VS Code and Explorer project-row actions do not toggle the row or c
 
   const explorerMenu = await openProjectOptions()
   await explorerMenu.getByRole('menuitem', { name: 'Open project folder' }).click()
+  await expect(window.locator('.sidebar-notice')).toHaveCount(0)
+  await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
+  await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveAttribute('data-kind', activeKindBefore!)
+
+  // The repository action resolves the fixture's `origin` in the main process and hands the
+  // derived https URL to the (mocked) browser: no notice means it was accepted end to end.
+  const repositoryMenu = await openProjectOptions()
+  await repositoryMenu.getByRole('menuitem', { name: 'Open Git repository' }).click()
   await expect(window.locator('.sidebar-notice')).toHaveCount(0)
   await expect(window.locator('.session-row')).toHaveCount(sessionRowCount)
   await expect(window.locator('.session-row-content[aria-current="true"] .session-kind-icon')).toHaveAttribute('data-kind', activeKindBefore!)

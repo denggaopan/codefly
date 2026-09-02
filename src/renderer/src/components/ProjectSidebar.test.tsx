@@ -16,6 +16,12 @@ import type {
   UpdateInstallResult
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
+import closeIconUrl from '../assets/close.svg'
+import gitIconUrl from '../assets/git.svg'
+import githubIconUrl from '../assets/github.svg'
+import gitlabIconUrl from '../assets/gitlab.svg'
+import optionsIconUrl from '../assets/options.svg'
+import removeIconUrl from '../assets/remove.svg'
 import { useAppStore } from '../store/use-app-store'
 import ProjectSidebar from './ProjectSidebar'
 
@@ -27,6 +33,8 @@ const createFakeApi = (): FakeApi => ({
   reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
   openProjectInVSCode: vi.fn(async (_projectId: string): Promise<void> => undefined),
   openProjectFolder: vi.fn(async (_projectId: string): Promise<void> => undefined),
+  openProjectRepository: vi.fn(async (_projectId: string): Promise<void> => undefined),
+  removeProject: vi.fn(async (_projectId: string): Promise<void> => undefined),
   createSession: vi.fn(async () => {
     throw new Error('createSession not stubbed for this test')
   }),
@@ -223,7 +231,7 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
   })
 
-  it('collapses the three project actions into one labelled options menu', async () => {
+  it('collapses the project actions into one labelled options menu', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
@@ -239,13 +247,125 @@ describe('ProjectSidebar', () => {
     expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
       'New session',
       'Open project in VS Code',
-      'Open project folder'
+      'Open project folder',
+      'Remove from list'
     ])
 
     await user.click(trigger)
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(trigger).toHaveFocus()
+  })
+
+  it('swaps the options glyph for a close glyph while the menu is open', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const trigger = screen.getByRole('button', { name: projectOptionsName(project1.name) })
+    const glyph = () => trigger.querySelector('img')
+    expect(glyph()).toHaveAttribute('src', optionsIconUrl)
+
+    await user.click(trigger)
+    expect(glyph()).toHaveAttribute('src', closeIconUrl)
+
+    await user.click(trigger)
+    expect(glyph()).toHaveAttribute('src', optionsIconUrl)
+  })
+
+  it('offers Open Git repository with the GitHub mark and opens it through the main process', async () => {
+    const user = userEvent.setup()
+    const github: ProjectRecord = { ...project1, repoRemote: { host: 'github', webUrl: 'https://github.com/me/app' } }
+    seedStore({ version: 1, projects: [github], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
+      'New session',
+      'Open project in VS Code',
+      'Open project folder',
+      'Open Git repository',
+      'Remove from list'
+    ])
+    const item = within(menu).getByRole('menuitem', { name: 'Open Git repository' })
+    expect(item.querySelector('img')).toHaveAttribute('src', githubIconUrl)
+    // GitHub's mark is a mono glyph, so it takes the dark-theme inversion like the other mono icons.
+    expect(item.querySelector('img')).toHaveClass('icon-mono')
+
+    await user.click(item)
+
+    expect(api.openProjectRepository).toHaveBeenCalledWith(github.id)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['gitlab', gitlabIconUrl],
+    ['git', gitIconUrl]
+  ] as const)('uses the brand-colored %s mark without inversion for that host', async (host, iconUrl) => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [{ ...project1, repoRemote: { host, webUrl: 'https://example.com/me/app' } }], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const icon = within(menu).getByRole('menuitem', { name: 'Open Git repository' }).querySelector('img')
+    expect(icon).toHaveAttribute('src', iconUrl)
+    expect(icon).not.toHaveClass('icon-mono')
+  })
+
+  it('hides Open Git repository for projects without a browsable remote', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    expect(within(menu).queryByRole('menuitem', { name: 'Open Git repository' })).not.toBeInTheDocument()
+  })
+
+  it('asks for confirmation before removing a project and forgets it on confirm', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    const menu = await openProjectOptions(user)
+    const item = within(menu).getByRole('menuitem', { name: 'Remove from list' })
+    expect(item.querySelector('img')).toHaveAttribute('src', removeIconUrl)
+    await user.click(item)
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(api.removeProject).not.toHaveBeenCalled()
+    const dialog = screen.getByRole('alertdialog', { name: 'Remove project' })
+    expect(dialog).toHaveTextContent(`Remove "${project1.name}" from the list? Nothing on disk is deleted.`)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
+    expect(api.removeProject).toHaveBeenCalledWith(project1.id)
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  })
+
+  it('mentions how many sessions go with the project when it still has some', async () => {
+    const user = userEvent.setup()
+    const otherSession: SessionRecord = { ...stoppedSession, id: 'session-other', title: 'Investigate crash' }
+    seedStore({ version: 1, projects: [project1], sessions: [stoppedSession, otherSession] })
+    render(<ProjectSidebar />)
+
+    await user.click(within(await openProjectOptions(user)).getByRole('menuitem', { name: 'Remove from list' }))
+
+    expect(screen.getByRole('alertdialog', { name: 'Remove project' })).toHaveTextContent(
+      `Remove "${project1.name}" from the list? Its 2 session(s) will be removed too. Nothing on disk is deleted.`
+    )
+  })
+
+  it('keeps the project when the removal is cancelled', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await user.click(within(await openProjectOptions(user)).getByRole('menuitem', { name: 'Remove from list' }))
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }))
+
+    expect(api.removeProject).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.getByText(project1.name)).toBeInTheDocument()
   })
 
   it('translates the project options trigger and menu items when the locale changes', async () => {
@@ -261,7 +381,8 @@ describe('ProjectSidebar', () => {
     expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent?.trim())).toEqual([
       '新建会话',
       '在 VS Code 中打开项目',
-      '打开项目文件夹'
+      '打开项目文件夹',
+      '从列表中移除'
     ])
   })
 
@@ -548,18 +669,22 @@ describe('ProjectSidebar', () => {
     const menu = await openProjectOptions(user)
     const newSession = within(menu).getByRole('menuitem', { name: 'New session' })
     const folder = within(menu).getByRole('menuitem', { name: 'Open project folder' })
+    const remove = within(menu).getByRole('menuitem', { name: 'Remove from list' })
     expect(newSession).toHaveFocus()
 
+    // The disabled VS Code entry is skipped; the enabled ring is New session → folder → remove.
     await user.keyboard('{ArrowDown}')
     expect(folder).toHaveFocus()
+    await user.keyboard('{ArrowDown}')
+    expect(remove).toHaveFocus()
     await user.keyboard('{ArrowDown}')
     expect(newSession).toHaveFocus()
     await user.keyboard('{End}')
-    expect(folder).toHaveFocus()
+    expect(remove).toHaveFocus()
     await user.keyboard('{Home}')
     expect(newSession).toHaveFocus()
     await user.keyboard('{ArrowUp}')
-    expect(folder).toHaveFocus()
+    expect(remove).toHaveFocus()
   })
 
   it('closes on Escape and restores focus to the options trigger', async () => {

@@ -223,6 +223,50 @@ describe('ExternalAppService', () => {
   })
 })
 
+describe('ExternalAppService.openRepository', () => {
+  const remoteProject = (webUrl: string): ProjectRecord => ({
+    ...project('C:\\Projects\\One'),
+    repoRemote: { host: 'github', webUrl }
+  })
+  const serviceWith = (openExternal: (url: string) => Promise<void>) =>
+    new ExternalAppService(locatorFor(undefined), vi.fn(async () => true), vi.fn(), vi.fn(), {}, openExternal)
+
+  it('opens the recorded remote page in the default browser', async () => {
+    const openExternal = vi.fn(async () => {})
+
+    await expect(serviceWith(openExternal).openRepository(remoteProject('https://github.com/me/app'))).resolves.toBeUndefined()
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/me/app')
+  })
+
+  it('rejects a project without a remote before touching the browser', async () => {
+    const openExternal = vi.fn(async () => {})
+
+    await expect(serviceWith(openExternal).openRepository(project('C:\\Projects\\One'))).rejects.toMatchObject({
+      app: 'browser',
+      target: 'C:\\Projects\\One'
+    })
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  it.each([['file:///C:/repos/app'], ['javascript:alert(1)'], ['ftp://example.com/repo']])(
+    'refuses to hand a persisted non-http(s) remote %s to the browser',
+    async (webUrl) => {
+      const openExternal = vi.fn(async () => {})
+
+      await expect(serviceWith(openExternal).openRepository(remoteProject(webUrl))).rejects.toBeInstanceOf(ExternalAppLaunchError)
+      expect(openExternal).not.toHaveBeenCalled()
+    }
+  )
+
+  it('wraps browser failures as typed launch errors that name the URL and the cause', async () => {
+    const failure = new Error('No default browser')
+    const rejection = expect(serviceWith(vi.fn().mockRejectedValue(failure)).openRepository(remoteProject('https://github.com/me/app'))).rejects
+
+    await rejection.toMatchObject({ app: 'browser', target: 'https://github.com/me/app', cause: failure })
+    await rejection.toThrow('No default browser')
+  })
+})
+
 describe('createSpawnDetached', () => {
   it('uses a shell-free detached hidden process and unrefs only after spawn', async () => {
     const child = new EventEmitter()
