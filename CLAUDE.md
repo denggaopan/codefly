@@ -17,7 +17,10 @@ npx vitest run src/main/services/terminal-service.test.ts        # 跑单个测�
 npx vitest run <file> -t "test name"                              # 跑单个用例
 npm run test:e2e      # build + Playwright 驱动真实 Electron 窗口（e2e/codefly.spec.ts）
 npm run package:win   # build + electron-builder 产出 release/ 下的 NSIS 安装包（无需签名凭据）
+npm run package:mac   # build + 在 Linux 容器里跑 electron-builder，产出 release/ 下 macOS x64/arm64 的 .app zip（需 Docker Desktop；未签名）
 ```
+
+macOS 打包的几条约束（细节见 README「Packaging › macOS」）：electron-builder 在 Windows 主机上直接拒绝 `--mac`，所以 `scripts/package-mac.mjs` 先在宿主机 build，再把仓库 bind-mount 进 `scripts/mac-builder.Dockerfile` 的容器跑 `scripts/package-mac.container.sh`；容器用 `electron-builder.mac-cross.yml` 叠加基础配置、把 `electronDist` 置空（基础配置里那份是宿主机的 Windows Electron）；只向 electron-builder 要 `dir`，再用 Info-ZIP `zip -y` 压缩——非 macOS 上 electron-builder 用 7-Zip 打 zip 会解引用 `Electron Framework.framework` 里的符号链接；`dmg` 依赖 `hdiutil`，只能在 Mac 上产出。node-pty 自带 darwin 预编译二进制，宿主机的 `node_modules` 直接复用、无需编译。产物未签名、未公证，且应用运行时仍是 Windows-first（`CliLocator` 用 `where.exe` 查找 CLI），打包 ≠ 移植。
 
 注意：在新建的 git worktree 里 `npm install` 后若报 "Electron failed to install correctly"，运行 `node node_modules/electron/install.js` 补下二进制。
 

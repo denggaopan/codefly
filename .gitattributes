@@ -1,0 +1,5 @@
+# Files consumed by Linux tooling (see scripts/package-mac.mjs) stay LF even on a
+# core.autocrlf=true Windows checkout: CRLF breaks `sh` inside the container, and
+# Dockerfile parsing is not worth gambling on.
+*.sh text eol=lf
+*.Dockerfile text eol=lf

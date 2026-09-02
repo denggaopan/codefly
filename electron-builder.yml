@@ -26,3 +26,27 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+mac:
+  icon: build/icon.png
+  category: public.app-category.developer-tools
+  # App bundles, not installers, so no "Setup" in the name.
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  # These targets apply on a macOS host (`npx electron-builder --mac`). dmg needs
+  # hdiutil, so `npm run package:mac` (Linux container, see scripts/package-mac.mjs)
+  # overrides them from the CLI with `dir` and zips the bundle itself: 7-Zip, which
+  # electron-builder uses for zip off macOS, dereferences the symlinks inside
+  # Electron Framework.framework and triples the bundle size.
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  files:
+    # node-pty ships prebuilt binaries for every platform. The Windows ones, the
+    # build/ tree its Windows postinstall populates and the bundled ConPTY
+    # binaries are dead weight in a macOS bundle. prebuilds/darwin-* stay: node-pty
+    # resolves prebuilds/<platform>-<arch>/ at runtime and execs spawn-helper from
+    # there (asarUnpack above keeps it on disk).
+    - "!node_modules/node-pty/build/**"
+    - "!node_modules/node-pty/prebuilds/win32-*/**"
+    - "!node_modules/node-pty/third_party/**"

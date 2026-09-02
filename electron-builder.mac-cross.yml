@@ -1,0 +1,8 @@
+# Overlay for producing the macOS bundle from a Linux container — see
+# scripts/package-mac.mjs. electron-builder refuses `--mac` on a Windows host, and
+# the base config reuses node_modules/electron/dist, which is the *host's* Electron
+# (the Windows build here). Clearing electronDist makes electron-builder download
+# the darwin build for each target arch instead; the container caches it under
+# ~/.cache/electron, which the script bind-mounts from the host.
+extends: ./electron-builder.yml
+electronDist: null

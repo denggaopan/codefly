@@ -46,6 +46,7 @@ npm run dev
 | `npm run test:watch`     | Run the Vitest suite in watch mode.                                                                          |
 | `npm run test:e2e`       | Build the app, then run the Playwright Electron end-to-end suite (`e2e/codefly.spec.ts`).                    |
 | `npm run package:win`    | Build the app, then produce a Windows x64 NSIS installer under `release/` via `electron-builder`.            |
+| `npm run package:mac`    | Build the app, then produce unsigned macOS x64 and arm64 app bundles (`.zip`) under `release/` by running `electron-builder` in a Linux container (needs Docker). |
 
 ## Session kinds and the New session menu
 
@@ -278,12 +279,55 @@ install), none of this test-mode wiring is active.
 
 ## Packaging
 
+### Windows
+
 ```bash
 npm run package:win
 ```
 
 Produces an unsigned Windows x64 NSIS installer under `release/`. Packaging does not require
 code-signing credentials.
+
+### macOS (from Windows or Linux, via Docker)
+
+```bash
+npm run package:mac
+```
+
+Produces `release/CodeFly-<version>-mac-x64.zip` and `release/CodeFly-<version>-mac-arm64.zip`,
+each holding an unsigned `CodeFly.app`. electron-builder refuses to build macOS targets on a
+Windows host, so `scripts/package-mac.mjs` builds `out/` on the host and then runs
+electron-builder inside a small Linux container (`scripts/mac-builder.Dockerfile`:
+`node:24-bookworm-slim` plus Info-ZIP) with the repository bind-mounted.
+
+- Docker Desktop (or any Docker daemon) must be running. The image is built on first use and
+  cached. Electron's darwin builds and electron-builder's icon toolset are downloaded once into
+  `%LOCALAPPDATA%\codefly-mac-builder\cache` (`~/.cache/codefly-mac-builder` elsewhere).
+- `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` from the host shell are forwarded into the
+  container; a loopback proxy address is rewritten to `host.docker.internal`.
+- The host's `node_modules` is reused as is: node-pty ships darwin prebuilds, so nothing is
+  compiled. `mac.files` in `electron-builder.yml` drops node-pty's Windows binaries from the
+  bundle.
+- The container asks electron-builder for `dir` only and compresses the bundle itself with
+  `zip -y`, because the 7-Zip electron-builder uses for zip off macOS dereferences the symlinks
+  inside `Electron Framework.framework`. `dmg` needs `hdiutil`, so it is only produced by
+  `npx electron-builder --mac` on a Mac — that is what `mac.target` in `electron-builder.yml`
+  describes.
+- `electron-builder.mac-cross.yml` is the overlay the container uses: it clears `electronDist`
+  so the darwin Electron is downloaded instead of the host's Windows copy being reused.
+
+The bundles are neither signed nor notarized:
+
+- Gatekeeper blocks the first launch of a downloaded unsigned app. Clear the quarantine flag
+  (`xattr -cr CodeFly.app`) or use *Open Anyway* under System Settings › Privacy & Security.
+- Apple Silicon only runs native code that carries a code signature (an ad-hoc one is enough),
+  and the bundle assembled off macOS is not re-signed. After unpacking, run
+  `codesign --force --deep --sign - CodeFly.app`.
+
+This produces the macOS *bundle*; the app itself is still Windows-first. `CliLocator` looks CLIs
+up with `where.exe`, so on macOS the PowerShell, Claude and Codex entries report their CLI as
+missing, and the Command Prompt kind has no macOS equivalent. Porting the runtime is separate
+work.
 
 ### Manual smoke checklist (authenticated CLIs, packaged installer)
 
