@@ -119,6 +119,19 @@ The background, non-interactive process CodeFly uses to generate a session's tit
 below) never receives either bypass flag, does not share the interactive session's PTY, and
 runs in a neutral directory, not your project or worktree.
 
+### Keyboard: paste and multi-line input
+
+In Claude and Codex sessions **Ctrl+V** pastes the clipboard text into the CLI's prompt, and
+**Shift+Enter** inserts a newline while **Enter** sends the message. Left alone, xterm.js
+would turn Ctrl+V into a literal `^V` byte (which neither CLI treats as "paste text") and
+Shift+Enter into a plain Enter. CodeFly hands Ctrl+V back to the browser so xterm's own paste
+path (bracketed paste included) feeds the PTY, and sends Shift+Enter as `ESC CR` — the bytes a
+terminal emits for Alt+Enter, and the one newline encoding both CLIs honour through ConPTY on
+Windows (Claude Code reads it as Meta+Enter; Codex receives an Alt+Enter key event, whereas a
+plain line feed reaches it as Ctrl+Enter and is ignored). Every other key, Alt+V included,
+reaches the CLI unchanged. PowerShell and Command Prompt sessions are untouched: PSReadLine
+and conhost handle Ctrl+V themselves, so xterm keeps sending `^V` there.
+
 ## Session titles
 
 The title shown for a session starts as a placeholder (e.g. "New Claude session") and

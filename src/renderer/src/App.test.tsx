@@ -33,6 +33,7 @@ vi.mock('@xterm/xterm', () => ({
     focus = vi.fn()
     loadAddon = vi.fn()
     onData = vi.fn(() => ({ dispose: vi.fn() }))
+    attachCustomKeyEventHandler = vi.fn()
   }
 }))
 vi.mock('@xterm/addon-fit', () => ({

@@ -464,6 +464,22 @@ test('submitting the first input replaces the title and never leaks a bypass fla
   await expect(claudeRow.locator('.session-title')).not.toHaveText(originalTitle ?? '', { timeout: 20_000 })
 })
 
+test('Ctrl+V pastes the clipboard text into the Claude session instead of sending ^V', async () => {
+  // xterm's own key handling turns Ctrl+V into a literal ^V byte, which neither Claude nor
+  // Codex treats as "paste text". Agent sessions hand the key back to the browser so its
+  // native paste event feeds xterm's paste path (see terminal-key-bindings.ts). The fake agent
+  // echoes its stdin, so the text can only appear on screen if the clipboard reached the PTY.
+  const previousClipboard = await electronApp.evaluate(({ clipboard }) => clipboard.readText())
+  await electronApp.evaluate(({ clipboard }) => clipboard.writeText('CODEFLY_PASTE_CHECK'))
+  try {
+    await window.locator('.terminal-pane:visible .terminal-instance-host').click()
+    await window.keyboard.press('Control+V')
+    await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_PASTE_CHECK', { timeout: 20_000 })
+  } finally {
+    await electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), previousClipboard)
+  }
+})
+
 test('creates a Codex session as the second worktree, receiving exactly its own bypass flag', async () => {
   const launcher = await openNewSessionLauncher()
   await launcher.getByRole('button', { name: 'Codex (new worktree)', exact: true }).click()

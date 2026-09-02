@@ -13,6 +13,7 @@ import { useTranslation } from '../i18n/use-translation'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
+import { resolveTerminalKey } from '../terminal/terminal-key-bindings'
 
 type TerminalEntry = {
   terminal: Terminal
@@ -150,7 +151,7 @@ export default function TerminalWorkspace() {
     window.codefly.resizeTerminal(sessionId, cols, rows)
   }
 
-  const ensureEntry = (sessionId: string, element: HTMLDivElement): void => {
+  const ensureEntry = (sessionId: string, kind: SessionRecord['kind'], element: HTMLDivElement): void => {
     if (entriesRef.current.has(sessionId)) return
 
     const terminal = new Terminal({
@@ -171,12 +172,31 @@ export default function TerminalWorkspace() {
     terminal.open(element)
 
     const tracker = new FirstInputTracker()
-    const dataDisposable = terminal.onData((data) => {
+    // Every byte bound for the PTY funnels through here — xterm's own key/paste output and the
+    // agent key bindings below alike — so first-input capture always sees the complete stream.
+    const forwardInput = (data: string): void => {
       const result = tracker.push(data)
       window.codefly.writeTerminal(sessionId, result.passthrough)
       if (result.submitted !== undefined) {
         window.codefly.submitFirstInput(sessionId, result.submitted).catch(() => undefined)
       }
+    }
+    const dataDisposable = terminal.onData(forwardInput)
+
+    // Runs before xterm's own key handling (for keydown, keypress and keyup alike). Returning
+    // false makes xterm skip the event entirely: for Ctrl+V that leaves the browser's default
+    // paste command in place, whose `paste` event xterm's own listener turns into (bracketed)
+    // terminal input; for Shift+Enter we write the newline sequence ourselves and cancel the
+    // event so no bare CR follows. Shell sessions resolve to 'xterm' for every key and behave
+    // exactly as before — see terminal-key-bindings.ts for why only agent sessions need this.
+    terminal.attachCustomKeyEventHandler((event) => {
+      const resolved = resolveTerminalKey(kind, event)
+      if (resolved.action === 'xterm') return true
+      if (resolved.action === 'send') {
+        event.preventDefault()
+        forwardInput(resolved.data)
+      }
+      return false
     })
 
     const resizeObserver = new ResizeObserver(() => applyFit(sessionId))
@@ -205,11 +225,13 @@ export default function TerminalWorkspace() {
     pendingDataRef.current.set(sessionId, combined.slice(-MAX_PENDING_DATA_PER_SESSION))
   }
 
-  const getHostRef = (sessionId: string): ((element: HTMLDivElement | null) => void) => {
+  // `kind` is fixed for a session's lifetime, so capturing it in the callback created on first
+  // render is safe.
+  const getHostRef = (sessionId: string, kind: SessionRecord['kind']): ((element: HTMLDivElement | null) => void) => {
     let callback = hostRefCallbacks.current.get(sessionId)
     if (!callback) {
       callback = (element) => {
-        if (element) ensureEntry(sessionId, element)
+        if (element) ensureEntry(sessionId, kind, element)
       }
       hostRefCallbacks.current.set(sessionId, callback)
     }
@@ -339,7 +361,7 @@ export default function TerminalWorkspace() {
         return (
           <section key={id} className="terminal-pane" style={{ display: isActive ? 'flex' : 'none' }}>
             <TerminalHeader session={session} onRestart={() => void restoreSession(id)} />
-            <div className="terminal-instance-host" data-testid={`terminal-host-${id}`} ref={getHostRef(id)} />
+            <div className="terminal-instance-host" data-testid={`terminal-host-${id}`} ref={getHostRef(id, session.kind)} />
           </section>
         )
       })}

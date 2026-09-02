@@ -18,6 +18,7 @@ import type {
 import { EXTERNAL_LINKS } from '../../../shared/links'
 import { BYPASS_WARNING_TEXT } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
+import { AGENT_NEWLINE_SEQUENCE } from '../terminal/terminal-key-bindings'
 import TerminalWorkspace from './TerminalWorkspace'
 
 // TerminalWorkspace embeds real @xterm/xterm and @xterm/addon-fit instances, which rely on
@@ -37,6 +38,10 @@ const { FakeTerminal, FakeFitAddon, FakeResizeObserver } = vi.hoisted(() => {
     onData = vi.fn((listener: (data: string) => void) => {
       this.dataListeners.push(listener)
       return { dispose: vi.fn() }
+    })
+    keyEventHandler: ((event: KeyboardEvent) => boolean) | undefined
+    attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+      this.keyEventHandler = handler
     })
 
     private dataListeners: Array<(data: string) => void> = []
@@ -387,6 +392,62 @@ describe('TerminalWorkspace', () => {
 
     await waitFor(() => expect(api.submitFirstInput).toHaveBeenCalledTimes(1))
     expect(api.submitFirstInput).toHaveBeenCalledWith(runningClaudeSession.id, 'hi')
+  })
+
+  it('hands Ctrl+V to the browser in a Claude session so its paste event can reach xterm instead of sending ^V', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    const handler = FakeTerminal.instances[0].keyEventHandler
+    expect(handler).toBeDefined()
+    const event = new KeyboardEvent('keydown', { key: 'v', code: 'KeyV', ctrlKey: true, cancelable: true })
+
+    expect(handler!(event)).toBe(false)
+    expect(event.defaultPrevented).toBe(false)
+    expect(api.writeTerminal).not.toHaveBeenCalled()
+  })
+
+  it('sends the agent newline sequence for Shift+Enter in a Codex session without treating it as the first submitted line', async () => {
+    const codexSession: SessionRecord = { ...runningClaudeSession, id: 'session-codex', kind: 'codex' }
+    seedStore(codexSession)
+    useAppStore.setState({ activeSessionId: codexSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    const terminal = FakeTerminal.instances[0]
+    const handler = terminal.keyEventHandler!
+    terminal.emitData('abc')
+    const keydown = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', shiftKey: true, cancelable: true })
+    expect(handler(keydown)).toBe(false)
+    expect(keydown.defaultPrevented).toBe(true)
+    const keyup = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', shiftKey: true, cancelable: true })
+    expect(handler(keyup)).toBe(false)
+    terminal.emitData('def')
+
+    expect(api.writeTerminal.mock.calls).toEqual([
+      [codexSession.id, 'abc'],
+      [codexSession.id, AGENT_NEWLINE_SEQUENCE],
+      [codexSession.id, 'def']
+    ])
+    expect(api.submitFirstInput).not.toHaveBeenCalled()
+
+    // The eventual plain Enter submits the whole multi-line draft's first line as the title seed.
+    terminal.emitData('\r')
+    await waitFor(() => expect(api.submitFirstInput).toHaveBeenCalledWith(codexSession.id, 'abcdef'))
+  })
+
+  it('leaves Ctrl+V and Shift+Enter to xterm in a PowerShell session', async () => {
+    seedStore(runningPowerShellSession)
+    useAppStore.setState({ activeSessionId: runningPowerShellSession.id })
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    const handler = FakeTerminal.instances[0].keyEventHandler!
+    expect(handler(new KeyboardEvent('keydown', { key: 'v', code: 'KeyV', ctrlKey: true, cancelable: true }))).toBe(true)
+    expect(handler(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', shiftKey: true, cancelable: true }))).toBe(true)
+    expect(api.writeTerminal).not.toHaveBeenCalled()
   })
 
   it('fits the terminal when its session becomes active', async () => {
