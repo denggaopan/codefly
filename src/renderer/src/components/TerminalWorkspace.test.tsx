@@ -426,6 +426,37 @@ describe('TerminalWorkspace', () => {
     expect(api.resizeTerminal).not.toHaveBeenCalled()
   })
 
+  // A restart in place (click-to-restore, or the header's restart action) hands the session a
+  // BRAND NEW pty, spawned at TerminalService's own 120x30 default, while this xterm entry and
+  // its memo of what the OLD pty was last told both survive. Neither the active id, the mounted
+  // list nor the host's box changes, so nothing else re-fits: the size has to be pushed again on
+  // the transition back to running, or the new pty stays at 120x30 while xterm renders at its
+  // fitted size and ConPTY's differential repaints land on the wrong geometry.
+  it('re-pushes the terminal size when a session restarts in place, reusing the same xterm entry', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(api.resizeTerminal).toHaveBeenCalledWith(runningClaudeSession.id, 80, 24))
+    api.resizeTerminal.mockClear()
+
+    act(() =>
+      useAppStore.setState({
+        appState: { version: 1, projects: [project1], sessions: [{ ...runningClaudeSession, status: 'stopped' }] }
+      })
+    )
+    expect(api.resizeTerminal).not.toHaveBeenCalled()
+
+    act(() =>
+      useAppStore.setState({
+        appState: { version: 1, projects: [project1], sessions: [{ ...runningClaudeSession, status: 'running' }] }
+      })
+    )
+
+    await waitFor(() => expect(api.resizeTerminal).toHaveBeenCalledWith(runningClaudeSession.id, 80, 24))
+    expect(FakeTerminal.instances).toHaveLength(1)
+  })
+
   it('never sends non-finite (NaN/Infinity) dimensions to resizeTerminal', async () => {
     seedStore(runningClaudeSession)
     useAppStore.setState({ activeSessionId: runningClaudeSession.id })
@@ -586,6 +617,20 @@ describe('TerminalWorkspace', () => {
 
     await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
     expect(FakeTerminal.instances[0].options.fontFamily).toContain('Cascadia Mono')
+  })
+
+  // A PTY-backed terminal must treat LF as a bare line feed: ConPTY emits
+  // 'ESC[<row>;4H ESC[K <LF> text' to paint the next row at the SAME column, so rewriting LF
+  // to CR+LF drags that text to column 1. Because ConPTY repaints differentially, it never
+  // learns about the cells it did not intend to write, so the shifted characters survive every
+  // later repaint as residue (observed as 3-character stubs left behind after closing /usage).
+  it('does not convert LF to CRLF, so PTY cursor-down-same-column output keeps its column', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    expect(FakeTerminal.instances[0].options.convertEol).not.toBe(true)
   })
 
   it('gives the terminal header status a data-status attribute matching the shared status pill styling', async () => {

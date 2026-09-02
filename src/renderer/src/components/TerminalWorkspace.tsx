@@ -125,6 +125,11 @@ export default function TerminalWorkspace() {
   const activeSessionIdRef = useRef<string | null>(null)
   activeSessionIdRef.current = activeSessionId
 
+  // Status last observed for each session, used to spot a restart in place (see the effect
+  // that re-pushes the terminal size below). Rebuilt from `sessions` on every run of that
+  // effect so entries for deleted sessions drop out on their own.
+  const lastStatusesRef = useRef<Map<string, SessionRecord['status']>>(new Map())
+
   const applyFit = (sessionId: string): void => {
     const entry = entriesRef.current.get(sessionId)
     if (!entry) return
@@ -149,7 +154,12 @@ export default function TerminalWorkspace() {
     if (entriesRef.current.has(sessionId)) return
 
     const terminal = new Terminal({
-      convertEol: true,
+      // convertEol stays OFF: a PTY-backed terminal must treat LF as a bare line feed. ConPTY
+      // paints a row with 'ESC[<row>;4H ESC[K <LF> text' to continue at the SAME column, so
+      // rewriting LF to CR+LF drags that text to column 1. Worse, because ConPTY repaints
+      // differentially it never learns about cells it did not mean to write, so those shifted
+      // characters survive every later repaint — leaving 3-character stubs down the left edge
+      // after a full-screen panel such as Claude Code's /usage is dismissed.
       cursorBlink: true,
       fontFamily: TERMINAL_FONT_FAMILY,
       // Read via getState() rather than the subscribed `theme`: ensureEntry runs inside a
@@ -236,6 +246,29 @@ export default function TerminalWorkspace() {
     if (activeSessionStatus !== 'running') return
     entriesRef.current.get(activeSessionId)?.terminal.focus()
   }, [activeSessionId, activeSessionStatus, mountedSessionIds])
+
+  // Re-push the terminal size whenever a session transitions back to running. A restart in
+  // place hands it a BRAND NEW pty, spawned at TerminalService's own 120x30 default, while this
+  // entry's xterm instance and its lastCols/lastRows memo (of what the now-dead pty was last
+  // told) both survive. Neither activeSessionId, mountedSessionIds nor the host's box changes,
+  // so no other path re-fits: forgetting the memo here is what lets applyFit push again.
+  // Without it the new pty would sit at 120x30 while xterm renders at its fitted size, and
+  // ConPTY's differential repaints — which skip every cell it believes already correct — would
+  // land on the wrong geometry and leave residue behind.
+  useEffect(() => {
+    const previousStatuses = lastStatusesRef.current
+    const currentStatuses = new Map<string, SessionRecord['status']>()
+    for (const session of sessions) {
+      currentStatuses.set(session.id, session.status)
+      if (session.status !== 'running' || previousStatuses.get(session.id) === 'running') continue
+      const entry = entriesRef.current.get(session.id)
+      if (!entry) continue
+      entry.lastCols = 0
+      entry.lastRows = 0
+      applyFit(session.id)
+    }
+    lastStatusesRef.current = currentStatuses
+  }, [sessions, mountedSessionIds])
 
   // Re-theme every live terminal when the app theme changes: xterm applies option updates
   // to its canvas immediately, so existing scrollback repaints in the new palette.
