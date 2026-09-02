@@ -197,6 +197,11 @@ input {
   user-select: none;
 }
 
+html[data-platform='darwin'] .title-bar {
+  padding-left: 78px;
+  padding-right: 8px;
+}
+
 .title-bar-logo {
   flex: 0 0 auto;
   width: 16px;

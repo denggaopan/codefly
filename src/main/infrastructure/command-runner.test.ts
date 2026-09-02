@@ -44,4 +44,13 @@ describe('commandRunner', () => {
       cause: expect.any(Error)
     } satisfies Partial<CommandError>)
   })
+
+  it('terminates a command that exceeds its requested timeout', async () => {
+    await expect(
+      commandRunner.run(process.execPath, ['-e', 'setTimeout(() => undefined, 500)'], undefined, { timeoutMs: 20 })
+    ).rejects.toMatchObject({
+      signal: 'SIGTERM',
+      result: { stdout: '', stderr: '', exitCode: -1 }
+    } satisfies Partial<CommandError>)
+  })
 })

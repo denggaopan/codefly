@@ -1,26 +1,10 @@
 import { useEffect, useState } from 'react'
 
 import type { SessionKind } from '../../../shared/contracts'
-import type { TranslationKey } from '../i18n'
 import { useTranslation } from '../i18n/use-translation'
 import { sessionKindIconUrl } from '../session-kind-icons'
+import { sessionKindOptions } from '../session-kind-options'
 import { useAppStore } from '../store/use-app-store'
-
-type LauncherKind = {
-  kind: SessionKind
-  // A dictionary key, not a string: the table is module-level, so it cannot be rebuilt when
-  // the locale changes — the label is resolved at render time instead.
-  labelKey: TranslationKey
-  shortcut?: string
-}
-
-// Fixed order per spec: PowerShell, Command Prompt, Claude, Codex.
-const LAUNCHER_KINDS: readonly LauncherKind[] = [
-  { kind: 'powershell', labelKey: 'sessionKind.powershell', shortcut: 'Ctrl+T' },
-  { kind: 'cmd', labelKey: 'sessionKind.cmd' },
-  { kind: 'claude', labelKey: 'sessionKind.claude' },
-  { kind: 'codex', labelKey: 'sessionKind.codex' }
-]
 
 type LauncherEntry = {
   id: string
@@ -38,8 +22,7 @@ type SessionLauncherProps = {
  * Popover for choosing which session kind to create in the currently active project.
  * Claude/Codex are disabled from CapabilityState with their lookup detail shown as
  * visible help text (not just a tooltip) so an unauthenticated/missing CLI is discoverable
- * without hovering. PowerShell and Command Prompt use Windows system executables and are
- * always available.
+ * without hovering. The platform's native shell entries are always available.
  *
  * Which kinds appear at all, and which of them offer a worktree, comes from the per-kind
  * Settings switches: an enabled kind always has a plain entry that launches in the project
@@ -51,6 +34,7 @@ type SessionLauncherProps = {
  */
 export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   const { t } = useTranslation()
+  const platform = useAppStore((state) => state.platform)
   const capabilities = useAppStore((state) => state.capabilities)
   const sessionKindPreferences = useAppStore((state) => state.sessionKindPreferences)
   const createSession = useAppStore((state) => state.createSession)
@@ -71,16 +55,16 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   }, [closeLauncher])
 
   const availability: Record<SessionKind, { available: boolean; detail?: string }> = {
+    shell: { available: true },
     powershell: { available: true },
     cmd: { available: true },
     claude: capabilities.claude,
     codex: capabilities.codex
   }
 
-  // The accelerator hint belongs to the plain PowerShell entry only: it is what Ctrl+T
-  // stands for, and repeating it on the worktree variant would advertise a shortcut that
-  // does something else.
-  const entries: readonly LauncherEntry[] = LAUNCHER_KINDS.flatMap((item) => {
+  // The accelerator belongs only to the platform's plain native-shell entry. Repeating it
+  // on the worktree variant would advertise a shortcut that does something else.
+  const entries: readonly LauncherEntry[] = sessionKindOptions(platform).flatMap((item) => {
     const preference = sessionKindPreferences[item.kind]
     if (!preference.enabled) return []
     const plain: LauncherEntry = { id: item.kind, kind: item.kind, worktree: false, label: t(item.labelKey), shortcut: item.shortcut }

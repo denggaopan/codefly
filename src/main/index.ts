@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import type { Dialog } from 'electron'
 
-import type { AppSnapshot, CapabilityState } from '../shared/contracts'
+import { hostPlatformSchema, type AppSnapshot, type CapabilityState, type HostPlatform } from '../shared/contracts'
 import { cliLocator, type CliLocator } from './infrastructure/cli-locator'
 import { registerIpc } from './ipc/register-ipc'
 import { createBeforeQuitHandler } from './shutdown-controller'
@@ -37,14 +37,21 @@ const agentUnavailableDetail: Readonly<Record<'claude' | 'codex', string>> = {
 }
 
 type AgentLocator = Pick<CliLocator, 'resolveAgent'>
-type TerminalLocator = Pick<CliLocator, 'resolvePowerShell' | 'resolveAgent'>
+type TerminalLocator = Pick<CliLocator, 'resolveShell' | 'resolvePowerShell' | 'resolveAgent'>
+
+const parsedPlatform = hostPlatformSchema.safeParse(process.platform)
+if (!parsedPlatform.success) {
+  throw new Error(`Unsupported platform: ${process.platform}. CodeFly supports Windows and macOS only.`)
+}
+const runtimePlatform: HostPlatform = parsedPlatform.data
 
 const buildGetSnapshot = (
   coordinator: SessionCoordinator,
   projectService: Pick<ProjectService, 'refreshRemotes'>,
   externalAppService: ExternalAppService,
   agentLocator: AgentLocator,
-  store: Pick<SessionStore, 'recoveryWarning'>
+  store: Pick<SessionStore, 'recoveryWarning'>,
+  platform: HostPlatform
 ): (() => Promise<AppSnapshot>) => {
   return async () => {
     const [state, claudePath, codexPath, vscode] = await Promise.all([
@@ -63,7 +70,7 @@ const buildGetSnapshot = (
     }
 
     const recoveryWarning = store.recoveryWarning()
-    return recoveryWarning ? { state, capabilities, recoveryWarning } : { state, capabilities }
+    return recoveryWarning ? { platform, state, capabilities, recoveryWarning } : { platform, state, capabilities }
   }
 }
 
@@ -86,13 +93,15 @@ const buildGetSnapshot = (
 const isE2E = process.env.CODEFLY_E2E === '1'
 
 const buildE2ETerminalLocator = (agentCommand: string): TerminalLocator => ({
+  resolveShell: () => cliLocator.resolveShell(),
   resolvePowerShell: () => cliLocator.resolvePowerShell(),
   resolveAgent: async () => agentCommand
 })
 
 const buildE2ETitleAdapters = (
   agentCommand: string,
-  titleArgvLogPath: string | undefined
+  titleArgvLogPath: string | undefined,
+  platform: HostPlatform
 ): Partial<Record<'claude' | 'codex', TitleAdapter>> => {
   const locator: AgentLocator = { resolveAgent: async () => agentCommand }
   const processSpawner: TitleProcessSpawner = (file, args, options) =>
@@ -102,12 +111,12 @@ const buildE2ETitleAdapters = (
     }) as unknown as SpawnedTitleProcess
 
   return {
-    claude: createCliTitleAdapter('claude', locator, processSpawner),
-    codex: createCliTitleAdapter('codex', locator, processSpawner)
+    claude: createCliTitleAdapter('claude', locator, processSpawner, { platform }),
+    codex: createCliTitleAdapter('codex', locator, processSpawner, { platform })
   }
 }
 
-const buildE2EExternalAppService = (): ExternalAppService =>
+const buildE2EExternalAppService = (platform: HostPlatform): ExternalAppService =>
   new ExternalAppService(
     cliLocator,
     async () => true,
@@ -119,7 +128,8 @@ const buildE2EExternalAppService = (): ExternalAppService =>
     process.env,
     async () => {
       // Mocked browser: the repository action must never open a real browser from the suite.
-    }
+    },
+    platform
   )
 
 /**
@@ -180,7 +190,7 @@ const buildE2EReleaseFetch = (fixture: E2EReleaseFixture): UpdaterFetchLike => {
   }
 }
 
-const buildE2EAppInfoService = (): AppInfoService =>
+const buildE2EAppInfoService = (platform: HostPlatform): AppInfoService =>
   new AppInfoService(
     () => app.getVersion(),
     e2eReleaseFixture
@@ -198,14 +208,16 @@ const buildE2EAppInfoService = (): AppInfoService =>
           openAtLogin = next
         }
       }
-    })()
+    })(),
+    undefined,
+    platform
   )
 
 // An updater that cannot reach the network, the disk, or a child process: with no release
 // fixture the E2E suite must not be able to download a real installer or launch one. The 404
 // stand-in stops the flow where production would when no release exists, so the renderer's
 // "no update available" path is still the code path under test.
-const buildE2EUpdaterService = (fixture: E2EReleaseFixture | undefined): UpdaterService => {
+const buildE2EUpdaterService = (fixture: E2EReleaseFixture | undefined, platform: HostPlatform): UpdaterService => {
   const unusableFileSystem: UpdaterFileSystem = {
     ensureDirectory: async () => undefined,
     fileSize: async () => undefined,
@@ -253,7 +265,10 @@ const buildE2EUpdaterService = (fixture: E2EReleaseFixture | undefined): Updater
     () => {
       // Mocked quit: the suite drives the window lifecycle itself, and quitting here would
       // tear down the window mid-assertion.
-    }
+    },
+    undefined,
+    undefined,
+    platform
   )
 }
 
@@ -266,24 +281,32 @@ const buildE2EDialog = (projectPath: string | undefined): Dialog =>
 app.whenReady().then(() => {
   const statePath = join(app.getPath('userData'), 'state.json')
   const store = new SessionStore(statePath)
-  const projectService = new ProjectService(store)
+  const projectService = new ProjectService(store, undefined, undefined, undefined, undefined, runtimePlatform)
   const worktreeService = new WorktreeService()
 
   const e2eAgentCommand = isE2E ? process.env.CODEFLY_E2E_AGENT_CMD : undefined
 
   const agentLocator: AgentLocator = e2eAgentCommand ? buildE2ETerminalLocator(e2eAgentCommand) : cliLocator
-  const terminalService = e2eAgentCommand ? new TerminalService(buildE2ETerminalLocator(e2eAgentCommand)) : new TerminalService()
+  const terminalService = e2eAgentCommand
+    ? new TerminalService(buildE2ETerminalLocator(e2eAgentCommand), undefined, undefined, runtimePlatform)
+    : new TerminalService(cliLocator, undefined, undefined, runtimePlatform)
   const titleService = e2eAgentCommand
-    ? new TitleService(buildE2ETitleAdapters(e2eAgentCommand, process.env.CODEFLY_E2E_TITLE_ARGV_LOG))
+    ? new TitleService(buildE2ETitleAdapters(e2eAgentCommand, process.env.CODEFLY_E2E_TITLE_ARGV_LOG, runtimePlatform))
     : new TitleService()
-  const externalAppService = isE2E ? buildE2EExternalAppService() : new ExternalAppService()
-  const appInfoService = isE2E ? buildE2EAppInfoService() : new AppInfoService()
-  const updaterService = isE2E ? buildE2EUpdaterService(e2eReleaseFixture) : new UpdaterService()
+  const externalAppService = isE2E
+    ? buildE2EExternalAppService(runtimePlatform)
+    : new ExternalAppService(undefined, undefined, undefined, undefined, undefined, undefined, runtimePlatform)
+  const appInfoService = isE2E
+    ? buildE2EAppInfoService(runtimePlatform)
+    : new AppInfoService(undefined, undefined, undefined, undefined, undefined, runtimePlatform)
+  const updaterService = isE2E
+    ? buildE2EUpdaterService(e2eReleaseFixture, runtimePlatform)
+    : new UpdaterService(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, runtimePlatform)
   const dialogForIpc = isE2E ? buildE2EDialog(process.env.CODEFLY_E2E_PROJECT) : dialog
 
   const coordinator = new SessionCoordinator(store, projectService, worktreeService, terminalService, titleService)
 
-  const window = createMainWindow()
+  const window = createMainWindow(runtimePlatform)
 
   const disposeIpc = registerIpc({
     ipcMain,
@@ -295,8 +318,8 @@ app.whenReady().then(() => {
     appInfoService,
     updaterService,
     terminalService,
-    getSnapshot: buildGetSnapshot(coordinator, projectService, externalAppService, agentLocator, store),
-    applyTheme: (theme) => applyWindowTheme(window, theme)
+    getSnapshot: buildGetSnapshot(coordinator, projectService, externalAppService, agentLocator, store, runtimePlatform),
+    applyTheme: (theme) => applyWindowTheme(window, theme, runtimePlatform)
   })
 
   window.on('closed', () => {
@@ -305,7 +328,7 @@ app.whenReady().then(() => {
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow()
+      createMainWindow(runtimePlatform)
     }
   })
 

@@ -18,6 +18,7 @@ export class SessionNotFoundError extends Error {
 }
 
 const initialTitles: Readonly<Record<SessionKind, string>> = {
+  shell: 'New Shell session',
   powershell: 'New PowerShell session',
   cmd: 'New Command Prompt session',
   claude: 'New Claude session',

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
-import type { AppInfo, SessionKind, UpdateCheckResult } from '../../../shared/contracts'
+import type { AppInfo, UpdateCheckResult } from '../../../shared/contracts'
 import type { ExternalLinkTarget } from '../../../shared/links'
 import { LOCALES, type TranslationKey, type Translator } from '../i18n'
 import { useTranslation } from '../i18n/use-translation'
+import { sessionKindOptions } from '../session-kind-options'
 import { useAppStore } from '../store/use-app-store'
 
 type SettingsDialogProps = {
@@ -20,15 +21,6 @@ const LINK_ITEMS: ReadonlyArray<{ target: ExternalLinkTarget; labelKey: Translat
   { target: 'repository', labelKey: 'settings.linkRepository' },
   { target: 'changelog', labelKey: 'settings.linkChangelog' },
   { target: 'download', labelKey: 'settings.linkDownload' }
-]
-
-// Same order as the New session launcher, so the row a user flips is in the position the
-// entry it controls will appear in.
-const SESSION_KIND_ITEMS: ReadonlyArray<{ kind: SessionKind; labelKey: TranslationKey }> = [
-  { kind: 'powershell', labelKey: 'sessionKind.powershell' },
-  { kind: 'cmd', labelKey: 'sessionKind.cmd' },
-  { kind: 'claude', labelKey: 'sessionKind.claude' },
-  { kind: 'codex', labelKey: 'sessionKind.codex' }
 ]
 
 type UpdateState = { phase: 'idle' } | { phase: 'checking' } | { phase: 'done'; result: UpdateCheckResult }
@@ -62,6 +54,7 @@ const failureReason = (error: unknown, fallback: string): string => (error insta
  */
 export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const { t } = useTranslation()
+  const platform = useAppStore((state) => state.platform)
   const theme = useAppStore((state) => state.theme)
   const setTheme = useAppStore((state) => state.setTheme)
   const locale = useAppStore((state) => state.locale)
@@ -251,8 +244,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         {updateState.phase === 'done' && (
           <p className="settings-update-status" role="status" data-status={updateState.result.status}>
             {updateMessage(updateState.result, t)}
-            {/* Only a release that actually publishes a Windows installer can be downloaded
-                in-app; without one the download page stays the only thing to offer. */}
+            {/* Only a release with an installer supported by this platform can be downloaded
+                in-app; otherwise the Releases page stays the only thing to offer. */}
             {downloadableUpdate && (
               <button type="button" className="settings-inline-action" onClick={() => handleUpdateNow(downloadableUpdate.latestVersion)}>
                 {t('settings.updateNow')}
@@ -279,7 +272,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <span>{t('settings.columnEnabled')}</span>
               <span>{t('settings.columnWorktree')}</span>
             </li>
-            {SESSION_KIND_ITEMS.map((item) => {
+            {sessionKindOptions(platform).map((item) => {
               const preference = sessionKindPreferences[item.kind]
               const kindLabel = t(item.labelKey)
               return (

@@ -15,10 +15,11 @@ const key = (overrides: Partial<TerminalKeyEvent>): TerminalKeyEvent => ({
 })
 
 const ctrlV = (type: TerminalKeyEvent['type'] = 'keydown'): TerminalKeyEvent => key({ type, key: 'v', code: 'KeyV', ctrlKey: true })
+const commandV = (type: TerminalKeyEvent['type'] = 'keydown'): TerminalKeyEvent => key({ type, key: 'v', code: 'KeyV', metaKey: true })
 const shiftEnter = (type: TerminalKeyEvent['type'] = 'keydown'): TerminalKeyEvent => key({ type, key: 'Enter', code: 'Enter', shiftKey: true })
 
 const agentKinds: SessionKind[] = ['claude', 'codex']
-const shellKinds: SessionKind[] = ['powershell', 'cmd']
+const shellKinds: SessionKind[] = ['shell', 'powershell', 'cmd']
 
 describe('resolveTerminalKey', () => {
   describe.each(agentKinds)('%s session', (kind) => {
@@ -26,6 +27,12 @@ describe('resolveTerminalKey', () => {
       expect(resolveTerminalKey(kind, ctrlV('keydown'))).toEqual({ action: 'browser' })
       expect(resolveTerminalKey(kind, ctrlV('keypress'))).toEqual({ action: 'browser' })
       expect(resolveTerminalKey(kind, ctrlV('keyup'))).toEqual({ action: 'browser' })
+    })
+
+    it('hands Cmd+V to the browser so macOS paste reaches xterm', () => {
+      expect(resolveTerminalKey(kind, commandV('keydown'))).toEqual({ action: 'browser' })
+      expect(resolveTerminalKey(kind, commandV('keypress'))).toEqual({ action: 'browser' })
+      expect(resolveTerminalKey(kind, commandV('keyup'))).toEqual({ action: 'browser' })
     })
 
     it('recognises Ctrl+V by physical key on non-Latin layouts and with Caps Lock', () => {

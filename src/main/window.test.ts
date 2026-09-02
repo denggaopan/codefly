@@ -113,6 +113,17 @@ describe('createMainWindow', () => {
     expect(options.titleBarStyle).toBe('hidden')
     expect(options.titleBarOverlay).toEqual({ color: '#11161d', symbolColor: '#e7edf5', height: TITLE_BAR_HEIGHT })
   })
+
+  it('uses inset native traffic lights and no Windows icon on macOS', () => {
+    createMainWindow('darwin')
+
+    const [options] = browserWindow.mock.calls[0] as unknown as [
+      { icon?: string; titleBarStyle?: string; titleBarOverlay?: unknown }
+    ]
+    expect(options.titleBarStyle).toBe('hiddenInset')
+    expect(options.titleBarOverlay).toBeUndefined()
+    expect(options.icon).toBeUndefined()
+  })
 })
 
 describe('applyWindowTheme', () => {
@@ -135,5 +146,13 @@ describe('applyWindowTheme', () => {
     expect(mockNativeTheme.themeSource).toBe('dark')
     expect(fakeWindow.setBackgroundColor).toHaveBeenCalledWith('#0b0f14')
     expect(fakeWindow.setTitleBarOverlay).toHaveBeenCalledWith({ color: '#11161d', symbolColor: '#e7edf5', height: TITLE_BAR_HEIGHT })
+  })
+
+  it('does not call the Windows title-bar overlay API on macOS', () => {
+    applyWindowTheme(fakeWindow as unknown as Electron.BrowserWindow, 'light', 'darwin')
+
+    expect(mockNativeTheme.themeSource).toBe('light')
+    expect(fakeWindow.setBackgroundColor).toHaveBeenCalledWith('#f5f7fa')
+    expect(fakeWindow.setTitleBarOverlay).not.toHaveBeenCalled()
   })
 })

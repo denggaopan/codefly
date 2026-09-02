@@ -37,6 +37,7 @@ export const zhCN: Translations = {
   'launcher.worktreeVariant': '{kind}（新建 worktree）',
   'launcher.allKindsDisabled': '所有会话类型都已在设置中关闭。',
 
+  'sessionKind.shell': 'Shell',
   'sessionKind.powershell': 'PowerShell',
   'sessionKind.cmd': '命令提示符',
   'sessionKind.claude': 'Claude',
@@ -89,7 +90,7 @@ export const zhCN: Translations = {
 
   'update.availableTitle': '新版本 {version} 可用',
   'update.availableBody': 'CodeFly 可以为你下载安装包，待你准备好后再安装。',
-  'update.noInstallerBody': '该版本未发布 Windows 安装包，需要前往发布页面手动下载。',
+  'update.noInstallerBody': '请前往 Releases 页面下载适用于当前平台的版本并手动安装。',
   'update.updateNow': '立即更新',
   'update.later': '稍后更新',
   'update.openDownloadPage': '打开下载页面',

@@ -2,7 +2,8 @@ import { z } from 'zod'
 
 import type { ExternalLinkTarget } from './links'
 
-export const sessionKindSchema = z.enum(['powershell', 'cmd', 'claude', 'codex'])
+export const hostPlatformSchema = z.enum(['win32', 'darwin'])
+export const sessionKindSchema = z.enum(['shell', 'powershell', 'cmd', 'claude', 'codex'])
 export const runtimeStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'missing'])
 export const titleStateSchema = z.enum(['pending', 'complete'])
 
@@ -125,6 +126,7 @@ const sessionKindPreferenceShape = {
 export const sessionKindPreferenceSchema = z.strictObject(sessionKindPreferenceShape)
 
 const sessionKindPreferencesShape = {
+  shell: sessionKindPreferenceSchema,
   powershell: sessionKindPreferenceSchema,
   cmd: sessionKindPreferenceSchema,
   claude: sessionKindPreferenceSchema,
@@ -136,9 +138,10 @@ export const sessionKindPreferencesSchema = z.strictObject(sessionKindPreference
 // Stored preferences are read leniently and merged over the defaults, per kind and per
 // field: a value written by a different build may be missing a kind, missing a field, or
 // carry one this build does not know about, and a partially readable preference is still
-// better than silently resetting all four kinds.
+// better than silently resetting every known kind.
 export const storedSessionKindPreferencesSchema = z
   .object({
+    shell: z.object(sessionKindPreferenceShape).partial(),
     powershell: z.object(sessionKindPreferenceShape).partial(),
     cmd: z.object(sessionKindPreferenceShape).partial(),
     claude: z.object(sessionKindPreferenceShape).partial(),
@@ -147,11 +150,12 @@ export const storedSessionKindPreferencesSchema = z
   .partial()
 
 /**
- * Every kind is offered by default. Shells default to the project directory — a quick
- * terminal should not spawn a branch — while the agents default to an isolated worktree,
- * which is the reason CodeFly creates worktrees at all.
+ * Windows-compatible defaults used before the platform snapshot arrives and by browser
+ * tests. Platform-aware renderer defaults enable only that host's native shell; all native
+ * shells default to the project directory while agents default to an isolated worktree.
  */
 export const DEFAULT_SESSION_KIND_PREFERENCES: Readonly<SessionKindPreferences> = {
+  shell: { enabled: false, worktree: false },
   powershell: { enabled: true, worktree: false },
   cmd: { enabled: true, worktree: false },
   claude: { enabled: true, worktree: true },
@@ -177,6 +181,7 @@ export const setAutoLaunchRequestSchema = z.strictObject({
 })
 
 export type AppState = z.infer<typeof appStateSchema>
+export type HostPlatform = z.infer<typeof hostPlatformSchema>
 export type ProjectRecord = z.infer<typeof projectRecordSchema>
 export type RepoHost = z.infer<typeof repoHostSchema>
 export type RepoRemote = z.infer<typeof repoRemoteSchema>
@@ -187,7 +192,7 @@ export type ThemePreference = z.infer<typeof themePreferenceSchema>
 export type SessionKindPreference = z.infer<typeof sessionKindPreferenceSchema>
 export type SessionKindPreferences = z.infer<typeof sessionKindPreferencesSchema>
 
-export type AppSnapshot = { state: AppState; capabilities: CapabilityState; recoveryWarning?: string }
+export type AppSnapshot = { platform: HostPlatform; state: AppState; capabilities: CapabilityState; recoveryWarning?: string }
 
 export type DeleteSessionResult =
   | { status: 'deleted' }

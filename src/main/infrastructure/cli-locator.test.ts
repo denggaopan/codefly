@@ -51,4 +51,57 @@ describe('CliLocator', () => {
     await expect(locator.resolve('tool & injected')).rejects.toThrow('Invalid command name')
     expect(run).not.toHaveBeenCalled()
   })
+
+  it('uses the macOS login shell and ignores startup noise around an executable path', async () => {
+    const run = vi.fn().mockResolvedValue({
+      stdout: 'Welcome from .zshrc\n/opt/homebrew/bin/claude\n',
+      stderr: '',
+      exitCode: 0
+    })
+    const executable = vi.fn(async (candidate: string) => candidate === '/bin/zsh' || candidate === '/opt/homebrew/bin/claude')
+    const locator = new CliLocator(runnerWith(run), executable, {
+      platform: 'darwin',
+      environment: { SHELL: '/bin/zsh', HOME: '/Users/me' }
+    })
+
+    await expect(locator.resolveAgent('claude')).resolves.toBe('/opt/homebrew/bin/claude')
+    expect(run).toHaveBeenCalledWith('/bin/zsh', ['-lic', 'command -v -- claude'], undefined, { timeoutMs: 5_000 })
+  })
+
+  it('checks standard macOS install paths when the login shell lookup fails', async () => {
+    const run = vi.fn().mockRejectedValue(new Error('timed out'))
+    const executable = vi.fn(async (candidate: string) => candidate === '/Users/me/.local/bin/codex')
+    const locator = new CliLocator(runnerWith(run), executable, {
+      platform: 'darwin',
+      environment: { SHELL: '/missing/fish', HOME: '/Users/me' }
+    })
+
+    await expect(locator.resolveAgent('codex')).resolves.toBe('/Users/me/.local/bin/codex')
+    expect(run).not.toHaveBeenCalled()
+    expect(executable.mock.calls.map(([candidate]) => candidate)).toEqual([
+      '/missing/fish',
+      '/bin/zsh',
+      '/opt/homebrew/bin/codex',
+      '/usr/local/bin/codex',
+      '/Users/me/.local/bin/codex'
+    ])
+  })
+
+  it('falls back to zsh when SHELL is invalid and exposes it for native Shell sessions', async () => {
+    const executable = vi.fn(async (candidate: string) => candidate === '/bin/zsh')
+    const locator = new CliLocator(runnerWith(vi.fn()), executable, {
+      platform: 'darwin',
+      environment: { SHELL: 'relative-shell', HOME: '/Users/me' }
+    })
+
+    await expect(locator.resolveShell()).resolves.toBe('/bin/zsh')
+  })
+
+  it('does not expose Windows PowerShell on macOS', async () => {
+    const run = vi.fn()
+    const locator = new CliLocator(runnerWith(run), async () => true, { platform: 'darwin' })
+
+    await expect(locator.resolvePowerShell()).resolves.toBeUndefined()
+    expect(run).not.toHaveBeenCalled()
+  })
 })

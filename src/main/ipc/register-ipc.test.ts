@@ -228,7 +228,7 @@ const buildHarness = (options: {
   }
   const updaterService = new FakeUpdaterService()
   const terminalService = new FakeTerminalService()
-  const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ state: emptyState(), capabilities: capabilities() }))
+  const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ platform: 'win32', state: emptyState(), capabilities: capabilities() }))
   const applyTheme = vi.fn()
 
   const dispose = registerIpc({
@@ -283,7 +283,7 @@ describe('registerIpc: sender ownership', () => {
 describe('registerIpc: snapshot:get', () => {
   it('resolves with the composed AppSnapshot', async () => {
     const { ipcMain, getSnapshot } = buildHarness()
-    const snapshot: AppSnapshot = { state: emptyState(), capabilities: capabilities() }
+    const snapshot: AppSnapshot = { platform: 'win32', state: emptyState(), capabilities: capabilities() }
     getSnapshot.mockResolvedValue(snapshot)
 
     await expect(ipcMain.invoke(IPC.snapshotGet)).resolves.toEqual(snapshot)

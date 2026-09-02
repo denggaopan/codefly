@@ -77,11 +77,13 @@ const session = (id: string, kind: SessionRecord['kind'] = 'powershell', launchP
 })
 
 type Locator = {
+  resolveShell(): Promise<string | undefined>
   resolvePowerShell(): Promise<string | undefined>
   resolveAgent(agent: 'claude' | 'codex'): Promise<string | undefined>
 }
 
-const locatorWith = (resolved: Partial<Record<'powershell' | 'claude' | 'codex', string>> = {}): Locator => ({
+const locatorWith = (resolved: Partial<Record<'shell' | 'powershell' | 'claude' | 'codex', string>> = {}): Locator => ({
+  resolveShell: vi.fn(async () => resolved.shell),
   resolvePowerShell: vi.fn(async () => resolved.powershell ?? 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'),
   resolveAgent: vi.fn(async (agent: 'claude' | 'codex') => resolved[agent])
 })
@@ -114,6 +116,64 @@ afterEach(() => {
 })
 
 describe('TerminalService launch adapters', () => {
+  it('starts the resolved macOS Shell as a login shell', async () => {
+    const factory = new FakePtyFactory(new FakePty())
+    const locator = locatorWith({ shell: '/bin/zsh' })
+    const service = serviceWith(factory, {
+      locator,
+      platform: 'darwin',
+      environment: { SHELL: '/bin/zsh', PATH: '/usr/bin' }
+    })
+
+    await service.start(session('mac-shell', 'shell', '/Users/me/Project One'))
+
+    expect(locator.resolveShell).toHaveBeenCalledOnce()
+    expect(factory.spawn).toHaveBeenCalledWith('/bin/zsh', ['-l'], {
+      cwd: '/Users/me/Project One',
+      env: { SHELL: '/bin/zsh', PATH: '/usr/bin', TERM: 'xterm-256color' },
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 30
+    })
+  })
+
+  it('launches macOS agents directly with the existing create and resume arguments', async () => {
+    const factory = new FakePtyFactory(new FakePty(), new FakePty())
+    const service = serviceWith(factory, {
+      locator: locatorWith({ claude: '/opt/homebrew/bin/claude', codex: '/usr/local/bin/codex' }),
+      platform: 'darwin',
+      environment: { PATH: '/usr/bin' }
+    })
+
+    await service.start(session('mac-claude', 'claude', '/Users/me/project'))
+    await service.start(session('mac-codex', 'codex', '/Users/me/project'), { resume: true })
+
+    expect(factory.spawn).toHaveBeenNthCalledWith(
+      1,
+      '/opt/homebrew/bin/claude',
+      ['--dangerously-skip-permissions'],
+      expect.objectContaining({ cwd: '/Users/me/project' })
+    )
+    expect(factory.spawn).toHaveBeenNthCalledWith(
+      2,
+      '/usr/local/bin/codex',
+      ['resume', '--last', '--dangerously-bypass-approvals-and-sandbox'],
+      expect.objectContaining({ cwd: '/Users/me/project' })
+    )
+  })
+
+  it.each([
+    ['darwin' as const, 'powershell' as const, 'PowerShell is not supported on macOS.'],
+    ['darwin' as const, 'cmd' as const, 'Command Prompt is not supported on macOS.'],
+    ['win32' as const, 'shell' as const, 'Shell is not supported on Windows.']
+  ])('rejects %s/%s before starting a PTY', async (platform, kind, message) => {
+    const factory = new FakePtyFactory(new FakePty())
+    const service = serviceWith(factory, { platform })
+
+    await expect(service.start(session('unsupported', kind))).rejects.toThrow(message)
+    expect(factory.spawn).not.toHaveBeenCalled()
+  })
+
   it('starts PowerShell in the session launch path with inherited terminal settings', async () => {
     const pty = new FakePty()
     const factory = new FakePtyFactory(pty)
@@ -284,6 +344,7 @@ describe('TerminalService lifecycle', () => {
   it('rejects a concurrent duplicate start before resolution and spawns once', async () => {
     const resolution = deferred<string | undefined>()
     const locator: Locator = {
+      resolveShell: vi.fn(async () => '/bin/zsh'),
       resolvePowerShell: vi.fn(() => resolution.promise),
       resolveAgent: vi.fn(async () => undefined)
     }

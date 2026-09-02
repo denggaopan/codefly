@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { UpdateCheckResult, UpdateDownloadResult } from '../../../shared/contracts'
 import type { ExternalLinkTarget } from '../../../shared/links'
+import { defaultSessionKindPreferences } from '../session-kind-options'
 import { useAppStore } from '../store/use-app-store'
 import SettingsDialog from './SettingsDialog'
 
@@ -112,11 +113,29 @@ describe('SettingsDialog', () => {
     expect(useAppStore.getState().sessionKindPreferences.codex).toEqual({ enabled: false, worktree: true })
 
     expect(JSON.parse(window.localStorage.getItem('codefly.sessionKinds')!)).toEqual({
+      shell: { enabled: false, worktree: false },
       powershell: { enabled: true, worktree: false },
       cmd: { enabled: true, worktree: true },
       claude: { enabled: true, worktree: true },
       codex: { enabled: false, worktree: true }
     })
+  })
+
+  it('shows exactly Shell, Claude, and Codex session settings on macOS', () => {
+    act(() => {
+      useAppStore.setState({
+        platform: 'darwin',
+        sessionKindPreferences: defaultSessionKindPreferences('darwin')
+      })
+    })
+
+    renderDialog()
+
+    expect(screen.getByRole('switch', { name: 'Enable Shell' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('switch', { name: 'Enable Claude' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Enable Codex' })).toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Enable PowerShell' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch', { name: 'Enable Command Prompt' })).not.toBeInTheDocument()
   })
 
   it('disables the worktree switch of a kind that is turned off, without discarding its value', async () => {

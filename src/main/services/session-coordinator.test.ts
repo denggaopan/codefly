@@ -165,6 +165,7 @@ describe('SessionCoordinator.create', () => {
   })
 
   it.each([
+    ['shell' as const, 'New Shell session'],
     ['powershell' as const, 'New PowerShell session'],
     ['cmd' as const, 'New Command Prompt session'],
     ['claude' as const, 'New Claude session'],

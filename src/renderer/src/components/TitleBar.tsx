@@ -5,12 +5,9 @@ import { useTranslation } from '../i18n/use-translation'
 import SettingsDialog from './SettingsDialog'
 
 /**
- * Custom window title bar. The main window is created with titleBarStyle:'hidden' plus a
- * titleBarOverlay (src/main/window.ts), so Windows draws its native minimize/maximize/close
- * buttons as an overlay in the top-right corner ON TOP of this strip. The strip itself is
- * the drag region (-webkit-app-region: drag in styles.css); padding-right reserves exactly
- * the overlay's width via env(titlebar-area-width), which is what places the settings
- * button — the strip's last flex child — directly left of the native minimize button.
+ * Custom window title bar. Windows reserves its right-side titleBarOverlay; macOS reserves
+ * the left-side traffic lights. Platform-specific padding in styles.css keeps this strip's
+ * drag region and controls clear of the native window buttons.
  */
 export default function TitleBar() {
   const { t } = useTranslation()

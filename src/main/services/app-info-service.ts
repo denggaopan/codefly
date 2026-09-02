@@ -136,7 +136,8 @@ export class AppInfoService {
     private readonly fetch: FetchLike = defaultFetch,
     private readonly openExternal: OpenExternal = defaultOpenExternal,
     private readonly loginItemSettings: LoginItemSettings = defaultLoginItemSettings,
-    private readonly createTimeoutSignal: TimeoutSignalFactory = defaultTimeoutSignal
+    private readonly createTimeoutSignal: TimeoutSignalFactory = defaultTimeoutSignal,
+    private readonly platform: NodeJS.Platform = process.platform
   ) {}
 
   info(): AppInfo {
@@ -186,7 +187,7 @@ export class AppInfoService {
       // the download, and UpdaterService re-resolves the URL itself when the user starts it.
       // A release with no Windows installer simply omits it, which leaves the UI on its
       // "open the download page" fallback.
-      const installer = pickWindowsInstaller(release.data.assets)
+      const installer = this.platform === 'win32' ? pickWindowsInstaller(release.data.assets) : undefined
       return {
         status: 'available',
         currentVersion,

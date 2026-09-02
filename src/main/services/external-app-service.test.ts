@@ -25,6 +25,31 @@ const locatorFor = (resolved: string | undefined): CliLocator =>
 const locatorWith = (resolved: string | undefined): CliLocator => ({ resolve: vi.fn(async () => resolved) }) as unknown as CliLocator
 
 describe('ExternalAppService', () => {
+  it('discovers and opens the standard macOS VS Code application through open', async () => {
+    const application = '/Applications/Visual Studio Code.app'
+    const projectPath = '/Users/me/Projects/My App/中文'
+    const pathExists = vi.fn(async (candidate: string) => candidate === application || candidate === projectPath)
+    const spawnDetached = vi.fn(async () => undefined)
+    const locator = locatorWith(undefined)
+    const service = new ExternalAppService(locator, pathExists, spawnDetached, vi.fn(), { HOME: '/Users/me' }, undefined, 'darwin')
+
+    await expect(service.capabilities()).resolves.toEqual({ vscode: { available: true, detail: application } })
+    await service.openInVSCode(project(projectPath))
+
+    expect(spawnDetached).toHaveBeenCalledWith('/usr/bin/open', ['-a', 'Visual Studio Code', projectPath])
+    expect(locator.resolve).not.toHaveBeenCalled()
+  })
+
+  it('checks the user Applications folder before the macOS code command fallback', async () => {
+    const userApplication = '/Users/me/Applications/Visual Studio Code.app'
+    const pathExists = vi.fn(async (candidate: string) => candidate === userApplication)
+    const locator = locatorWith('/opt/homebrew/bin/code')
+    const service = new ExternalAppService(locator, pathExists, vi.fn(), vi.fn(), { HOME: '/Users/me' }, undefined, 'darwin')
+
+    await expect(service.capabilities()).resolves.toEqual({ vscode: { available: true, detail: userApplication } })
+    expect(locator.resolve).not.toHaveBeenCalled()
+  })
+
   it('prefers the code command and does not check standard locations after it resolves', async () => {
     const command = 'C:\\bin\\Code.exe'
     const pathExists = vi.fn(async (candidate: string) => candidate === command)

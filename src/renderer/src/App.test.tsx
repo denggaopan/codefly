@@ -9,6 +9,7 @@ import type {
   AppState,
   CapabilityState,
   DeleteSessionResult,
+  HostPlatform,
   ProjectRecord,
   SessionKind,
   SessionRecord,
@@ -56,10 +57,10 @@ vi.stubGlobal(
 // vi.fn() property down to a plain function type and lose access to mock helpers like
 // mockResolvedValueOnce in the tests below. Structural compatibility with window.codefly
 // (CodeFlyApi) is still checked at each `window.codefly = api` assignment site.
-const createFakeApi = (state: AppState, capabilities: CapabilityState) => {
+const createFakeApi = (state: AppState, capabilities: CapabilityState, platform: HostPlatform = 'win32') => {
   const stateListeners = new Set<(state: AppState) => void>()
   return {
-    getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state, capabilities })),
+    getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ platform, state, capabilities })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
     reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
     openProjectInVSCode: vi.fn(async (_projectId: string): Promise<void> => undefined),
@@ -189,6 +190,7 @@ describe('App', () => {
   it('shows a dismissible warning when startup recovered a corrupt state file', async () => {
     const recoveryWarning = 'CodeFly recovered state from backup. The corrupt state was preserved.'
     api.getSnapshot.mockResolvedValueOnce({
+      platform: 'win32',
       state: stateWith(),
       capabilities: allAvailableCapabilities,
       recoveryWarning
@@ -431,6 +433,56 @@ describe('App', () => {
     const powershellButton = await screen.findByRole('button', { name: 'PowerShell' })
     const container = powershellButton.closest('[data-launcher-item]') ?? powershellButton.parentElement!
     expect(container).toHaveTextContent('Ctrl+T')
+  })
+
+  it('shows only Shell and agents on macOS, creates Shell, and advertises Cmd+T', async () => {
+    const user = userEvent.setup()
+    api = createFakeApi(stateWith(), allAvailableCapabilities, 'darwin')
+    const created: SessionRecord = {
+      ...stoppedPowerShellSession,
+      id: 'session-shell',
+      kind: 'shell',
+      title: 'New Shell session',
+      launchPath: '/Users/test/demo-project',
+      status: 'running'
+    }
+    api.createSession.mockResolvedValueOnce(created)
+    window.codefly = api
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    await openNewSessionLauncher(user)
+
+    expect(screen.queryByRole('button', { name: 'PowerShell' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Command Prompt' })).not.toBeInTheDocument()
+    const shellButton = screen.getByRole('button', { name: 'Shell' })
+    expect(shellButton.closest('[data-launcher-item]')).toHaveTextContent('Cmd+T')
+    expect(screen.getByRole('button', { name: 'Claude' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Codex' })).toBeInTheDocument()
+
+    await user.click(shellButton)
+    expect(api.createSession).toHaveBeenCalledWith('project-1', 'shell', false)
+  })
+
+  it.each([
+    ['win32', { ctrlKey: true }, 'powershell'],
+    ['darwin', { metaKey: true }, 'shell']
+  ] as const)('creates the ordinary %s default with its platform shortcut', async (platform, modifier, kind) => {
+    api = createFakeApi(stateWith(), allAvailableCapabilities, platform)
+    api.createSession.mockResolvedValueOnce({
+      ...stoppedPowerShellSession,
+      id: `session-shortcut-${kind}`,
+      kind,
+      title: kind === 'shell' ? 'New Shell session' : 'New PowerShell session',
+      status: 'running'
+    })
+    window.codefly = api
+    render(<App />)
+    await screen.findByText(project1.name)
+
+    fireEvent.keyDown(document, { key: 't', code: 'KeyT', ...modifier })
+
+    await waitFor(() => expect(api.createSession).toHaveBeenCalledWith('project-1', kind, false))
   })
 
   it('disables Claude and Codex when unavailable and shows the capability detail as visible help text', async () => {

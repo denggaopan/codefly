@@ -28,7 +28,11 @@ import ProjectSidebar from './ProjectSidebar'
 type FakeApi = Window['codefly']
 
 const createFakeApi = (): FakeApi => ({
-  getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state: { version: 1, projects: [], sessions: [] }, capabilities: defaultCapabilities() })),
+  getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({
+    platform: 'win32',
+    state: { version: 1, projects: [], sessions: [] },
+    capabilities: defaultCapabilities()
+  })),
   addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
   reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
   openProjectInVSCode: vi.fn(async (_projectId: string): Promise<void> => undefined),

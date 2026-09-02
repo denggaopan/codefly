@@ -37,6 +37,7 @@ export const en = {
   'launcher.worktreeVariant': '{kind} (new worktree)',
   'launcher.allKindsDisabled': 'Every session kind is turned off in Settings.',
 
+  'sessionKind.shell': 'Shell',
   'sessionKind.powershell': 'PowerShell',
   'sessionKind.cmd': 'Command Prompt',
   'sessionKind.claude': 'Claude',
@@ -89,7 +90,7 @@ export const en = {
 
   'update.availableTitle': 'Version {version} is available',
   'update.availableBody': 'CodeFly can download the installer for you and install it when you are ready.',
-  'update.noInstallerBody': 'This release does not publish a Windows installer, so it has to be downloaded from the releases page.',
+  'update.noInstallerBody': 'Download this release from the Releases page to install it on this platform.',
   'update.updateNow': 'Update now',
   'update.later': 'Later',
   'update.openDownloadPage': 'Open download page',

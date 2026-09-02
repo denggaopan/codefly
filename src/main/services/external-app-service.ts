@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
-import { win32 as path } from 'node:path'
+import { posix, win32 as windowsPath } from 'node:path'
 
 import { shell } from 'electron'
 
@@ -126,7 +126,8 @@ export class ExternalAppService {
     private readonly spawnDetached: SpawnDetached = defaultSpawnDetached,
     private readonly openPath: OpenPath = defaultOpenPath,
     private readonly environment: NodeJS.ProcessEnv = process.env,
-    private readonly openExternal: OpenExternal = defaultOpenExternal
+    private readonly openExternal: OpenExternal = defaultOpenExternal,
+    private readonly platform: NodeJS.Platform = process.platform
   ) {}
 
   async capabilities(): Promise<Pick<CapabilityState, 'vscode'>> {
@@ -140,6 +141,16 @@ export class ExternalAppService {
     await this.ensureProjectPath(project, 'vscode')
     const executable = await this.findVSCode()
     if (!executable) throw new ExternalAppUnavailableError('vscode')
+
+    if (this.platform === 'darwin') {
+      const launcher = '/usr/bin/open'
+      try {
+        await this.spawnDetached(launcher, ['-a', 'Visual Studio Code', project.path])
+      } catch (cause) {
+        throw new ExternalAppLaunchError('vscode', project.path, cause, launcher)
+      }
+      return
+    }
 
     try {
       await this.spawnDetached(executable, [project.path])
@@ -194,19 +205,30 @@ export class ExternalAppService {
   }
 
   private async findVSCode(): Promise<string | undefined> {
+    if (this.platform === 'darwin') {
+      const applications = [
+        '/Applications/Visual Studio Code.app',
+        ...(this.environment.HOME ? [posix.join(this.environment.HOME, 'Applications', 'Visual Studio Code.app')] : [])
+      ]
+      for (const application of applications) {
+        if (await this.pathExists(application)) return application
+      }
+      return this.locator.resolve('code')
+    }
+
     const command = await this.locator.resolve('code')
     const commandExecutable = command ? await this.nativeVSCodeExecutable(command) : undefined
     if (commandExecutable) return commandExecutable
 
     const localAppData = this.environment.LOCALAPPDATA
     if (localAppData) {
-      const userInstall = path.join(localAppData, 'Programs', 'Microsoft VS Code', 'Code.exe')
+      const userInstall = windowsPath.join(localAppData, 'Programs', 'Microsoft VS Code', 'Code.exe')
       if (await this.pathExists(userInstall)) return userInstall
     }
 
     const programFiles = this.environment.ProgramFiles
     if (programFiles) {
-      const machineInstall = path.join(programFiles, 'Microsoft VS Code', 'Code.exe')
+      const machineInstall = windowsPath.join(programFiles, 'Microsoft VS Code', 'Code.exe')
       if (await this.pathExists(machineInstall)) return machineInstall
     }
     return undefined
@@ -220,11 +242,11 @@ export class ExternalAppService {
       return (await this.pathExists(unquoted)) ? unquoted : undefined
     }
 
-    const fileName = path.basename(unquoted).toLowerCase()
-    const parentName = path.basename(path.dirname(unquoted)).toLowerCase()
+    const fileName = windowsPath.basename(unquoted).toLowerCase()
+    const parentName = windowsPath.basename(windowsPath.dirname(unquoted)).toLowerCase()
     if (parentName !== 'bin' || (fileName !== 'code' && fileName !== 'code.cmd')) return undefined
 
-    const executable = path.resolve(path.dirname(unquoted), '..', 'Code.exe')
+    const executable = windowsPath.resolve(windowsPath.dirname(unquoted), '..', 'Code.exe')
     return (await this.pathExists(executable)) ? executable : undefined
   }
 

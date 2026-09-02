@@ -98,7 +98,11 @@ const createFakeApi = () => {
   const dataListeners = new Set<(payload: { sessionId: string; data: string }) => void>()
   const exitListeners = new Set<(payload: { sessionId: string; exitCode: number }) => void>()
   return {
-    getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state: { version: 1, projects: [], sessions: [] }, capabilities: defaultCapabilities() })),
+    getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({
+      platform: 'win32',
+      state: { version: 1, projects: [], sessions: [] },
+      capabilities: defaultCapabilities()
+    })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
     reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
     openProjectInVSCode: vi.fn(async (): Promise<void> => undefined),
@@ -624,6 +628,21 @@ describe('TerminalWorkspace', () => {
     expect(screen.getByText(runningClaudeSession.launchPath)).toBeInTheDocument()
     expect(screen.getByText('Claude')).toBeInTheDocument()
     expect(screen.getByText('Running')).toBeInTheDocument()
+  })
+
+  it('renders the native Shell label in a macOS session header', async () => {
+    const shellSession: SessionRecord = {
+      ...runningPowerShellSession,
+      id: 'session-shell',
+      kind: 'shell',
+      title: 'New Shell session',
+      launchPath: '/Users/test/demo-project'
+    }
+    seedStore(shellSession)
+    useAppStore.setState({ activeSessionId: shellSession.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText('Shell')).toBeInTheDocument()
   })
 
   it('shows "Starting…" for a creating session header, matching the sidebar\'s shared label', async () => {

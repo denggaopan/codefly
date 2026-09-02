@@ -15,6 +15,9 @@ directories:
 files:
   - out/**
   - package.json
+  # package:mac stages bundles under container /tmp to avoid Windows bind-mount rename
+  # failures, so release/ must be excluded explicitly rather than via directories.output.
+  - "!release/**"
 asarUnpack:
   - node_modules/node-pty/**
 win:
@@ -42,6 +45,12 @@ mac:
     - target: zip
       arch: [x64, arm64]
   files:
+    # Platform-specific file sets are additive in electron-builder. Without
+    # explicit inclusions here, these exclusions get paired with `**/*` and
+    # accidentally package the entire repository.
+    - out/**
+    - package.json
+    - "!release/**"
     # node-pty ships prebuilt binaries for every platform. The Windows ones, the
     # build/ tree its Windows postinstall populates and the bundled ConPTY
     # binaries are dead weight in a macOS bundle. prebuilds/darwin-* stay: node-pty

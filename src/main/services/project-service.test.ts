@@ -107,6 +107,35 @@ describe('ProjectService', () => {
     expect(run).not.toHaveBeenCalled()
     expect(store.update).not.toHaveBeenCalled()
   })
+
+  it('uses POSIX separators without folding case for macOS project identity', async () => {
+    const existing: ProjectRecord = {
+      id: 'existing',
+      name: 'Project',
+      path: '/Users/me/Project/',
+      createdAt: '2026-08-26T00:00:00.000Z'
+    }
+    let state: AppState = { ...emptyState(), projects: [existing] }
+    const store = {
+      load: vi.fn(async () => structuredClone(state)),
+      update: vi.fn(async (mutator) => {
+        state = await mutator(structuredClone(state))
+        return structuredClone(state)
+      })
+    } as unknown as SessionStore
+    const run = vi.fn().mockRejectedValue(new Error('not git'))
+    const sameCase = new ProjectService(store, runnerWith(run), fsFor('/Users/me/Project'), clock, () => 'same', 'darwin')
+
+    await expect(sameCase.register('/Users/me/Project')).resolves.toEqual(existing)
+
+    const differentCase = new ProjectService(store, runnerWith(run), fsFor('/Users/me/project'), clock, () => 'new', 'darwin')
+    await expect(differentCase.register('/Users/me/project')).resolves.toMatchObject({
+      id: 'new',
+      name: 'project',
+      path: '/Users/me/project'
+    })
+    expect(state.projects).toHaveLength(2)
+  })
 })
 
 describe('ProjectService.reorder', () => {

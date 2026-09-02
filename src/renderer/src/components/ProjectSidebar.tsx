@@ -107,6 +107,7 @@ function SessionRow({ session, active, onActivate, onRequestDelete }: SessionRow
  */
 export default function ProjectSidebar() {
   const { t } = useTranslation()
+  const platform = useAppStore((state) => state.platform)
   const appState = useAppStore((state) => state.appState)
   const capabilities = useAppStore((state) => state.capabilities)
   const activeProjectId = useAppStore((state) => state.activeProjectId)
@@ -124,7 +125,9 @@ export default function ProjectSidebar() {
   const openProjectFolder = useAppStore((state) => state.openProjectFolder)
   const openProjectRepository = useAppStore((state) => state.openProjectRepository)
   const removeProject = useAppStore((state) => state.removeProject)
+  const createSession = useAppStore((state) => state.createSession)
   const dismissNotice = useAppStore((state) => state.dismissNotice)
+  const sessionKindPreferences = useAppStore((state) => state.sessionKindPreferences)
   const launcherOpen = useAppStore((state) => state.launcherOpen)
   const openLauncher = useAppStore((state) => state.openLauncher)
   const closeLauncher = useAppStore((state) => state.closeLauncher)
@@ -155,6 +158,31 @@ export default function ProjectSidebar() {
   // successful creation collapsing it), instead of focus being dropped to <body>.
   const launcherTriggerRef = useRef<HTMLButtonElement | null>(null)
   const wasLauncherOpenRef = useRef(false)
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent): void => {
+      const hasPlatformModifier = platform === 'darwin'
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+      if (
+        event.repeat ||
+        !hasPlatformModifier ||
+        event.shiftKey ||
+        event.altKey ||
+        (event.code !== 'KeyT' && event.key.toLowerCase() !== 't')
+      ) {
+        return
+      }
+
+      const kind = platform === 'darwin' ? 'shell' : 'powershell'
+      if (!activeProjectId || !sessionKindPreferences[kind].enabled) return
+      event.preventDefault()
+      void createSession(activeProjectId, kind, false)
+    }
+
+    document.addEventListener('keydown', handleShortcut)
+    return () => document.removeEventListener('keydown', handleShortcut)
+  }, [activeProjectId, createSession, platform, sessionKindPreferences])
 
   useEffect(() => {
     if (launcherOpen) {

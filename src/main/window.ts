@@ -25,13 +25,13 @@ const WINDOW_THEME_COLORS: Record<ThemePreference, { background: string; overlay
  * creation defaults (dark) and afterwards from the theme:set IPC handler whenever the
  * renderer applies its persisted preference or the user switches themes in Settings.
  */
-export function applyWindowTheme(window: BrowserWindow, theme: ThemePreference): void {
+export function applyWindowTheme(window: BrowserWindow, theme: ThemePreference, platform: NodeJS.Platform = process.platform): void {
   const colors = WINDOW_THEME_COLORS[theme]
   nativeTheme.themeSource = theme
   window.setBackgroundColor(colors.background)
-  // Only valid because createMainWindow passes titleBarOverlay below — calling this on a
-  // window created without an overlay would throw.
-  window.setTitleBarOverlay({ color: colors.overlayColor, symbolColor: colors.overlaySymbol, height: TITLE_BAR_HEIGHT })
+  if (platform === 'win32') {
+    window.setTitleBarOverlay({ color: colors.overlayColor, symbolColor: colors.overlaySymbol, height: TITLE_BAR_HEIGHT })
+  }
 }
 
 const safeDevelopmentRendererUrl = (value: string | undefined): string | undefined => {
@@ -45,7 +45,7 @@ const safeDevelopmentRendererUrl = (value: string | undefined): string | undefin
   }
 }
 
-export function createMainWindow(): BrowserWindow {
+export function createMainWindow(platform: NodeJS.Platform = process.platform): BrowserWindow {
   // CodeFly has no menu commands: remove the application menu entirely (also disables the
   // default Alt-key menu reveal); autoHideMenuBar is belt-and-braces for any platform path
   // that still attaches a default menu to the window.
@@ -65,19 +65,19 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 600,
     autoHideMenuBar: true,
     backgroundColor: WINDOW_THEME_COLORS.dark.background,
-    // Hide the OS title bar but keep the native minimize/maximize/close buttons as an
-    // overlay in the top-right corner. The renderer draws its own .title-bar strip under
-    // that overlay (drag region + settings button, see TitleBar.tsx), which is what allows
-    // in-app controls to sit directly left of the native minimize button.
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: WINDOW_THEME_COLORS.dark.overlayColor,
-      symbolColor: WINDOW_THEME_COLORS.dark.overlaySymbol,
-      height: TITLE_BAR_HEIGHT
-    },
+    ...(platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const }
+      : {
+          titleBarStyle: 'hidden' as const,
+          titleBarOverlay: {
+            color: WINDOW_THEME_COLORS.dark.overlayColor,
+            symbolColor: WINDOW_THEME_COLORS.dark.overlaySymbol,
+            height: TITLE_BAR_HEIGHT
+          }
+        }),
     // In a packaged build the window/taskbar icon comes from the exe (electron-builder
     // win.icon); build/icon.ico only exists in the repo, so it is wired up for dev runs.
-    ...(app.isPackaged ? {} : { icon: join(currentDirectory, '../../build/icon.ico') }),
+    ...(app.isPackaged || platform !== 'win32' ? {} : { icon: join(currentDirectory, '../../build/icon.ico') }),
     webPreferences: {
       preload: join(currentDirectory, '../preload/index.js'),
       contextIsolation: true,

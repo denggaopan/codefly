@@ -3,8 +3,10 @@ import claudeIconUrl from './assets/claude.svg'
 import cmdIconUrl from './assets/cmd.svg'
 import codexIconUrl from './assets/codex.svg'
 import powershellIconUrl from './assets/powershell.svg'
+import shellIconUrl from './assets/shell.svg'
 
 const iconUrls: Readonly<Record<SessionKind, string>> = {
+  shell: shellIconUrl,
   powershell: powershellIconUrl,
   cmd: cmdIconUrl,
   claude: claudeIconUrl,

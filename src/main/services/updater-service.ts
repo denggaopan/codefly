@@ -171,6 +171,7 @@ const combineSignals = (cancel: AbortSignal, timeout: AbortSignal | undefined): 
   timeout ? AbortSignal.any([cancel, timeout]) : cancel
 
 const UNREADABLE_RESPONSE = 'GitHub returned a response CodeFly could not read.'
+const WINDOWS_ONLY_UPDATE = 'In-app updates are available on Windows only.'
 
 type ReadyInstaller = { filePath: string; fileName: string; version: string }
 
@@ -202,7 +203,8 @@ export class UpdaterService {
     private readonly spawnInstaller: InstallerSpawner = defaultSpawnInstaller,
     private readonly quit: QuitApp = defaultQuit,
     private readonly createTimeoutSignal: TimeoutSignalFactory = defaultTimeoutSignal,
-    private readonly now: Clock = Date.now
+    private readonly now: Clock = Date.now,
+    private readonly platform: NodeJS.Platform = process.platform
   ) {}
 
   onProgress(listener: (progress: UpdateDownloadProgress) => void): () => void {
@@ -218,6 +220,7 @@ export class UpdaterService {
    * start a competing download over the same `.part` file.
    */
   download(): Promise<UpdateDownloadResult> {
+    if (this.platform !== 'win32') return Promise.resolve({ status: 'error', message: WINDOWS_ONLY_UPDATE })
     if (this.inFlight) return this.inFlight
 
     const controller = new AbortController()
@@ -244,6 +247,7 @@ export class UpdaterService {
   }
 
   async install(): Promise<UpdateInstallResult> {
+    if (this.platform !== 'win32') return { status: 'error', message: WINDOWS_ONLY_UPDATE }
     // Quitting is not instant — the app still tears down every PTY first — so the user has a
     // real window in which to click again. A second NSIS wizard racing the first over the
     // same install directory is worth guarding against here as well as in the renderer.

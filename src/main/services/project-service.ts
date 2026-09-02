@@ -1,5 +1,5 @@
 import { realpath, stat } from 'node:fs/promises'
-import { basename, resolve } from 'node:path'
+import { posix, win32 } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import type { ProjectRecord, RepoRemote } from '../../shared/contracts'
@@ -42,7 +42,11 @@ export class InvalidProjectPathError extends Error {
 
 const productionFileSystem: ProjectFileSystem = { realpath, stat }
 
-const normalizeProjectPath = (value: string): string => {
+const normalizeProjectPath = (value: string, platform: NodeJS.Platform): string => {
+  if (platform !== 'win32') {
+    const withoutTrailingSeparators = value.replace(/\/+$/u, '')
+    return withoutTrailingSeparators || '/'
+  }
   const withWindowsSeparators = value.replace(/\//g, '\\')
   const withoutTrailingSeparators = withWindowsSeparators.replace(/\\+$/u, '')
   return (withoutTrailingSeparators || withWindowsSeparators).toLocaleLowerCase('en-US')
@@ -51,9 +55,9 @@ const normalizeProjectPath = (value: string): string => {
 const sameRemote = (left: RepoRemote | undefined, right: RepoRemote | undefined): boolean =>
   left === right || (left !== undefined && right !== undefined && left.host === right.host && left.webUrl === right.webUrl)
 
-const projectWithPath = (projects: readonly ProjectRecord[], candidatePath: string): ProjectRecord | undefined => {
-  const normalizedCandidate = normalizeProjectPath(candidatePath)
-  return projects.find((project) => normalizeProjectPath(project.path) === normalizedCandidate)
+const projectWithPath = (projects: readonly ProjectRecord[], candidatePath: string, platform: NodeJS.Platform): ProjectRecord | undefined => {
+  const normalizedCandidate = normalizeProjectPath(candidatePath, platform)
+  return projects.find((project) => normalizeProjectPath(project.path, platform) === normalizedCandidate)
 }
 
 export class ProjectService {
@@ -62,7 +66,8 @@ export class ProjectService {
     private readonly runner: CommandRunner = commandRunner,
     private readonly fileSystem: ProjectFileSystem = productionFileSystem,
     private readonly clock: () => Date = () => new Date(),
-    private readonly createId: () => string = randomUUID
+    private readonly createId: () => string = randomUUID,
+    private readonly platform: NodeJS.Platform = process.platform
   ) {}
 
   async register(selectedPath: string): Promise<ProjectRecord> {
@@ -83,12 +88,12 @@ export class ProjectService {
     if (!directory.isDirectory()) throw new InvalidProjectPathError(selectedPath)
 
     const current = await this.store.load()
-    const existing = projectWithPath(current.projects, realPath)
+    const existing = projectWithPath(current.projects, realPath, this.platform)
     if (existing) return existing
 
     const repoRoot = await this.findRepoRoot(realPath)
     const repoRemote = repoRoot ? await this.findRepoRemote(realPath).catch(() => undefined) : undefined
-    const name = basename(realPath) || realPath
+    const name = (this.platform === 'win32' ? win32 : posix).basename(realPath) || realPath
     const project: ProjectRecord = {
       id: this.createId(),
       name,
@@ -100,7 +105,7 @@ export class ProjectService {
 
     let persisted = project
     await this.store.update((latest) => {
-      const concurrentExisting = projectWithPath(latest.projects, realPath)
+      const concurrentExisting = projectWithPath(latest.projects, realPath, this.platform)
       if (concurrentExisting) {
         persisted = concurrentExisting
         return latest
@@ -195,7 +200,7 @@ export class ProjectService {
     try {
       const result = await this.runner.run('git', ['-C', realPath, 'rev-parse', '--show-toplevel'])
       const output = result.stdout.trim()
-      return output ? resolve(output) : undefined
+      return output ? (this.platform === 'win32' ? win32 : posix).resolve(output) : undefined
     } catch {
       return undefined
     }

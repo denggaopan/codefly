@@ -20,9 +20,9 @@ export type TerminalKeyAction =
   /** Let xterm evaluate the key as it normally would. */
   | { action: 'xterm' }
   /**
-   * Skip xterm entirely and let the browser's default handling run. For Ctrl+V keydown that
-   * default is the paste command, whose `paste` event xterm already listens for (bracketed
-   * paste included); for keypress/keyup it simply means "nothing to do".
+   * Skip xterm entirely and let the browser's default handling run. For Ctrl+V/Cmd+V
+   * keydown that default is the paste command, whose `paste` event xterm already listens for
+   * (bracketed paste included); for keypress/keyup it simply means "nothing to do".
    */
   | { action: 'browser' }
   /** Skip xterm and write this to the PTY instead. The caller must preventDefault the event. */
@@ -30,11 +30,14 @@ export type TerminalKeyAction =
 
 const isAgentSession = (kind: SessionKind): boolean => kind === 'claude' || kind === 'codex'
 
-// `code` is the physical key, so Ctrl+V still pastes on non-Latin layouts (where `key` is e.g.
+// `code` is the physical key, so Ctrl/Cmd+V still pastes on non-Latin layouts (where `key` is e.g.
 // 'м') — matching how the browser itself resolves the shortcut; `key` covers exotic layouts
 // whose V sits on another physical key.
-const isCtrlV = (event: TerminalKeyEvent): boolean =>
-  event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && (event.code === 'KeyV' || event.key.toLowerCase() === 'v')
+const isPasteShortcut = (event: TerminalKeyEvent): boolean =>
+  event.ctrlKey !== event.metaKey &&
+  !event.shiftKey &&
+  !event.altKey &&
+  (event.code === 'KeyV' || event.key.toLowerCase() === 'v')
 
 const isShiftEnter = (event: TerminalKeyEvent): boolean =>
   event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === 'Enter'
@@ -45,12 +48,12 @@ const isShiftEnter = (event: TerminalKeyEvent): boolean =>
  * xterm maps Ctrl+V to ^V (0x16) and Shift+Enter to a bare CR, then cancels the DOM event.
  * That suits shells — PSReadLine and conhost read the clipboard themselves on ^V — but not
  * Claude Code or Codex, which neither paste text on ^V nor can tell Shift+Enter from Enter.
- * Agent sessions therefore route Ctrl+V to the browser's paste and Shift+Enter to
+ * Agent sessions therefore route Ctrl+V/Cmd+V to the browser's paste and Shift+Enter to
  * {@link AGENT_NEWLINE_SEQUENCE}; shell sessions are left exactly as xterm handles them.
  */
 export function resolveTerminalKey(kind: SessionKind, event: TerminalKeyEvent): TerminalKeyAction {
   if (!isAgentSession(kind)) return { action: 'xterm' }
-  if (isCtrlV(event)) return { action: 'browser' }
+  if (isPasteShortcut(event)) return { action: 'browser' }
   if (isShiftEnter(event)) {
     // Only keydown carries the action: with its default prevented no keypress follows, and the
     // keyup must still bypass xterm so it cannot turn into a stray CR.

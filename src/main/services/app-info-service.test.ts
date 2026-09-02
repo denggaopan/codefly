@@ -66,6 +66,7 @@ const buildHarness = (
     respond?: FetchLike
     openExternalThrows?: Error
     loginItem?: FakeLoginItem
+    platform?: NodeJS.Platform
   } = {}
 ): Harness => {
   const requests: Harness['requests'] = []
@@ -89,7 +90,8 @@ const buildHarness = (
     (milliseconds) => {
       timeouts.push(milliseconds)
       return undefined
-    }
+    },
+    options.platform ?? 'win32'
   )
 
   return { service, requests, timeouts, opened, loginItem }
@@ -179,6 +181,29 @@ describe('AppInfoService.checkForUpdates: outcomes', () => {
     })
     // The download URL stays in the main process: UpdaterService re-resolves it itself.
     await expect(service.checkForUpdates()).resolves.not.toHaveProperty('asset.browser_download_url')
+  })
+
+  it('never offers a Windows installer to macOS update checks', async () => {
+    const { service } = buildHarness({
+      version: '0.4.1',
+      platform: 'darwin',
+      respond: async () =>
+        jsonResponse(200, {
+          ...(release('v0.5.0') as object),
+          assets: [
+            {
+              name: 'CodeFly-Setup-0.5.0-win-x64.exe',
+              size: 84_231_680,
+              browser_download_url: 'https://github.com/denggaopan/codefly/releases/download/v0.5.0/CodeFly-Setup-0.5.0-win-x64.exe'
+            }
+          ]
+        })
+    })
+
+    const result = await service.checkForUpdates()
+
+    expect(result).toMatchObject({ status: 'available', latestVersion: '0.5.0' })
+    expect(result).not.toHaveProperty('asset')
   })
 
   it('prefers the Setup package when a release publishes several executables', async () => {

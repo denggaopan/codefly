@@ -104,7 +104,7 @@ describe('TitleService', () => {
     await expect(raw.generate('raw', 'claude', '.'.repeat(30))).resolves.toBe('.'.repeat(24))
   })
 
-  it.each(['powershell', 'cmd'] satisfies SessionKind[])('%s starts locally and never calls an AI adapter', async (kind) => {
+  it.each(['shell', 'powershell', 'cmd'] satisfies SessionKind[])('%s starts locally and never calls an AI adapter', async (kind) => {
     const generate = vi.fn(async () => 'must not run')
     const ensureDirectory = vi.fn(async () => undefined)
     const service = serviceWith({ claude: adapterFor(generate), codex: adapterFor(generate) }, ensureDirectory)
@@ -169,6 +169,32 @@ class FakeTitleProcess extends EventEmitter implements SpawnedTitleProcess {
 }
 
 describe('createCliTitleAdapter', () => {
+  it('launches an extensionless macOS agent path directly', async () => {
+    const child = new FakeTitleProcess()
+    const spawn = vi.fn(() => child)
+    const adapter = createCliTitleAdapter(
+      'claude',
+      { resolveAgent: vi.fn(async () => '/Users/Dev Name/.local/bin/claude') },
+      spawn,
+      { platform: 'darwin' }
+    )
+
+    const pending = adapter.generate('prompt', {
+      cwd: '/Users/Dev Name/Library/Application Support/CodeFly/title-generator',
+      signal: new AbortController().signal,
+      maxOutputBytes: TITLE_MAX_OUTPUT_BYTES
+    })
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce())
+    child.emit('close', 0, null)
+
+    await expect(pending).resolves.toBe('')
+    expect(spawn).toHaveBeenCalledWith(
+      '/Users/Dev Name/.local/bin/claude',
+      ['--print'],
+      expect.objectContaining({ shell: false })
+    )
+  })
+
   it.each([
     ['claude' as const, ['--print']],
     ['codex' as const, ['exec', '--skip-git-repo-check', '-']]

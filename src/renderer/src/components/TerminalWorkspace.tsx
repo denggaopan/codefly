@@ -43,6 +43,8 @@ const MAX_PENDING_SESSIONS = 32
 
 const sessionKindLabel = (t: Translator, kind: SessionRecord['kind']): string => {
   switch (kind) {
+    case 'shell':
+      return t('sessionKind.shell')
     case 'powershell':
       return t('sessionKind.powershell')
     case 'cmd':
@@ -184,7 +186,7 @@ export default function TerminalWorkspace() {
     const dataDisposable = terminal.onData(forwardInput)
 
     // Runs before xterm's own key handling (for keydown, keypress and keyup alike). Returning
-    // false makes xterm skip the event entirely: for Ctrl+V that leaves the browser's default
+    // false makes xterm skip the event entirely: for Ctrl/Cmd+V that leaves the browser's default
     // paste command in place, whose `paste` event xterm's own listener turns into (bracketed)
     // terminal input; for Shift+Enter we write the newline sequence ourselves and cancel the
     // event so no bare CR follows. Shell sessions resolve to 'xterm' for every key and behave

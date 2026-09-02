@@ -56,7 +56,7 @@ const createFakeApi = () => {
   const progressListeners = new Set<(progress: UpdateDownloadProgress) => void>()
   return {
     setTheme: vi.fn(async (): Promise<void> => undefined),
-    getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ state: seededState, capabilities: defaultCapabilities() })),
+    getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ platform: 'win32', state: seededState, capabilities: defaultCapabilities() })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
     openProjectInVSCode: vi.fn(async (): Promise<void> => undefined),
     openProjectFolder: vi.fn(async (): Promise<void> => undefined),
@@ -270,6 +270,26 @@ describe('useAppStore session-kind preferences', () => {
     await reinitializeWith('not json')
 
     expect(useAppStore.getState().sessionKindPreferences).toEqual(DEFAULT_SESSION_KIND_PREFERENCES)
+  })
+
+  it('merges stored values over macOS defaults after the snapshot identifies the platform', async () => {
+    dispose()
+    window.localStorage.setItem(SESSION_KINDS_STORAGE_KEY, JSON.stringify({ shell: { worktree: true }, claude: { worktree: false } }))
+    useAppStore.getState().reset()
+    api.getSnapshot.mockResolvedValueOnce({ platform: 'darwin', state: seededState, capabilities: defaultCapabilities() })
+
+    dispose = useAppStore.getState().initialize()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(useAppStore.getState().platform).toBe('darwin')
+    expect(document.documentElement.dataset.platform).toBe('darwin')
+    expect(useAppStore.getState().sessionKindPreferences).toEqual({
+      shell: { enabled: true, worktree: true },
+      powershell: { enabled: false, worktree: false },
+      cmd: { enabled: false, worktree: false },
+      claude: { enabled: true, worktree: false },
+      codex: { enabled: true, worktree: true }
+    })
   })
 })
 

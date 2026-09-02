@@ -153,6 +153,7 @@ class FakeFileSystem implements UpdaterFileSystem {
 }
 
 type HarnessOptions = {
+  platform?: NodeJS.Platform
   version?: string
   releaseStatus?: number
   releasePayload?: unknown
@@ -286,13 +287,33 @@ const buildHarness = (options: HarnessOptions = {}): Harness => {
       timeouts.push(milliseconds)
       return undefined
     },
-    now
+    now,
+    options.platform ?? 'win32'
   )
 
   service.onProgress((frame) => progress.push(frame))
 
   return { service, fileSystem, requests, timeouts, progress, spawns, calls }
 }
+
+describe('UpdaterService platform guard', () => {
+  it('refuses download and install operations on macOS before side effects', async () => {
+    const harness = buildHarness({ platform: 'darwin' })
+
+    await expect(harness.service.download()).resolves.toEqual({
+      status: 'error',
+      message: 'In-app updates are available on Windows only.'
+    })
+    await expect(harness.service.install()).resolves.toEqual({
+      status: 'error',
+      message: 'In-app updates are available on Windows only.'
+    })
+    expect(harness.requests).toEqual([])
+    expect(harness.fileSystem.directories).toEqual([])
+    expect(harness.spawns).toEqual([])
+    expect(harness.calls.quits).toBe(0)
+  })
+})
 
 describe('UpdaterService.download: happy path', () => {
   it('streams the release installer into userData/updates and reports it ready', async () => {

@@ -1,19 +1,21 @@
 # CodeFly
 
-CodeFly is a Windows-first desktop application for running local PowerShell, Command
-Prompt, Claude Code, and Codex sessions against local projects. It is a focused terminal
-workspace, not an embedded code editor: each session in a Git repository gets its own
-isolated Git worktree and same-named branch, and Claude/Codex run through their locally
-installed, already-authenticated CLIs. CodeFly never collects, stores, or reads API keys or
-CLI credentials.
+CodeFly is a Windows and macOS desktop application for running local shell, Claude Code,
+and Codex sessions against local projects. Windows provides PowerShell and Command Prompt;
+macOS provides the user's login Shell. It is a focused terminal workspace, not an embedded
+code editor: a session can run in the project directory or in its own isolated Git worktree
+and same-named branch, and Claude/Codex run through their locally installed,
+already-authenticated CLIs. CodeFly never collects, stores, or reads API keys or CLI
+credentials.
 
 Built with Electron, React, TypeScript, xterm.js, and node-pty.
 
 ## Prerequisites
 
-- Windows 10/11 x64.
+- Windows 10/11 x64, or an Intel/Apple Silicon Mac using the matching internal-test bundle.
 - [Node.js](https://nodejs.org/) 22.12.0 or later, with npm.
-- [Git for Windows](https://git-scm.com/download/win) on `PATH`. Required for isolated
+- [Git](https://git-scm.com/downloads) on `PATH` (Windows) or available to the macOS login
+  shell. Required for isolated
   worktree sessions (see [Git and worktree sessions](#git-and-worktree-sessions) below);
   CodeFly still runs without it, but every session then falls back to an ordinary,
   non-isolated session in the project's own directory. Sessions created from a plain launcher
@@ -21,8 +23,10 @@ Built with Electron, React, TypeScript, xterm.js, and node-pty.
 - Optional, to actually use the Claude/Codex launcher entries: the
   [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) and/or the
   [Codex CLI](https://github.com/openai/codex) (`codex`) installed and signed in. CodeFly
-  detects them on `PATH` at startup; a missing or unauthenticated CLI leaves its launcher
-  entry visible but disabled, with an installation hint.
+  detects them on `PATH` on Windows and through the login shell on macOS; a missing or
+  unauthenticated CLI leaves its launcher entry visible but disabled, with an installation
+  hint. Finder-launched macOS apps do not inherit Terminal's `PATH`, so ensure
+  `command -v claude` / `command -v codex` succeeds from a login shell.
 - Optional: [Visual Studio Code](https://code.visualstudio.com/) (or its `code` command on
   `PATH`) to use “Open project in VS Code” from a project's options menu.
 
@@ -50,8 +54,9 @@ npm run dev
 
 ## Session kinds and the New session menu
 
-Every session kind — PowerShell, Command Prompt, Claude, Codex — has two switches under
-**Session kinds** in Settings:
+Each session kind shown for the host platform has two switches under **Session kinds** in
+Settings. Windows shows PowerShell, Command Prompt, Claude, and Codex; macOS shows Shell,
+Claude, and Codex.
 
 - **Enabled** decides whether the kind appears in the New session menu at all. Turning it off
   removes its entries; existing sessions of that kind are untouched. This is different from a
@@ -60,10 +65,10 @@ Every session kind — PowerShell, Command Prompt, Claude, Codex — has two swi
   **Claude (new worktree)**. The plain entry runs the session in the project's own directory;
   the worktree entry gives it an isolated Git worktree and branch.
 
-Defaults: all four kinds enabled, **New worktree** off for PowerShell and Command Prompt
+Defaults: every platform-visible kind is enabled, **New worktree** is off for native shells
 (a quick terminal should not create a branch) and on for Claude and Codex (isolation is what
-the agents want). Both switches are renderer-owned preferences stored in `localStorage`, like
-the theme and language; the worktree choice itself is sent explicitly with each create
+the agents want). Both switches are renderer-owned preferences stored in `localStorage`,
+like the theme and language; the worktree choice itself is sent explicitly with each create
 request, so the main process never infers it from a stored setting.
 
 ## Git and worktree sessions
@@ -122,35 +127,31 @@ runs in a neutral directory, not your project or worktree.
 
 ### Keyboard: paste and multi-line input
 
-In Claude and Codex sessions **Ctrl+V** pastes the clipboard text into the CLI's prompt, and
-**Shift+Enter** inserts a newline while **Enter** sends the message. Left alone, xterm.js
-would turn Ctrl+V into a literal `^V` byte (which neither CLI treats as "paste text") and
-Shift+Enter into a plain Enter. CodeFly hands Ctrl+V back to the browser so xterm's own paste
-path (bracketed paste included) feeds the PTY, and sends Shift+Enter as `ESC CR` — the bytes a
-terminal emits for Alt+Enter, and the one newline encoding both CLIs honour through ConPTY on
-Windows (Claude Code reads it as Meta+Enter; Codex receives an Alt+Enter key event, whereas a
-plain line feed reaches it as Ctrl+Enter and is ignored). Every other key, Alt+V included,
-reaches the CLI unchanged. PowerShell and Command Prompt sessions are untouched: PSReadLine
-and conhost handle Ctrl+V themselves, so xterm keeps sending `^V` there.
+In Claude and Codex sessions **Ctrl+V** on Windows or **Cmd+V** on macOS pastes clipboard text
+into the CLI prompt, and **Shift+Enter** inserts a newline while **Enter** sends the message.
+CodeFly hands the platform paste shortcut back to the browser so xterm's paste path (including
+bracketed paste) feeds the PTY. It sends Shift+Enter as `ESC CR`, the Meta/Alt+Enter-compatible
+sequence both CLIs accept. Native Shell, PowerShell, and Command Prompt sessions keep xterm's
+normal key handling.
 
 ## Session titles
 
 The title shown for a session starts as a placeholder (e.g. "New Claude session") and
 updates once, based on the first text you submit in its terminal. Claude and Codex sessions
 try an AI-generated title first (via a separate, non-interactive CLI invocation with a
-15-second timeout); PowerShell and Command Prompt sessions, and any failed/timed-out AI
-attempt, fall back to a local normalization of your input, and finally to plain truncation.
+15-second timeout); Shell, PowerShell and Command Prompt sessions, and any failed/timed-out
+AI attempt, fall back to a local normalization of your input, and finally to plain truncation.
 Title generation never delays your terminal input.
 
-## Visual Studio Code and File Explorer
+## Visual Studio Code and project folders
 
 A project's options menu contains its Visual Studio Code and folder actions. Both always
 open the project's **original, user-selected directory** — never a session's worktree — and
 never change which session is active or expand/collapse the row. Visual Studio Code is
-discovered via the `code` command on `PATH`, then the standard per-user and machine-wide
-install locations; if none is found, the menu item is disabled with an install hint. The
-folder action opens the directory in Windows File Explorer via `shell.openPath` and has no
-such dependency.
+discovered via the `code` command and standard install locations on Windows, or the standard
+Visual Studio Code application locations on macOS; if none is found, the menu item is disabled
+with an install hint. The folder action opens the directory in the platform file manager via
+Electron's `shell.openPath` and has no such dependency.
 
 ## Git repository and removing a project
 
@@ -174,7 +175,7 @@ they are. Re-adding the directory later starts with an empty session list.
 
 The title bar's gear button opens the settings dialog.
 
-- **Launch at startup** registers (or removes) CodeFly as a Windows login item. The switch
+- **Launch at startup** registers (or removes) CodeFly as a platform login item. The switch
   shows the value read back from the system *after* the write, so a change the OS refuses is
   never displayed as if it had taken effect.
 - **Session kinds** holds two switches per kind — whether the kind is offered in the New
@@ -188,9 +189,8 @@ The title bar's gear button opens the settings dialog.
   only: main-process text (tool-availability hints, session errors) and already-persisted
   session titles stay in the language they were produced in.
 - **Version** shows the installed version and, on demand, queries GitHub's latest-release
-  API. When the newest release ships a Windows installer, **Update now** downloads it inside
-  the app and then asks whether to install it right away or later; when it does not, the
-  section still just links out to the download page. See [Updates](#updates) below.
+  API. Windows can download and launch a published `.exe` in-app; macOS links to the Releases
+  page for the matching architecture. See [Updates](#updates) below.
 - **About CodeFly** links to the project repository, the changelog (the releases page), and
   the downloads page. The renderer can only ask for one of those three *named targets* — the
   main process resolves each to a URL from `src/shared/links.ts` before handing it to
@@ -201,9 +201,11 @@ The title bar's gear button opens the settings dialog.
 CodeFly checks GitHub's latest-release API once in the background on startup. It stays
 silent unless a newer version exists — a failed or offline check, an up-to-date install, and
 a repository with no releases all produce no interruption at all. When there *is* a newer
-version, a dialog offers **Update now** or **Later**.
+version, a dialog appears. Windows offers **Update now** when the release includes a Windows
+installer. macOS offers the Releases page so the user can download the matching x64 or arm64
+archive manually.
 
-**Update now** downloads that release's Windows installer inside the app, with a progress
+On Windows, **Update now** downloads that release's installer inside the app, with a progress
 bar and a **Cancel** button, into an `updates` folder under Electron's `userData` directory.
 While bytes are moving, **Cancel** is the only way out — clicking the backdrop or pressing
 Escape does nothing, so a stray click cannot throw away a download that is nearly finished.
@@ -225,8 +227,8 @@ than closing it and leaving nothing behind.
 
 The renderer never names what gets downloaded or executed: the download, cancel, and install
 IPC commands take no arguments, and the main process re-resolves the release asset itself and
-refuses any download URL that is not an HTTPS GitHub release address. A release that publishes
-no `.exe` asset offers only the download page, never an in-app download.
+refuses any download URL that is not an HTTPS GitHub release address. A non-Windows host, or
+a release without a `.exe` asset, offers only the download page and never an in-app download.
 
 ## Persistence
 
@@ -316,46 +318,59 @@ electron-builder inside a small Linux container (`scripts/mac-builder.Dockerfile
 - `electron-builder.mac-cross.yml` is the overlay the container uses: it clears `electronDist`
   so the darwin Electron is downloaded instead of the host's Windows copy being reused.
 
-The bundles are neither signed nor notarized:
+The bundles are for internal testing and are neither signed nor notarized. Download the
+archive that matches the Mac (`mac-arm64.zip` for Apple Silicon, `mac-x64.zip` for Intel),
+extract it, and prepare the app before the first launch:
 
-- Gatekeeper blocks the first launch of a downloaded unsigned app. Clear the quarantine flag
-  (`xattr -cr CodeFly.app`) or use *Open Anyway* under System Settings › Privacy & Security.
-- Apple Silicon only runs native code that carries a code signature (an ad-hoc one is enough),
-  and the bundle assembled off macOS is not re-signed. After unpacking, run
-  `codesign --force --deep --sign - CodeFly.app`.
+```bash
+xattr -cr CodeFly.app
+codesign --force --deep --sign - CodeFly.app
+```
 
-This produces the macOS *bundle*; the app itself is still Windows-first. `CliLocator` looks CLIs
-up with `where.exe`, so on macOS the PowerShell, Claude and Codex entries report their CLI as
-missing, and the Command Prompt kind has no macOS equivalent. Porting the runtime is separate
-work.
+The ad-hoc signature is local to that copy and is not a substitute for Developer ID signing
+or notarization. Move `CodeFly.app` to `/Applications` if desired, then open it from Finder.
+If Gatekeeper still intervenes, use **Open Anyway** under System Settings > Privacy &
+Security. Do not redistribute this internal build as a normal public macOS release.
 
-### Manual smoke checklist (authenticated CLIs, packaged installer)
+At runtime, macOS shows Shell, Claude, and Codex. CLI lookup runs through the user's login
+shell and then checks common Homebrew/local install locations, so Finder launch works without
+inheriting Terminal's `PATH`. PowerShell and Command Prompt remain Windows-only.
 
-The automated suites above run entirely against test doubles for Claude/Codex and do not
-require real, authenticated CLIs — a deliberate choice so CI and local development never
-need live credentials. Before shipping a build, a human should still install the packaged
-installer on a real Windows machine and verify, with real, logged-in `claude`/`codex`
-CLIs:
+### Manual smoke checklist (authenticated CLIs, packaged builds)
 
-- Claude and Codex sessions created from their **(new worktree)** entry start in their
-  assigned worktree, accept input, and produce terminal output with
-  `--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox` respectively;
-  the same kinds created from their plain entry start in the project's own directory.
-- If the separate title-generation process is unavailable or fails, the session still gets a
-  usable local/fallback title rather than getting stuck on the placeholder.
-- PowerShell and Command Prompt sessions work normally, and enabling their **New worktree**
-  switch really produces a worktree session for them too.
-- The Visual Studio Code and File Explorer project-options actions work against a real VS
-  Code install.
-- Project paths containing spaces and paths containing Chinese characters work correctly
-  end to end (add project, create a worktree session, delete it).
-- Toggling **Launch at startup** really adds/removes CodeFly under Windows' startup apps, and
-  reopening the dialog still shows the system's actual state.
-- **Check for updates** reaches GitHub over the network and reports a sensible result, both
-  when a release exists and when none has been published yet.
-- Against a real published release: the startup check raises the update dialog, **Update
-  now** downloads the real installer with visible progress, **Cancel** stops it and leaves no
-  partial file behind, and **Install now** quits CodeFly and launches the downloaded
-  installer, which upgrades the existing install in place.
-- Switching the language to 简体中文 translates the sidebar, launcher, terminal header, and
-  dialogs, and the choice survives a restart.
+The automated suites use test doubles for Claude/Codex and do not require live credentials.
+Before handing off a build, test with real, logged-in `claude` and `codex` CLIs.
+
+#### Windows x64
+
+- Create ordinary and worktree PowerShell, Command Prompt, Claude, and Codex sessions; verify
+  their working directories, input/output, restore, and deletion behavior.
+- Verify Visual Studio Code and project-folder actions, project paths containing spaces and
+  non-ASCII characters, and the Launch at startup toggle.
+- Verify **Ctrl+V**, agent **Shift+Enter**, the `Ctrl+T` ordinary PowerShell shortcut, and the
+  Windows in-app download/cancel/install update flow.
+
+#### macOS x64 and arm64 (two separate required runs)
+
+Run the entire list once on a real Intel Mac with `mac-x64.zip` and once on a real Apple
+Silicon Mac with `mac-arm64.zip`; a Rosetta-only run does not cover both architectures.
+
+- Extract the archive, clear quarantine, apply the ad-hoc signature, move the app to
+  `/Applications`, and launch it from Finder rather than Terminal.
+- Add projects whose paths contain spaces and non-ASCII characters. Verify paths remain
+  correctly cased and are not rewritten with Windows separators.
+- Create Shell, Claude, and Codex from both their ordinary and **(new worktree)** entries.
+  Verify the ordinary sessions use the project directory and worktree sessions use their
+  assigned worktree and branch.
+- Enter commands/prompts, close and reopen CodeFly, restore each stopped session, then delete
+  both ordinary and clean worktree sessions. Confirm dirty-worktree protection still applies.
+- Verify a failed title-generation process still produces a usable local fallback title.
+- Verify **Open in Visual Studio Code**, **Open project folder** (Finder), and **Open Git
+  repository** without changing the active session.
+- Toggle **Launch at startup**, reopen Settings to confirm the system value, log out/in if the
+  test machine permits, then turn the setting back off.
+- Check for an available update and confirm macOS offers the Releases page only: it must not
+  download or execute a Windows installer.
+- Verify **Cmd+V** pastes into Claude and Codex, **Shift+Enter** inserts a newline without
+  submitting, and `Cmd+T` creates an ordinary Shell session.
+- Switch between English and Simplified Chinese and confirm the choice survives a restart.

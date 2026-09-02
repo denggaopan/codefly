@@ -4,6 +4,7 @@ import type {
   AppState,
   CapabilityState,
   DeleteSessionResult,
+  HostPlatform,
   ProjectRecord,
   SessionKind,
   SessionRecord,
@@ -14,6 +15,7 @@ import type {
 import { DEFAULT_SESSION_KIND_PREFERENCES, storedSessionKindPreferencesSchema } from '../../../shared/contracts'
 import { DEFAULT_LOCALE, isLocale, translate, type Locale } from '../i18n'
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH, parseStoredSidebarWidth } from '../sidebar-width'
+import { defaultSessionKindPreferences } from '../session-kind-options'
 
 export type Notice = {
   message: string
@@ -24,7 +26,7 @@ export type Notice = {
  * The in-app update flow, from "a newer release exists" to "the installer is on disk".
  * `idle` is the resting state and the only one that renders no dialog, so every terminal
  * outcome — declined, cancelled, or installed — comes back here. `downloadable` is false
- * when the release publishes no Windows installer: the only thing left to offer is the
+ * when this platform cannot install the release in-app: the only thing left to offer is the
  * download page.
  */
 export type UpdaterState =
@@ -36,6 +38,7 @@ export type UpdaterState =
   | { phase: 'error'; version: string; message: string }
 
 export type AppStore = {
+  platform: HostPlatform
   appState: AppState
   capabilities: CapabilityState
   activeProjectId: string | null
@@ -161,23 +164,24 @@ const applyLocaleEffects = (locale: Locale): void => {
 // and the actual worktree decision crosses IPC explicitly with every create request. Stored
 // values are merged over the defaults field by field, so anything unreadable or partial
 // degrades to the documented defaults instead of an empty or half-filled record.
-const mergeStoredSessionKinds = (stored: unknown): SessionKindPreferences => {
+const mergeStoredSessionKinds = (stored: unknown, platform: HostPlatform): SessionKindPreferences => {
+  const defaults = defaultSessionKindPreferences(platform)
   const parsed = storedSessionKindPreferencesSchema.safeParse(stored)
-  if (!parsed.success) return DEFAULT_SESSION_KIND_PREFERENCES
-  const merged = { ...DEFAULT_SESSION_KIND_PREFERENCES }
+  if (!parsed.success) return defaults
+  const merged = { ...defaults }
   for (const kind of Object.keys(merged) as SessionKind[]) {
     merged[kind] = { ...merged[kind], ...parsed.data[kind] }
   }
   return merged
 }
 
-const readStoredSessionKindPreferences = (): SessionKindPreferences => {
+const readStoredSessionKindPreferences = (platform: HostPlatform): SessionKindPreferences => {
   try {
     const stored = window.localStorage.getItem(SESSION_KINDS_STORAGE_KEY)
-    if (stored === null) return DEFAULT_SESSION_KIND_PREFERENCES
-    return mergeStoredSessionKinds(JSON.parse(stored))
+    if (stored === null) return defaultSessionKindPreferences(platform)
+    return mergeStoredSessionKinds(JSON.parse(stored), platform)
   } catch {
-    return DEFAULT_SESSION_KIND_PREFERENCES
+    return defaultSessionKindPreferences(platform)
   }
 }
 
@@ -281,6 +285,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
   }
 
   return {
+    platform: 'win32',
     appState: emptyAppState(),
     capabilities: defaultCapabilities(),
     activeProjectId: null,
@@ -296,7 +301,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
     updater: { phase: 'idle' },
 
     initialize: () => {
-      set({ sessionKindPreferences: readStoredSessionKindPreferences(), sidebarWidth: readStoredSidebarWidth() })
+      set({ sidebarWidth: readStoredSidebarWidth() })
 
       const storedLocale = readStoredLocale()
       set({ locale: storedLocale })
@@ -311,9 +316,12 @@ export const useAppStore = create<AppStore>()((set, get) => {
       window.codefly
         .getSnapshot()
         .then((snapshot) => {
+          document.documentElement.dataset.platform = snapshot.platform
           set((state) => ({
+            platform: snapshot.platform,
             appState: snapshot.state,
             capabilities: snapshot.capabilities,
+            sessionKindPreferences: readStoredSessionKindPreferences(snapshot.platform),
             activeProjectId: state.activeProjectId ?? snapshot.state.projects[0]?.id ?? null,
             notice: snapshot.recoveryWarning ? { message: snapshot.recoveryWarning, tone: 'info' } : state.notice
           }))
@@ -368,6 +376,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
     reset: () => {
       clearAllIdleTimers()
       set({
+        platform: 'win32',
         appState: emptyAppState(),
         capabilities: defaultCapabilities(),
         activeProjectId: null,

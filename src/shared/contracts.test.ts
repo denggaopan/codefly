@@ -5,8 +5,10 @@ import {
   capabilityStateSchema,
   createSessionRequestSchema,
   firstInputRequestSchema,
+  hostPlatformSchema,
   projectIdRequestSchema,
   reorderProjectsRequestSchema,
+  sessionKindSchema,
   sessionRecordSchema,
   sessionIdRequestSchema,
   openExternalLinkRequestSchema,
@@ -25,6 +27,14 @@ describe('shared contracts', () => {
     expect(createSessionRequestSchema.safeParse({ projectId: 'p1', kind: 'bash' }).success).toBe(false)
   })
 
+  it('accepts the native Shell kind and only the supported desktop platforms', () => {
+    expect(sessionKindSchema.safeParse('shell').success).toBe(true)
+    expect(createSessionRequestSchema.safeParse({ projectId: 'p1', kind: 'shell' }).success).toBe(true)
+    expect(hostPlatformSchema.safeParse('win32').success).toBe(true)
+    expect(hostPlatformSchema.safeParse('darwin').success).toBe(true)
+    expect(hostPlatformSchema.safeParse('linux').success).toBe(false)
+  })
+
   it('treats an omitted worktree flag as "run in the project directory"', () => {
     const parsed = createSessionRequestSchema.parse({ projectId: 'p1', kind: 'claude' })
     expect(parsed.worktree).toBe(false)
@@ -34,6 +44,7 @@ describe('shared contracts', () => {
 
   it('offers every session kind by default, with worktrees off for the shells and on for the agents', () => {
     expect(DEFAULT_SESSION_KIND_PREFERENCES).toEqual({
+      shell: { enabled: false, worktree: false },
       powershell: { enabled: true, worktree: false },
       cmd: { enabled: true, worktree: false },
       claude: { enabled: true, worktree: true },
@@ -43,6 +54,7 @@ describe('shared contracts', () => {
 
   it('reads stored session-kind preferences leniently so a partial or foreign value still merges', () => {
     expect(storedSessionKindPreferencesSchema.parse({ claude: { worktree: false } })).toEqual({ claude: { worktree: false } })
+    expect(storedSessionKindPreferencesSchema.parse({ shell: { enabled: true } })).toEqual({ shell: { enabled: true } })
     // Keys this build does not know about are dropped rather than failing the whole read.
     expect(storedSessionKindPreferencesSchema.parse({ cmd: { enabled: false, bash: true }, zsh: {} })).toEqual({
       cmd: { enabled: false }

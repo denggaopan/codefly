@@ -58,7 +58,7 @@ export interface IPtyFactory {
   spawn(file: string, args: readonly string[] | string, options: PtySpawnOptions): ManagedPty
 }
 
-type TerminalLocator = Pick<CliLocator, 'resolvePowerShell' | 'resolveAgent'>
+type TerminalLocator = Pick<CliLocator, 'resolveShell' | 'resolvePowerShell' | 'resolveAgent'>
 type CandidateExists = (candidate: string) => Promise<boolean>
 type LaunchSpec = { file: string; args: readonly string[] | string }
 
@@ -242,12 +242,20 @@ export class TerminalService {
   }
 
   private async resolveLaunchSpec(kind: SessionKind, resume: boolean): Promise<LaunchSpec> {
+    if (kind === 'shell') {
+      if (this.platform !== 'darwin') throw new Error('Shell is not supported on Windows.')
+      const executable = await this.locator.resolveShell()
+      if (!executable) throw new Error('Shell is not available.')
+      return { file: executable, args: ['-l'] }
+    }
     if (kind === 'powershell') {
+      if (this.platform === 'darwin') throw new Error('PowerShell is not supported on macOS.')
       const executable = await this.locator.resolvePowerShell()
       if (!executable) throw new Error('PowerShell is not available.')
       return { file: executable, args: [] }
     }
     if (kind === 'cmd') {
+      if (this.platform === 'darwin') throw new Error('Command Prompt is not supported on macOS.')
       return { file: this.environment.ComSpec ?? this.environment.COMSPEC ?? 'cmd.exe', args: [] }
     }
 
