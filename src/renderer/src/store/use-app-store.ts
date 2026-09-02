@@ -13,6 +13,7 @@ import type {
 } from '../../../shared/contracts'
 import { DEFAULT_SESSION_KIND_PREFERENCES, storedSessionKindPreferencesSchema } from '../../../shared/contracts'
 import { DEFAULT_LOCALE, isLocale, translate, type Locale } from '../i18n'
+import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH, parseStoredSidebarWidth } from '../sidebar-width'
 
 export type Notice = {
   message: string
@@ -48,6 +49,8 @@ export type AppStore = {
   locale: Locale
   /** Which kinds the New session launcher lists, and which of them offer a worktree entry. */
   sessionKindPreferences: SessionKindPreferences
+  /** Project sidebar width in CSS pixels, already clamped (see sidebar-width.ts). */
+  sidebarWidth: number
   /** Drives UpdateDialog; `idle` renders nothing at all. */
   updater: UpdaterState
 
@@ -64,6 +67,9 @@ export type AppStore = {
   setTheme: (theme: ThemePreference) => void
   setLocale: (locale: Locale) => void
   setSessionKindPreference: (kind: SessionKind, change: Partial<SessionKindPreference>) => void
+  /** Clamps to the current viewport before storing, so callers can pass raw pointer maths. */
+  setSidebarWidth: (width: number) => void
+  resetSidebarWidth: () => void
 
   addProject: () => Promise<void>
   reorderProjects: (orderedProjectIds: readonly string[]) => Promise<void>
@@ -99,6 +105,7 @@ const errorMessage = (error: unknown, locale: Locale): string =>
 export const THEME_STORAGE_KEY = 'codefly.theme'
 export const LOCALE_STORAGE_KEY = 'codefly.locale'
 export const SESSION_KINDS_STORAGE_KEY = 'codefly.sessionKinds'
+export const SIDEBAR_WIDTH_STORAGE_KEY = 'codefly.sidebarWidth'
 
 // The theme preference is renderer-owned (localStorage), not part of the main process's
 // persisted AppState: it is pure presentation, and localStorage survives restarts without
@@ -177,6 +184,25 @@ const readStoredSessionKindPreferences = (): SessionKindPreferences => {
 const persistSessionKindPreferences = (preferences: SessionKindPreferences): void => {
   try {
     window.localStorage.setItem(SESSION_KINDS_STORAGE_KEY, JSON.stringify(preferences))
+  } catch {
+    // localStorage unavailable: the preference just won't survive a restart.
+  }
+}
+
+// The sidebar width is renderer-owned (localStorage) like the theme: pure layout, never part
+// of the persisted AppState. It is re-clamped against the viewport on read so a value saved
+// on a wide monitor cannot swallow the workspace on a narrower one.
+const readStoredSidebarWidth = (): number => {
+  try {
+    return parseStoredSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY), window.innerWidth)
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH
+  }
+}
+
+const persistSidebarWidth = (width: number): void => {
+  try {
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(width))
   } catch {
     // localStorage unavailable: the preference just won't survive a restart.
   }
@@ -266,10 +292,11 @@ export const useAppStore = create<AppStore>()((set, get) => {
     theme: 'dark',
     locale: DEFAULT_LOCALE,
     sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES,
+    sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
     updater: { phase: 'idle' },
 
     initialize: () => {
-      set({ sessionKindPreferences: readStoredSessionKindPreferences() })
+      set({ sessionKindPreferences: readStoredSessionKindPreferences(), sidebarWidth: readStoredSidebarWidth() })
 
       const storedLocale = readStoredLocale()
       set({ locale: storedLocale })
@@ -352,6 +379,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
         theme: 'dark',
         locale: DEFAULT_LOCALE,
         sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES,
+        sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
         updater: { phase: 'idle' }
       })
     },
@@ -446,6 +474,18 @@ export const useAppStore = create<AppStore>()((set, get) => {
       const next = { ...current, [kind]: { ...current[kind], ...change } }
       set({ sessionKindPreferences: next })
       persistSessionKindPreferences(next)
+    },
+
+    setSidebarWidth: (width) => {
+      const next = clampSidebarWidth(width, window.innerWidth)
+      if (next === get().sidebarWidth) return
+      set({ sidebarWidth: next })
+      persistSidebarWidth(next)
+    },
+
+    resetSidebarWidth: () => {
+      set({ sidebarWidth: DEFAULT_SIDEBAR_WIDTH })
+      persistSidebarWidth(DEFAULT_SIDEBAR_WIDTH)
     },
 
     addProject: async () => {

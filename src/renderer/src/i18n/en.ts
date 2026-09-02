@@ -29,6 +29,7 @@ export const en = {
   'sidebar.deleteSessionTitle': 'Delete session',
   'sidebar.deleteSessionAria': 'Delete {title}',
   'sidebar.deleteSessionPrompt': 'Delete "{title}"? This cannot be undone.',
+  'sidebar.resizeHandle': 'Resize sidebar',
 
   'launcher.createSession': 'Create session',
   'launcher.newSession': 'New session',

@@ -152,6 +152,45 @@ test('keeps Settings interactive outside the draggable title bar', async () => {
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'dark')
   await window.keyboard.press('Escape')
 })
+
+/**
+ * The splitter between the sidebar and the workspace is driven through Chromium's real input
+ * pipeline (pointer capture, the grid track clamp) rather than synthetic React events. The
+ * width is put back to its default at the end so the later tests — which position popovers
+ * against the sidebar's scrollport — see the layout they were written against.
+ */
+test('resizes the sidebar by dragging the splitter and restores the default on double-click', async () => {
+  const sidebar = window.locator('.project-sidebar')
+  const workspace = window.locator('.app-main')
+  const splitter = window.getByRole('separator', { name: 'Resize sidebar' })
+
+  const initial = (await sidebar.boundingBox())!
+  expect(Math.round(initial.width)).toBe(300)
+  await expect(splitter).toHaveAttribute('aria-valuenow', '300')
+
+  const handleBox = (await splitter.boundingBox())!
+  const startX = handleBox.x + handleBox.width / 2
+  const y = handleBox.y + handleBox.height / 2
+  await window.mouse.move(startX, y)
+  await window.mouse.down()
+  await window.mouse.move(startX + 120, y, { steps: 8 })
+  // Mid-drag the body carries the resize marker that switches the cursor and suspends
+  // terminal hit-testing.
+  await expect(window.locator('body')).toHaveAttribute('data-sidebar-resizing', 'true')
+  await window.mouse.up()
+  await expect(window.locator('body')).not.toHaveAttribute('data-sidebar-resizing', 'true')
+
+  const widened = (await sidebar.boundingBox())!
+  expect(Math.round(widened.width)).toBe(420)
+  expect(Math.round((await workspace.boundingBox())!.x)).toBe(Math.round(widened.x + 420))
+  await expect(splitter).toHaveAttribute('aria-valuenow', '420')
+  expect(await window.evaluate(() => window.localStorage.getItem('codefly.sidebarWidth'))).toBe('420')
+
+  await splitter.dblclick()
+  expect(Math.round((await sidebar.boundingBox())!.width)).toBe(300)
+  expect(await window.evaluate(() => window.localStorage.getItem('codefly.sidebarWidth'))).toBe('300')
+})
+
 /**
  * The startup switch, update check, and About links all read through the main process. Under
  * CODEFLY_E2E their seams are test doubles (in-memory login item, an offline 404 for the

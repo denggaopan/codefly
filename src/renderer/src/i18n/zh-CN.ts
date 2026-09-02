@@ -29,6 +29,7 @@ export const zhCN: Translations = {
   'sidebar.deleteSessionTitle': '删除会话',
   'sidebar.deleteSessionAria': '删除 {title}',
   'sidebar.deleteSessionPrompt': '确定删除“{title}”吗？此操作无法撤销。',
+  'sidebar.resizeHandle': '调整侧边栏宽度',
 
   'launcher.createSession': '创建会话',
   'launcher.newSession': '新建会话',

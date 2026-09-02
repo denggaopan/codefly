@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -660,6 +660,109 @@ describe('App', () => {
 
     await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'))
     expect(api.setTheme).toHaveBeenCalledWith('light')
+  })
+
+  describe('sidebar resize handle', () => {
+    const appBody = (): HTMLElement => document.querySelector<HTMLElement>('.app-body')!
+    const handle = (): HTMLElement => screen.getByRole('separator', { name: 'Resize sidebar' })
+
+    it('renders the default width as the layout token and exposes it as a vertical splitter', () => {
+      render(<App />)
+
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('300px')
+      expect(handle()).toHaveAttribute('aria-orientation', 'vertical')
+      expect(handle()).toHaveAttribute('aria-valuenow', '300')
+      expect(handle()).toHaveAttribute('aria-valuemin', '200')
+    })
+
+    it('follows a pointer drag live, persists the result and ends the drag on pointer up', () => {
+      render(<App />)
+      const separator = handle()
+
+      fireEvent.pointerDown(separator, { pointerId: 7, button: 0, clientX: 300 })
+      expect(document.body.dataset.sidebarResizing).toBe('true')
+      expect(separator).toHaveAttribute('data-resizing', 'true')
+
+      fireEvent.pointerMove(separator, { pointerId: 7, clientX: 340 })
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('340px')
+      expect(separator).toHaveAttribute('aria-valuenow', '340')
+
+      fireEvent.pointerMove(separator, { pointerId: 7, clientX: 260 })
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('260px')
+
+      fireEvent.pointerUp(separator, { pointerId: 7 })
+      expect(document.body.dataset.sidebarResizing).toBeUndefined()
+      expect(separator).not.toHaveAttribute('data-resizing')
+      expect(window.localStorage.getItem('codefly.sidebarWidth')).toBe('260')
+
+      // Moves after the drag ended are ignored: a stray pointermove must not resize anything.
+      fireEvent.pointerMove(separator, { pointerId: 7, clientX: 500 })
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('260px')
+    })
+
+    it('clamps a drag to the sidebar minimum and to the viewport-derived maximum', () => {
+      render(<App />)
+      const separator = handle()
+      // jsdom reports a 1024px viewport: 1024 - 360 (workspace minimum) = 664 > 640, so the
+      // absolute maximum applies.
+      expect(separator).toHaveAttribute('aria-valuemax', '640')
+
+      fireEvent.pointerDown(separator, { pointerId: 1, button: 0, clientX: 300 })
+      fireEvent.pointerMove(separator, { pointerId: 1, clientX: -1000 })
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('200px')
+
+      fireEvent.pointerMove(separator, { pointerId: 1, clientX: 5000 })
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('640px')
+      fireEvent.pointerUp(separator, { pointerId: 1 })
+    })
+
+    it('ignores secondary-button presses and pointers other than the one that started the drag', () => {
+      render(<App />)
+      const separator = handle()
+
+      fireEvent.pointerDown(separator, { pointerId: 2, button: 2, clientX: 300 })
+      fireEvent.pointerMove(separator, { pointerId: 2, clientX: 400 })
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('300px')
+      expect(document.body.dataset.sidebarResizing).toBeUndefined()
+
+      fireEvent.pointerDown(separator, { pointerId: 3, button: 0, clientX: 300 })
+      fireEvent.pointerMove(separator, { pointerId: 4, clientX: 400 })
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('300px')
+      fireEvent.pointerUp(separator, { pointerId: 3 })
+    })
+
+    it('nudges with the arrow keys, jumps with Home/End and resets on double-click', async () => {
+      const user = userEvent.setup()
+      render(<App />)
+      const separator = handle()
+
+      separator.focus()
+      await user.keyboard('{ArrowRight}{ArrowRight}')
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('332px')
+      await user.keyboard('{ArrowLeft}')
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('316px')
+      await user.keyboard('{Home}')
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('200px')
+      await user.keyboard('{End}')
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('640px')
+      expect(window.localStorage.getItem('codefly.sidebarWidth')).toBe('640')
+
+      await user.dblClick(separator)
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('300px')
+      expect(window.localStorage.getItem('codefly.sidebarWidth')).toBe('300')
+    })
+
+    it('restores the persisted width on startup and falls back to the default for garbage', () => {
+      window.localStorage.setItem('codefly.sidebarWidth', '420')
+      const first = render(<App />)
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('420px')
+      first.unmount()
+      useAppStore.getState().reset()
+
+      window.localStorage.setItem('codefly.sidebarWidth', 'wide')
+      render(<App />)
+      expect(appBody().style.getPropertyValue('--sidebar-width')).toBe('300px')
+    })
   })
 
   it('creates a session in the project whose options menu New session action was clicked', async () => {

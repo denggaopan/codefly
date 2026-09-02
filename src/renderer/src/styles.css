@@ -33,9 +33,12 @@
   --font-chrome: 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
 
-  /* Layout constants (approved structure) */
+  /* Layout constants (approved structure). --sidebar-width is the fallback only: App.tsx sets
+     it inline on .app-body from the persisted, user-dragged width (see sidebar-width.ts, whose
+     DEFAULT/MIN/MIN_WORKSPACE constants these three values mirror). */
   --sidebar-width: 300px;
-  --sidebar-width-narrow: 250px;
+  --sidebar-min-width: 200px;
+  --workspace-min-width: 360px;
 
   color: var(--color-text);
   background: var(--color-canvas);
@@ -232,9 +235,59 @@ input {
 
 .app-body {
   display: grid;
-  grid-template-columns: var(--sidebar-width) 1fr;
+  /* Three tracks: sidebar, a zero-width seam that hosts the resize handle (which overhangs
+     it on both sides, see .sidebar-resizer), and the workspace. The clamp() is the runtime
+     guard for a window made narrower AFTER the width was chosen: the sidebar can never eat
+     into the workspace's minimum, and never collapses below its own. */
+  grid-template-columns:
+    clamp(var(--sidebar-min-width), var(--sidebar-width), calc(100% - var(--workspace-min-width)))
+    0
+    1fr;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Resize handle between sidebar and workspace: a 9px-wide invisible hit area centred on the
+   sidebar's 1px border, painting a 2px accent line on hover/focus/drag. It is positioned so
+   that it overlaps its neighbours (z-index) instead of taking layout space, which keeps the
+   sidebar's border the only visible seam at rest. */
+.sidebar-resizer {
+  position: relative;
+  z-index: 2;
+  width: 9px;
+  margin-left: -4px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.sidebar-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background-color 120ms ease-out;
+}
+
+.sidebar-resizer:hover::before,
+.sidebar-resizer:focus-visible::before,
+.sidebar-resizer[data-resizing='true']::before {
+  background: var(--color-accent);
+}
+
+/* While a drag is in flight the whole window shows the resize cursor, text cannot be selected
+   by the sweeping pointer, and the terminal stops hit-testing so xterm never sees the drag as
+   a selection of its own. SidebarResizer.tsx toggles the attribute. */
+body[data-sidebar-resizing='true'] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body[data-sidebar-resizing='true'] .app-main {
+  pointer-events: none;
 }
 
 .app-main {
@@ -270,7 +323,9 @@ input {
 .project-sidebar {
   display: flex;
   flex-direction: column;
-  width: var(--sidebar-width);
+  /* Sized by its .app-body grid track (which is where the user-chosen width is clamped), not
+     by an own width, so the two can never disagree. */
+  min-width: 0;
   min-height: 0;
   /* The sidebar itself does not scroll: .project-groups is the scroll region, so the
      header (search) and footer (Add Project) stay pinned while projects scroll between. */
@@ -1450,10 +1505,6 @@ input {
    ========================================================================== */
 
 @media (max-width: 999px) {
-  :root {
-    --sidebar-width: var(--sidebar-width-narrow);
-  }
-
   .session-launcher {
     width: 190px;
   }

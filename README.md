@@ -225,6 +225,13 @@ conversation recorded for that directory) and restoring a Codex session runs
 `codex resume --last`, so the prior agent conversation is reattached on a best-effort
 basis; shell sessions restart fresh.
 
+The sidebar width is a renderer-owned preference (`localStorage`, like the theme and language)
+and never enters the state file. Drag the seam between the sidebar and the terminal to resize
+it; the handle is also keyboard-operable (focus it, then ArrowLeft/ArrowRight nudge, Home/End
+jump to the bounds) and a double-click restores the default 300px. The width is clamped between
+200px and 640px and can never leave the terminal workspace less than 360px, even when the window
+is later made narrower.
+
 ## Testing
 
 ```bash
