@@ -510,9 +510,21 @@ input {
   filter: none;
 }
 
-.project-options-trigger:hover .icon-options,
-.project-options-trigger[aria-expanded='true'] .icon-options {
+.project-options-trigger:hover .icon-options {
   opacity: 1;
+}
+
+/* The close glyph fills far more of its 16px box than the three dots do and only exists to back
+   out of the menu, so it is drawn smaller and dimmer than the resting options glyph. Declared
+   after the hover rule so the same specificity resolves in favour of the open state. */
+.project-options-trigger[aria-expanded='true'] .icon-options {
+  width: 12px;
+  height: 12px;
+  opacity: 0.55;
+}
+
+.project-options-trigger[aria-expanded='true']:hover .icon-options {
+  opacity: 0.75;
 }
 
 .project-options-menu-item {
