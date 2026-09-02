@@ -2,6 +2,7 @@ import { app, shell } from 'electron'
 
 import type { AppInfo, UpdateCheckResult } from '../../shared/contracts'
 import { EXTERNAL_LINKS, type ExternalLinkTarget } from '../../shared/links'
+import { electronFetch } from '../infrastructure/net-fetch'
 import {
   latestReleaseSchema,
   pickWindowsInstaller,
@@ -110,7 +111,8 @@ const describeRequestFailure = (error: unknown): string => {
 
 const defaultGetVersion: GetVersion = () => app.getVersion()
 
-const defaultFetch: FetchLike = (url, init) => fetch(url, init)
+// Chromium's network stack, not Node's global fetch: see net-fetch.ts for why the proxy matters.
+const defaultFetch: FetchLike = electronFetch
 
 const defaultOpenExternal: OpenExternal = (url) => shell.openExternal(url)
 

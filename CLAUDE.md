@@ -42,7 +42,9 @@ npm run package:win   # build + electron-builder 产出 release/ 下的 NSIS 安
   - 大小未知（asset 无 `size` 且无 `Content-Length`）时**不能**当作"已校验"，至少要拒绝 0 字节——这个文件马上要被 rename 成 `.exe` 并执行。
   - 一次成功的下载会顺手清掉 `updates/` 里其它所有文件（旧版本安装包 + 崩溃留下的孤儿 `.part`），否则那个目录只增不减。清理失败只记日志，不能让成功的下载变失败。
   - `UpdaterFileSystem` 的 `fileSize`/`remove`/`listFiles` 契约上**不得抛**，但服务仍然自己兜了一层——注入的实现不归它管。
-  - `DOWNLOAD_HEADERS` 带 `Accept-Encoding: identity`：否则 undici 会透明解压而 `Content-Length` 仍是压缩后的大小，完整性校验会永远失败。
+  - `DOWNLOAD_HEADERS` 带 `Accept-Encoding: identity`：否则网络栈会透明解压而 `Content-Length` 仍是压缩后的大小，完整性校验会永远失败。
+  - 默认 fetch 是 `infrastructure/net-fetch.ts` 的 `electronFetch`（AppInfoService 同），**不是** Node 全局 `fetch`——原因见下面 net-fetch 条目。
+- **net-fetch**（infrastructure/）：把 Electron `net.fetch`（Chromium 网络栈）适配成两个更新服务的 `FetchLike` 形状，请求带 `credentials: 'omit'`。必须用它而不是 Node 全局 `fetch`：undici 直连、既不读 Windows 系统代理也不读 `HTTP(S)_PROXY`，在需要代理才能顺畅访问 GitHub 的机器上，应用内下载只有约 10 KB/s（117 MB 要三小时），而浏览器几秒下完；`net.fetch` 像浏览器一样解析系统代理，同一文件实测 8 秒。只能在 `app` `ready` 之后调用（两个服务都在 `whenReady` 里构造）。测试用 `createNetFetch(fakeNetFetch)` 注入替身，不 mock `electron` 模块。
 - **cli-locator**（infrastructure/）：在 PATH 及标准安装位置发现 pwsh/claude/codex/VS Code。
 
 ### 渲染进程（src/renderer/）

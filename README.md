@@ -193,6 +193,9 @@ version, a dialog offers **Update now** or **Later**.
 bar and a **Cancel** button, into an `updates` folder under Electron's `userData` directory.
 While bytes are moving, **Cancel** is the only way out — clicking the backdrop or pressing
 Escape does nothing, so a stray click cannot throw away a download that is nearly finished.
+Both the release check and the download go through Chromium's network stack (Electron's
+`net.fetch`), so they honour the system proxy exactly as a browser does — on a machine that
+reaches GitHub through a proxy, the installer arrives in CodeFly as fast as it does in Chrome.
 
 When the download finishes CodeFly asks again: **Install now** quits the app and launches the
 installer (it has to quit — the installer replaces files the running app holds open), while

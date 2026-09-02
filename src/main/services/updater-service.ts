@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 
 import type { UpdateDownloadProgress, UpdateDownloadResult, UpdateInstallResult } from '../../shared/contracts'
+import { electronFetch } from '../infrastructure/net-fetch'
 import {
   compareVersionStrings,
   parseSemVer,
@@ -103,17 +104,8 @@ export type UserDataPath = () => string
 
 const defaultGetVersion: GetVersion = () => app.getVersion()
 
-const defaultFetch: FetchLike = async (url, init) => {
-  const response = await fetch(url, init)
-  return {
-    ok: response.ok,
-    status: response.status,
-    headers: response.headers,
-    json: () => response.json(),
-    // Node's fetch answers with a web ReadableStream, which is async-iterable.
-    body: response.body as AsyncIterable<Uint8Array> | null
-  }
-}
+// Chromium's network stack, not Node's global fetch: see net-fetch.ts for why the proxy matters.
+const defaultFetch: FetchLike = electronFetch
 
 const defaultFileSystem: UpdaterFileSystem = {
   ensureDirectory: async (directory) => {
