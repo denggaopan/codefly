@@ -345,7 +345,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </li>
             ))}
           </ul>
-          <p className="settings-dialog-hint">{t('settings.openExternalHint')}</p>
         </div>
       </div>
     </div>,

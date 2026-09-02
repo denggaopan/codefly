@@ -85,7 +85,6 @@ export const en = {
   'settings.linkRepository': 'Project repository',
   'settings.linkChangelog': 'Changelog',
   'settings.linkDownload': 'Downloads',
-  'settings.openExternalHint': 'Opens in your browser',
 
   'update.availableTitle': 'Version {version} is available',
   'update.availableBody': 'CodeFly can download the installer for you and install it when you are ready.',

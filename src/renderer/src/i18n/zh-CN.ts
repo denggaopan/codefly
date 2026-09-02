@@ -85,7 +85,6 @@ export const zhCN: Translations = {
   'settings.linkRepository': '项目地址',
   'settings.linkChangelog': '更新日志',
   'settings.linkDownload': '下载地址',
-  'settings.openExternalHint': '将在浏览器中打开',
 
   'update.availableTitle': '新版本 {version} 可用',
   'update.availableBody': 'CodeFly 可以为你下载安装包，待你准备好后再安装。',
