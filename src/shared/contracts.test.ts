@@ -227,6 +227,8 @@ describe('shared contracts', () => {
       projectAdd: 'project:add',
       projectOpenVSCode: 'project:open-vscode',
       projectOpenFolder: 'project:open-folder',
+      projectOpenRepository: 'project:open-repository',
+      projectRemove: 'project:remove',
       projectReorder: 'project:reorder',
       sessionCreate: 'session:create',
       sessionRestore: 'session:restore',
