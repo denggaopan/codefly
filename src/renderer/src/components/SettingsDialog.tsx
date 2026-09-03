@@ -201,10 +201,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         )}
 
         <div className="settings-dialog-section">
-          <span className="settings-dialog-label" id="settings-appearance-label">
-            {t('settings.appearance')}
+          <span className="settings-dialog-label" id="settings-theme-label">
+            {t('settings.theme')}
           </span>
-          <div className="settings-theme-toggle" role="group" aria-labelledby="settings-appearance-label">
+          <div className="settings-theme-toggle" role="group" aria-labelledby="settings-theme-label">
             <button type="button" aria-pressed={theme === 'dark'} onClick={() => setTheme('dark')}>
               {t('settings.themeDark')}
             </button>

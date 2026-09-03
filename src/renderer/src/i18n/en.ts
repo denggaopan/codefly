@@ -70,7 +70,7 @@ export const en = {
   'settings.columnWorktree': 'New worktree',
   'settings.enableKind': 'Enable {kind}',
   'settings.worktreeForKind': 'New worktree for {kind}',
-  'settings.appearance': 'Appearance',
+  'settings.theme': 'Theme',
   'settings.themeDark': 'Dark',
   'settings.themeLight': 'Light',
   'settings.language': 'Language',

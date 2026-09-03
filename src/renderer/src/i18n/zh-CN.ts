@@ -70,7 +70,7 @@ export const zhCN: Translations = {
   'settings.columnWorktree': '新建 worktree',
   'settings.enableKind': '启用 {kind}',
   'settings.worktreeForKind': '为 {kind} 新建 worktree',
-  'settings.appearance': '外观',
+  'settings.theme': '主题',
   'settings.themeDark': '深色',
   'settings.themeLight': '浅色',
   'settings.language': '语言',
