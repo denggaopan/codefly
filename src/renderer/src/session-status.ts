@@ -1,9 +1,10 @@
+import { isAgentKind } from '../../shared/agent-kinds'
 import type { SessionRecord } from '../../shared/contracts'
 import type { Translator } from './i18n'
 import { en } from './i18n/en'
 
 /**
- * The disclosure shown while an interactive Claude/Codex session runs with its fixed
+ * The disclosure shown while an interactive agent session runs with its fixed
  * permission/sandbox bypass flag. Rendered as a compact warning badge in the active
  * session's terminal header for the whole lifetime of the running session.
  *
@@ -13,10 +14,8 @@ import { en } from './i18n/en'
  */
 export const BYPASS_WARNING_TEXT = en['terminal.bypassWarning']
 
-const isAgentKind = (kind: SessionRecord['kind']): boolean => kind === 'claude' || kind === 'codex'
-
 /**
- * A running Claude/Codex session whose PTY output has been quiet for the store's idle
+ * A running agent session whose PTY output has been quiet for the store's idle
  * window (`agentIdle`) is presented as Done — the agent finished its current work and is
  * waiting for input. Shells idle constantly at their prompt, so the flag only ever applies
  * to agent kinds; every non-running status keeps its own label regardless of idleness.

@@ -42,13 +42,21 @@ describe('shared contracts', () => {
     expect(createSessionRequestSchema.safeParse({ projectId: 'p1', kind: 'claude', worktree: 'yes' }).success).toBe(false)
   })
 
-  it('offers every session kind by default, with worktrees off for the shells and on for the agents', () => {
+  // The opt-in agents default to off so the launcher does not grow five entries for CLIs the
+  // user may not have; their worktree switch still defaults on, so enabling one immediately
+  // offers the same isolated-worktree entry Claude and Codex have.
+  it('offers the established kinds by default and leaves the opt-in agents switched off', () => {
     expect(DEFAULT_SESSION_KIND_PREFERENCES).toEqual({
       shell: { enabled: false, worktree: false },
       powershell: { enabled: true, worktree: false },
       cmd: { enabled: true, worktree: false },
       claude: { enabled: true, worktree: true },
-      codex: { enabled: true, worktree: true }
+      codex: { enabled: true, worktree: true },
+      gemini: { enabled: false, worktree: true },
+      copilot: { enabled: false, worktree: true },
+      cursor: { enabled: false, worktree: true },
+      comate: { enabled: false, worktree: true },
+      qwen: { enabled: false, worktree: true }
     })
   })
 
@@ -60,6 +68,12 @@ describe('shared contracts', () => {
       cmd: { enabled: false }
     })
     expect(storedSessionKindPreferencesSchema.safeParse({ claude: { worktree: 'yes' } }).success).toBe(false)
+    // A build that predates the opt-in agents stored nothing for them; a build that has them
+    // must still read its own writes back.
+    expect(storedSessionKindPreferencesSchema.parse({ cursor: { enabled: true }, comate: { worktree: false } })).toEqual({
+      cursor: { enabled: true },
+      comate: { worktree: false }
+    })
   })
 
   it('rejects unknown fields in every IPC request', () => {
@@ -101,8 +115,17 @@ describe('shared contracts', () => {
     const capabilities = {
       claude: { available: true, detail: 'installed' },
       codex: { available: true, detail: 'installed' },
+      gemini: { available: true, detail: 'installed' },
+      copilot: { available: true, detail: 'installed' },
+      cursor: { available: true, detail: 'installed' },
+      comate: { available: true, detail: 'installed' },
+      qwen: { available: true, detail: 'installed' },
       vscode: { available: true, detail: 'installed' }
     }
+
+    // Every agent kind is probed at startup, so the snapshot must carry an entry for each —
+    // the launcher reads availability by kind and has nowhere to fall back to.
+    expect(capabilityStateSchema.safeParse(capabilities).success).toBe(true)
 
     expect(appStateSchema.safeParse({ version: 1, projects: [], sessions: [], unexpected: true }).success).toBe(false)
     expect(appStateSchema.safeParse({ version: 1, projects: [{ ...project, unexpected: true }], sessions: [] }).success).toBe(false)

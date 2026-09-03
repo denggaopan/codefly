@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-CodeFly 是一个支持 Windows 与 macOS 的 Electron 桌面应用：Windows 运行 PowerShell / CMD / Claude Code / Codex，macOS 运行本机 Shell / Claude Code / Codex。会话可直接使用项目目录，也可获得独立的 Git worktree 和同名分支；Claude/Codex 通过本机已安装、已登录的 CLI 启动。技术栈：Electron + React 19 + TypeScript + xterm.js + node-pty + zustand + zod。
+CodeFly 是一个支持 Windows 与 macOS 的 Electron 桌面应用：Windows 运行 PowerShell / CMD，macOS 运行本机 Shell，两个平台都能跑 7 种 coding agent CLI（默认只开 Claude Code / Codex，另 5 种 Gemini / GitHub Copilot / Cursor / Comate / Qwen Code 需在 Settings 开启）。会话可直接使用项目目录，也可获得独立的 Git worktree 和同名分支；Claude/Codex 通过本机已安装、已登录的 CLI 启动。技术栈：Electron + React 19 + TypeScript + xterm.js + node-pty + zustand + zod。
 
 ## 常用命令
 
@@ -32,14 +32,28 @@ macOS 打包的几条约束（细节见 README「Packaging › macOS」）：ele
 - `src/preload/index.ts` 通过 contextBridge 暴露 `window.codefly` API；`src/shared/ipc.ts` 定义 channel 名，`src/shared/contracts.ts` 用 zod `strictObject` 定义所有跨进程数据结构与请求 schema。启动 snapshot 携带可信的 `platform: 'win32' | 'darwin'`，renderer 据此选择会话类型与默认偏好。
 - 每个 IPC handler（`src/main/ipc/register-ipc.ts`）先用对应 zod schema parse 请求、并校验 sender 是本窗口，才触碰服务；未知 id 留给服务抛类型化错误（`SessionNotFoundError` 等）。`terminal:write`/`terminal:resize` 是单向 send 通道，解析失败或下游错误只记日志不回抛。
 
+### Agent 注册表（src/shared/agent-kinds.ts）
+
+7 种 agent kind 的**唯一事实来源**，主进程与 renderer 共用：`AGENT_KINDS`（有序，claude/codex 在前）、`isAgentKind()`、`AGENT_LAUNCH`（每项 `{ command, bypassArgs, bypassEnv?, resumeArgs, resumeSubcommand? }`）、`agentLaunchArgs(kind, resume)`、`agentLaunchEnv(kind)`。加这张表之前，「这是 agent 还是 shell」在 6 处各写一遍 `kind === 'claude' || kind === 'codex'`（PTY argv、capability 探测、标题生成、bypass 徽章、Shift+Enter/Ctrl+V 按键改写、空闲 Done 态），加一个 CLI 要把 6 处都找出来。
+
+几条容易踩的约束：
+
+- `resumeSubcommand` 必须**排在 bypassArgs 前面**（codex 是 `resume --last <bypass>`），其余 kind 是 `<bypass> <resumeArgs>`；`agentLaunchArgs` 是唯一决定这个顺序的地方。
+- `command` 不等于 kind：`cursor → cursor-agent`、`comate → comatecli`，按 kind 查会找到错的程序（cursor 是编辑器启动器）或找不到。
+- Comate 没有 bypass 旗标：它的 TUI 每次启动把 run mode 重置为 `process.env.ZULU_TERMINAL_RUN_MODE || 'manual'`，所以全放行只能走 `bypassEnv`；给它传一个编造的 `--yolo` 会被静默忽略。**bypass 徽章因此不能按「有没有 bypass argv」判断，只能按 `isAgentKind`。**
+- Comate 的 `resumeArgs: ['--resume']` 在 comatecli 1.0.8 里**尚未实现**（argv 解析器只认 `-h/-l/-m/-t/-v`，多余参数静默忽略、不报错），是为后续版本预留的，代价为零。
+- `sessionKindSchema` 里的两半（shell 与 agent）是**手写枚举**而非从本表派生，让 contracts.ts 保持是读线格式的唯一入口；两者一致由 `agent-kinds.test.ts` 断言。
+- gemini / copilot / comate / qwen 的旗标是在本机实机验证过的（`--help` 或已安装产物的 argv 解析器），cursor 本机没装、只有厂商文档依据；某个 CLI 起不来就改这张表对应的一行。
+- qwen 的 `--approval-mode=yolo` 是**文档有、实现未必有**：0.22.3 的 argv 解析器根本没有 approval 旗标，会静默忽略（实测 exit 0、CLI 照常启动），该版本只能靠 `~/.qwen/settings.json` 或 TUI 里 Shift+Tab 切换——CodeFly 不去写用户的 settings 文件。保留旗标的代价是零，而徽章在这种版本上是**多警告**而非少警告，方向是安全的。
+
 ### 主进程服务（src/main/services/）
 
 - **ProjectService**：项目注册与派生信息。`register` 时用 `git rev-parse` 记 `repoRoot`，并解析远程为 `repoRemote: { host, webUrl }`（`git-remote.ts` 的纯函数 `parseRemoteWebUrl`：origin 优先否则第一个 remote，ssh/scp 形式转 https，hostname 含 github/gitlab 判 host，本地路径/`file:` 返回 undefined）。`refreshRemotes()` 在每次组装 snapshot 时对所有项目重算并只在变化时写回一次，**永不 reject**；单个项目 git 命令失败则保留旧值。「打开 Git 仓库」的 IPC 只传 projectId，主进程从持久化记录取 `webUrl` 并在 `ExternalAppService.openRepository` 再校验 http(s) 才 `shell.openExternal`——renderer 永远指定不了 URL。
 - **SessionCoordinator**：会话全生命周期编排（create / restore / stop / delete / removeProject / submitFirstInput / shutdown）。`removeProject` 只停掉该项目仍在运行的 PTY 并一次写入删掉项目和它全部会话记录，**不碰磁盘**（worktree 与分支原样保留）；PTY 停止失败只记日志不阻止移除。`create` 的第三参 `{ worktree }` 决定是否找 WorktreeService 要位置——为 false 时**根本不调用它**，直接落在项目目录（不建分支、不写 exclude）。关键约束：状态变更**先持久化成功再广播**（`emit`）；每个会话/项目用 promise 链实现互斥锁（`withLock`）；PTY 启动后持久化失败要补偿（停 PTY + 落 error 状态）。
-- **TerminalService**：node-pty 封装与启动适配。Windows 上对 npm shim 有一条解析链：`.exe`/`.com` 直接跑 → `.cmd`/`.bat` 优先找同名 `.exe`，否则经 ComSpec 双引号包裹托管 → 无扩展名依次探测。macOS 的 Shell 用 `$SHELL -l`（无效时 `/bin/zsh -l`），agent 用绝对路径直接启动；macOS 拒绝 PowerShell/CMD，Windows 拒绝 Shell。**恢复会话时传 `{ resume: true }`**：claude 追加 `--continue`，codex 改用 `resume --last` 子命令，shell 会话不变。
+- **TerminalService**：node-pty 封装与启动适配。Windows 上对 npm shim 有一条解析链：`.exe`/`.com` 直接跑 → `.cmd`/`.bat` 优先找同名 `.exe`，否则经 ComSpec 双引号包裹托管 → 无扩展名依次探测。macOS 的 Shell 用 `$SHELL -l`（无效时 `/bin/zsh -l`），agent 用绝对路径直接启动；macOS 拒绝 PowerShell/CMD，Windows 拒绝 Shell。**恢复会话时传 `{ resume: true }`**，具体 argv 由 `shared/agent-kinds.ts` 的注册表决定，shell 会话不变。agent 的启动 argv/env 一律来自 `agentLaunchArgs()` / `agentLaunchEnv()`，本服务不再自己拼旗标；`agentLaunchEnv` 的返回值只并进这一个交互式 PTY 的 env（Comate 的 bypass 是环境变量而非旗标）。
 - **WorktreeService**：worktree 创建（`worktree-YYMMDD-N` 命名，写入 `.git/info/exclude` 而非 `.gitignore`）、restore 前校验、删除保护（脏 worktree 阻止删除；**分支永不删除**；从不 `--force`）。非 Git 项目或无 commit 的仓库回退为 ordinary session（直接跑在项目目录）。
 - **SessionStore**：版本化 JSON（Electron `userData/state.json`），写入前经 `appStateSchema` 校验，损坏时带 recoveryWarning 恢复。
-- **TitleService**：首次输入后用独立的非交互 CLI 进程生成标题（15s 超时，中性目录，**绝不带 bypass 旗标**），失败回退本地归一化/截断。标题任务的幂等由持久化的 `titleState: pending→complete` 转移保证，内存 Set 只是快路径。
+- **TitleService**：首次输入后用独立的非交互 CLI 进程生成标题（15s 超时，中性目录，**绝不带 bypass 旗标**），失败回退本地归一化/截断。只有 `TitleCapableKind`（claude/codex）注册 adapter——这个类型**故意比注册表的 `AgentKind` 窄**，另 5 种 agent 的 `--print` 输出格式未经验证，而标题进程绝不能带 bypass，所以它们直接走本地归一化。标题任务的幂等由持久化的 `titleState: pending→complete` 转移保证，内存 Set 只是快路径。
 - **UpdaterService**：应用内更新下载与安装仅支持 Windows；macOS 只检查版本并打开 Releases 页面，`download()` / `install()` 在任何副作用前直接拒绝。Windows 的 `download()` **不接受任何参数**——它自己重新拉一次 latest release 并挑 Windows 安装包（`github-release.ts` 里的 `pickWindowsInstaller` 与 `latestReleaseSchema` 由它和 AppInfoService 共用），renderer 永远无法指定被下载/执行的 URL；只有 https 的 GitHub 域名才会被下载（`isTrustedInstallerUrl`）。流式写 `<userData>/updates/<name>.part`，完成后校验大小再 rename；进度经节流后广播。重复调用 `download()` 复用同一个 in-flight promise；`cancel()` 让它返回 `cancelled`（两个请求都挂了取消信号，元数据请求卡住时也能立刻收敛）。与 AppInfoService 一样**永不 reject**，所有失败折成结果。几条容易踩的约束：
   - `install()` **必须等 `'spawn'` 事件确认进程真的起来了才 `quit()`**。`child_process.spawn` 对不存在/被拦截/被隔离的可执行文件**不会同步抛错**，而是稍后 emit `'error'`——直接 quit 会让用户的应用关掉却没有任何安装程序在跑，而那个没人监听的 `'error'` 还会打崩主进程。失败或超时（5s）时**不退出**并返回 error。首次成功后 `install()` 幂等（quit 要先拆完所有 PTY，用户来得及点第二下）。
   - 大小未知（asset 无 `size` 且无 `Content-Length`）时**不能**当作"已校验"，至少要拒绝 0 字节——这个文件马上要被 rename 成 `.exe` 并执行。
@@ -48,7 +62,7 @@ macOS 打包的几条约束（细节见 README「Packaging › macOS」）：ele
   - `DOWNLOAD_HEADERS` 带 `Accept-Encoding: identity`：否则网络栈会透明解压而 `Content-Length` 仍是压缩后的大小，完整性校验会永远失败。
   - 默认 fetch 是 `infrastructure/net-fetch.ts` 的 `electronFetch`（AppInfoService 同），**不是** Node 全局 `fetch`——原因见下面 net-fetch 条目。
 - **net-fetch**（infrastructure/）：把 Electron `net.fetch`（Chromium 网络栈）适配成两个更新服务的 `FetchLike` 形状，请求带 `credentials: 'omit'`。必须用它而不是 Node 全局 `fetch`：undici 直连、既不读 Windows 系统代理也不读 `HTTP(S)_PROXY`，在需要代理才能顺畅访问 GitHub 的机器上，应用内下载只有约 10 KB/s（117 MB 要三小时），而浏览器几秒下完；`net.fetch` 像浏览器一样解析系统代理，同一文件实测 8 秒。只能在 `app` `ready` 之后调用（两个服务都在 `whenReady` 里构造）。测试用 `createNetFetch(fakeNetFetch)` 注入替身，不 mock `electron` 模块。
-- **cli-locator**（infrastructure/）：Windows 保留 `where.exe` 查找 pwsh/claude/codex；macOS 通过用户登录 shell 的 `command -v`（5s 超时）并回退 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`，Shell 解析 `$SHELL` 或 `/bin/zsh`。VS Code 的 macOS app 查找属于 `ExternalAppService`。
+- **cli-locator**（infrastructure/）：`resolveAgent(kind)` 查 `AGENT_LAUNCH[kind].command` 而不是 kind 本身——`cursor` 的可执行名是 `cursor-agent`，`comate` 的是 `comatecli`，按 kind 查会找到错的程序或找不到。Windows 保留 `where.exe`；macOS 通过用户登录 shell 的 `command -v`（5s 超时）并回退 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`，Shell 解析 `$SHELL` 或 `/bin/zsh`。VS Code 的 macOS app 查找属于 `ExternalAppService`。
 
 ### 渲染进程（src/renderer/）
 
@@ -61,16 +75,16 @@ macOS 打包的几条约束（细节见 README「Packaging › macOS」）：ele
 - `UpdateDialog` + store 的 `updater` 状态机（`idle → available → downloading → ready → installing`，外加 `error`）：整个更新流程只有这一个界面，启动时的后台检查与 Settings 的手动检查都汇入它。**后台检查静默**——只有 `available` 才会改状态，失败/最新/无发布一律留在 `idle` 且不发 notice。进度事件只在 phase 仍是 `downloading` 时合并（避免过期事件把对话框拉回下载态），版本以事件为准而不是拿存的版本去比对——主进程在下载开始时会重新解析 release，检查与点击之间发布了新版本时用旧版本号过滤会让进度条整场停在 0。「稍后更新」只回 `idle`，已下载的安装包留在磁盘由主进程复用。`downloading` 与 `installing` 期间背景点击和 Escape **一律无效**：整窗背景对"丢弃一个快下完的下载"来说是太大的误点目标，取消只能走 Cancel 按钮；`installing` 阶段不提供任何按钮（应用正在退出，且防住双击起两个 NSIS 向导）。
 - `SidebarResizer`：侧边栏与终端之间的拖拽分隔条（`role="separator"` 的 window splitter：指针拖动 + 方向键/Home/End + 双击复位）。宽度存 store 的 `sidebarWidth`，由 `App` 以内联 `--sidebar-width` 落到 `.app-body`；边界常量在 `sidebar-width.ts`（默认 300 / 最小 200 / 最大 640 / 工作区至少 360），CSS 的 `clamp()` 镜像同一组值兜底窗口后续变窄。持久化 localStorage key `codefly.sidebarWidth`，与 theme/locale 同源，不进 AppState。
 - `i18n/`：自建类型安全字典，不引库。`en.ts` 是 key 的唯一来源（`TranslationKey` 由它推导），`zh-CN.ts` 被类型约束为必须全量实现——**新增 UI 文案必须同时加两个字典的 key**，否则编译不过。组件用 `useTranslation()` 取 `t`，纯函数（如 `session-status.ts`、store 的 notice）改为接收 `Translator` 或直接调 `translate(locale, ...)`。语言存 localStorage（与 theme 同源，不进持久化 AppState），**默认 en 且不跟随系统语言**：全部单测与 e2e 都断言英文文案，改默认值会全线挂。
-- `SettingsDialog`：开机自启动 / 会话类型 / 外观 / 语言 / 版本与检查更新 / 关于链接。「会话类型」用 `sessionKindOptions(platform)`：Windows 是 PowerShell/CMD/Claude/Codex，macOS 是 Shell/Claude/Codex；每种类型两个开关：`enabled`（关闭则不出现在新建菜单）与 `worktree`（开启则额外提供「X (new worktree)」入口）。偏好存 localStorage（key `codefly.sessionKinds`，与 theme/locale 同源，不进持久化 AppState），按平台默认值合并：本机 shell 的 worktree 关、agent 的 worktree 开。**worktree 选择由创建请求显式携带（`createSessionRequestSchema.worktree`），主进程从不读这份偏好**。版本/更新/关于三块的数据由主进程 `AppInfoService` 提供，对话框每次打开时重新拉取；外链只接受 `shared/links.ts` 里的三个具名 target，URL 由主进程查表得到，renderer 不能让它打开任意地址。只有 Windows 检查结果带 `.exe` asset 时才出现「Update now」；macOS 始终链接 Releases 页面。
+- `SettingsDialog`：开机自启动 / 会话类型 / 外观 / 语言 / 版本与检查更新 / 关于链接。「会话类型」用 `sessionKindOptions(platform)`，每项带 `group`：`primary`（Windows 是 PowerShell/CMD/Claude/Codex，macOS 是 Shell/Claude/Codex）平铺渲染，`additional`（5 种 opt-in agent，两平台相同）收进一个默认收起的可展开分组。展开态**不是**简单的 `useState(false)`：对话框关闭时只返回 `null` 而组件仍挂载，所以展开态会跨次打开残留——它在「每次 open」的那个 effect 里重算：全部 opt-in 关闭时收起，有任一开启时展开（把用户刚开启的那项藏在折叠里比多几行更糟）。每种类型两个开关：`enabled`（关闭则不出现在新建菜单）与 `worktree`（开启则额外提供「X (new worktree)」入口）。偏好存 localStorage（key `codefly.sessionKinds`，与 theme/locale 同源，不进持久化 AppState），按平台默认值合并：本机 shell 的 worktree 关、agent 的 worktree 开。**worktree 选择由创建请求显式携带（`createSessionRequestSchema.worktree`），主进程从不读这份偏好**。版本/更新/关于三块的数据由主进程 `AppInfoService` 提供，对话框每次打开时重新拉取；外链只接受 `shared/links.ts` 里的三个具名 target，URL 由主进程查表得到，renderer 不能让它打开任意地址。只有 Windows 检查结果带 `.exe` asset 时才出现「Update now」；macOS 始终链接 Releases 页面。
 
 ### 关键产品约定（改动前先读 README.md 对应章节）
 
-- 交互式 Claude/Codex 会话固定携带 `--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox`，运行期间终端头部持续显示 bypass 警告；本版本无关闭开关。
-- 新建会话菜单的条目由 Settings 的「会话类型」开关决定：关闭的类型完全不出现（全部关闭时显示空态文案），开启 worktree 的类型有两个条目（普通 = 跑在项目目录，「(new worktree)」= 独立 worktree + 同名分支）。CLI 缺失是另一回事——条目仍在，只是 disabled 并附查找说明。
+- 交互式 agent 会话固定携带各自厂商的 bypass（见 `AGENT_LAUNCH`：claude `--dangerously-skip-permissions`、codex `--dangerously-bypass-approvals-and-sandbox`、gemini/qwen `--approval-mode=yolo`、copilot `--allow-all-tools`、cursor `--force`、comate 环境变量 `ZULU_TERMINAL_RUN_MODE=yolo`），运行期间终端头部持续显示 bypass 警告；本版本无关闭开关。
+- 新建会话菜单的条目由 Settings 的「会话类型」开关决定：关闭的类型完全不出现（全部关闭时显示空态文案），开启 worktree 的类型有两个条目（普通 = 跑在项目目录，「(new worktree)」= 独立 worktree + 同名分支）。CLI 缺失是另一回事——条目仍在，只是 disabled 并附查找说明（说明里写的是真正被查找的可执行名，不是产品名）。**5 种 opt-in agent 默认 `enabled: false`**，所以默认安装的新建菜单与加它们之前完全一致；但它们的 `worktree` 默认是 `true`，一开启就直接有两个条目。
 - 应用启动时所有会话一律标记为 `stopped`；点击恢复在原目录重启同类型 CLI 并续接上次对话（见 TerminalService 的 resume 参数）。
 - 应用启动时后台检查一次更新：只有确实有新版本才弹 `UpdateDialog`，失败/最新/无发布全部静默。Windows 的「立即更新」在应用内下载安装包（进度可见、可取消），完成后再问一次「立即安装 / 稍后」；macOS 只打开 Releases 页面，不做应用内自更新。
 - e2e 的更新用例另起一个 Electron 实例（启动检查每次启动只跑一次，模态框会挡住共用窗口的其它用例），用 `CODEFLY_E2E_RELEASE` 离线提供一个 release、`CODEFLY_E2E_INSTALL_LOG` 记录本该被执行的安装包路径；**磁盘写入是真的**（写进套件自己的 user-data 目录），只有网络与 spawn 被替换。
-- e2e 断言了 Claude/Codex 收到的**精确 argv**、标题进程不带 bypass 旗标、worktree 序号（Claude=1、Codex=2、手动开启开关后的 cmd=3；PowerShell 是 ordinary）、会话类型开关的增删条目与重启存活、重启持久化、脏 worktree 删除保护、项目菜单的精确条目（fixture 仓库带一个 GitHub 形态的 `origin`，所以是 5 项且仓库图标为 mono glyph）等——改这些行为必须同步改 `e2e/codefly.spec.ts`。
+- e2e 断言了 Claude/Codex 收到的**精确 argv**、标题进程不带 bypass 旗标、worktree 序号（Claude=1、Codex=2、手动开启开关后的 cmd=3；PowerShell 是 ordinary）、会话类型开关的增删条目与重启存活、opt-in agent 默认收起且关闭（展开后 5 个开关全 off、worktree 开关 disabled，开启 Gemini 后菜单出现两个条目，重开时因已开启而自动展开）、重启持久化、脏 worktree 删除保护、项目菜单的精确条目（fixture 仓库带一个 GitHub 形态的 `origin`，所以是 5 项且仓库图标为 mono glyph）等——改这些行为必须同步改 `e2e/codefly.spec.ts`。
 
 ## 测试约定
 

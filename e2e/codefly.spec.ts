@@ -233,7 +233,8 @@ test('exposes the startup toggle, version check, About links, and language switc
   await startup.click()
   await expect(startup).toHaveAttribute('aria-checked', 'false')
 
-  // Every kind is offered by default; only the agents default to also offering a worktree.
+  // The established kinds are offered by default; only the agents default to also offering a
+  // worktree. The opt-in agent CLIs are off and collapsed away — see the disclosure test.
   for (const kind of ['PowerShell', 'Command Prompt', 'Claude', 'Codex']) {
     await expect(dialog.getByRole('switch', { name: `Enable ${kind}` })).toHaveAttribute('aria-checked', 'true')
   }
@@ -623,6 +624,57 @@ test('removes a session kind from the launcher while its Settings switch is off'
   await expect(restoredLauncher.getByRole('button', { name: 'Codex (new worktree)', exact: true })).toBeVisible()
   await window.keyboard.press('Escape')
   await expect(restoredLauncher).toHaveCount(0)
+})
+
+/**
+ * The opt-in agent CLIs (Gemini, GitHub Copilot, Cursor, Comate, Qwen Code) ship switched off
+ * and collapsed behind a disclosure, so a fresh install still shows the same four switches and
+ * the same launcher entries it always did. Turning one on gives it both launcher entries, since
+ * its worktree switch defaults on.
+ *
+ * Deliberately does NOT create a session: the worktree sequence numbers other tests pin
+ * (Claude=1, Codex=2, cmd=3) would shift. Both switches are restored before the test ends.
+ */
+test('keeps the opt-in agent CLIs collapsed and off until enabled in Settings', async () => {
+  const settingsTrigger = window.getByRole('button', { name: 'Settings' })
+  const settingsDialog = window.getByRole('dialog', { name: 'Settings' })
+
+  await settingsTrigger.click()
+  const disclosure = settingsDialog.getByRole('button', { name: 'More agent CLIs (5)' })
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+  for (const kind of ['Gemini', 'GitHub Copilot', 'Cursor', 'Comate', 'Qwen Code']) {
+    await expect(settingsDialog.getByRole('switch', { name: `Enable ${kind}` })).toHaveCount(0)
+  }
+
+  await disclosure.click()
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true')
+  for (const kind of ['Gemini', 'GitHub Copilot', 'Cursor', 'Comate', 'Qwen Code']) {
+    await expect(settingsDialog.getByRole('switch', { name: `Enable ${kind}` })).toHaveAttribute('aria-checked', 'false')
+    await expect(settingsDialog.getByRole('switch', { name: `New worktree for ${kind}` })).toBeDisabled()
+  }
+
+  const geminiEnabled = settingsDialog.getByRole('switch', { name: 'Enable Gemini' })
+  await geminiEnabled.click()
+  await expect(geminiEnabled).toHaveAttribute('aria-checked', 'true')
+  await settingsDialog.getByRole('button', { name: 'Close settings' }).click()
+
+  // Enabled kinds are appended after the established ones, and the worktree default gives it
+  // a second entry immediately.
+  const launcher = await openNewSessionLauncher()
+  await expect(launcher.getByRole('button', { name: 'Gemini', exact: true })).toBeVisible()
+  await expect(launcher.getByRole('button', { name: 'Gemini (new worktree)', exact: true })).toBeVisible()
+  await window.keyboard.press('Escape')
+  await expect(launcher).toHaveCount(0)
+
+  // Reopening with a kind enabled keeps the group open: hiding the switches the user just
+  // turned on behind a caret would be worse than a longer section. Turning it back off
+  // restores the state the rest of the journey expects.
+  await settingsTrigger.click()
+  await expect(settingsDialog.getByRole('button', { name: 'More agent CLIs (5)' })).toHaveAttribute('aria-expanded', 'true')
+  await settingsDialog.getByRole('switch', { name: 'Enable Gemini' }).click()
+  await expect(settingsDialog.getByRole('switch', { name: 'Enable Gemini' })).toHaveAttribute('aria-checked', 'false')
+  await settingsDialog.getByRole('button', { name: 'Close settings' }).click()
+  await expect(settingsDialog).toHaveCount(0)
 })
 
 test('stopping and relaunching the app preserves sessions as stopped, and clicking one restores it', async () => {

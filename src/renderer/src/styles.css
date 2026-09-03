@@ -1195,6 +1195,46 @@ body[data-sidebar-resizing='true'] .app-main {
   text-align: center;
 }
 
+/* Disclosure for the opt-in agent CLIs. Styled as quiet text with a rotating caret rather
+   than as a button: it reveals more of the same section, it does not perform an action. */
+.settings-kind-more-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  border: 0;
+  padding: 4px 2px;
+  background: none;
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.settings-kind-more-toggle::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid currentColor;
+  transition: transform 120ms ease;
+}
+
+.settings-kind-more-toggle[aria-expanded='true']::before {
+  transform: rotate(90deg);
+}
+
+.settings-kind-more-toggle:hover {
+  color: var(--color-text);
+}
+
+.settings-kind-more-toggle:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 .settings-kind-name {
   font-size: 0.8rem;
   color: var(--color-text);

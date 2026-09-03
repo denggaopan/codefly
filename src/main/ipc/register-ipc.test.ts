@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
+import { AGENT_KINDS, type AgentKind } from '../../shared/agent-kinds'
 import type {
   AppInfo,
   AppSnapshot,
@@ -8,6 +9,7 @@ import type {
   DeleteSessionResult,
   ProjectRecord,
   SessionRecord,
+  ToolAvailability,
   UpdateCheckResult,
   UpdateDownloadProgress,
   UpdateDownloadResult,
@@ -157,9 +159,17 @@ class FakeUpdaterService {
 
 const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
 
+// One entry per agent kind, as the real snapshot always carries; Codex is the missing one so
+// the fixture exercises both availability shapes.
 const capabilities = (): AppSnapshot['capabilities'] => ({
-  claude: { available: true, detail: 'C:\\claude.exe' },
-  codex: { available: false, detail: 'Install Codex CLI (codex) and sign in.' },
+  ...(Object.fromEntries(
+    AGENT_KINDS.map((kind) => [
+      kind,
+      kind === 'codex'
+        ? { available: false, detail: 'Install Codex CLI (codex) and sign in.' }
+        : { available: true, detail: `C:\\${kind}.exe` }
+    ])
+  ) as Record<AgentKind, ToolAvailability>),
   vscode: { available: true, detail: 'C:\\Code.exe' }
 })
 

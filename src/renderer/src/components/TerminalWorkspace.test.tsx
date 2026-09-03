@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { AGENT_KINDS, type AgentKind } from '../../../shared/agent-kinds'
 import type {
   AppInfo,
   AppSnapshot,
@@ -11,6 +12,7 @@ import type {
   DeleteSessionResult,
   ProjectRecord,
   SessionRecord,
+  ToolAvailability,
   UpdateCheckResult,
   UpdateDownloadResult,
   UpdateInstallResult
@@ -228,9 +230,13 @@ const createFakeApi = () => {
   }
 }
 
+// A real snapshot carries one entry per agent kind, built from the registry so adding a CLI
+// does not mean hand-editing the fixture.
 const defaultCapabilities = (): CapabilityState => ({
-  claude: { available: true, detail: '' },
-  codex: { available: true, detail: '' },
+  ...(Object.fromEntries(AGENT_KINDS.map((kind) => [kind, { available: true, detail: '' }])) as Record<
+    AgentKind,
+    ToolAvailability
+  >),
   vscode: { available: true, detail: '' }
 })
 
@@ -759,6 +765,24 @@ describe('TerminalWorkspace', () => {
     render(<TerminalWorkspace />)
 
     expect(await screen.findByText(BYPASS_WARNING_TEXT)).toBeInTheDocument()
+  })
+
+  // Comate's bypass is an environment variable rather than a flag, so the badge has to be
+  // driven by "is this an agent" and not by the presence of bypass argv.
+  it.each([
+    ['gemini' as const, 'Gemini'],
+    ['copilot' as const, 'GitHub Copilot'],
+    ['cursor' as const, 'Cursor'],
+    ['comate' as const, 'Comate'],
+    ['qwen' as const, 'Qwen Code']
+  ])('names a running %s session and discloses its bypass in the header', async (kind, label) => {
+    const session: SessionRecord = { ...runningClaudeSession, id: `session-${kind}`, kind }
+    seedStore(session)
+    useAppStore.setState({ activeSessionId: session.id })
+    render(<TerminalWorkspace />)
+
+    expect(await screen.findByText(label)).toHaveClass('terminal-header-kind')
+    expect(screen.getByText(BYPASS_WARNING_TEXT)).toBeInTheDocument()
   })
 
   it('renders the bypass disclosure as a compact badge inside the header row, not a banner or strip', async () => {

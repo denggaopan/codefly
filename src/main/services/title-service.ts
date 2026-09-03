@@ -12,7 +12,13 @@ export const TITLE_PROMPT = 'Return one concise session title only. Use the inpu
 export const TITLE_TIMEOUT_MS = 15_000
 export const TITLE_MAX_OUTPUT_BYTES = 4 * 1024
 
-type AgentKind = Extract<SessionKind, 'claude' | 'codex'>
+/**
+ * The agent CLIs whose non-interactive mode is verified enough to generate a title with.
+ * Deliberately narrower than the shared `AgentKind` registry: every other agent kind falls
+ * through to the local normalizer, because a title process must never carry a permission
+ * bypass and each vendor's `--print` output would have to be checked before trusting it.
+ */
+type TitleCapableKind = Extract<SessionKind, 'claude' | 'codex'>
 
 export type TitleAdapterOptions = {
   cwd: string
@@ -61,7 +67,7 @@ export type TitleProcessSpawner = (
 const defaultProcessSpawner: TitleProcessSpawner = (file, args, options) =>
   spawn(file, [...args], options) as unknown as SpawnedTitleProcess
 
-const argvFor = (kind: AgentKind): readonly string[] =>
+const argvFor = (kind: TitleCapableKind): readonly string[] =>
   kind === 'claude' ? ['--print'] : ['exec', '--skip-git-repo-check', '-']
 
 type CandidateExists = (candidate: string) => Promise<boolean>
@@ -123,7 +129,7 @@ const windowsLaunchSpec = async (
 }
 
 export const createCliTitleAdapter = (
-  kind: AgentKind,
+  kind: TitleCapableKind,
   locator: Pick<CliLocator, 'resolveAgent'> = cliLocator,
   processSpawner: TitleProcessSpawner = defaultProcessSpawner,
   hostOptions: TitleAdapterHostOptions = {}
@@ -230,7 +236,7 @@ export const createCliTitleAdapter = (
   }
 })
 
-type TitleAdapterMap = Partial<Record<AgentKind, TitleAdapter>>
+type TitleAdapterMap = Partial<Record<TitleCapableKind, TitleAdapter>>
 type EnsureDirectory = (path: string) => Promise<unknown>
 type InFlightJob = { controller: AbortController }
 

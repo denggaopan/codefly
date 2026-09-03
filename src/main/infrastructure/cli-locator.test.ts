@@ -44,6 +44,22 @@ describe('CliLocator', () => {
     expect(run).toHaveBeenCalledWith('where.exe', ['codex'])
   })
 
+  // Two kinds are not named after their binary, and looking up the kind instead would find
+  // the wrong program: `cursor` is the editor launcher, `comate` is nothing at all.
+  it.each([
+    ['cursor' as const, 'cursor-agent'],
+    ['comate' as const, 'comatecli'],
+    ['gemini' as const, 'gemini'],
+    ['copilot' as const, 'copilot'],
+    ['qwen' as const, 'qwen']
+  ])('looks up %s as the executable its vendor installs', async (kind, executable) => {
+    const run = vi.fn().mockResolvedValue({ stdout: `C:\\npm\\${executable}.cmd\n`, stderr: '', exitCode: 0 })
+    const locator = new CliLocator(runnerWith(run), async () => true)
+
+    await expect(locator.resolveAgent(kind)).resolves.toBe(`C:\\npm\\${executable}.cmd`)
+    expect(run).toHaveBeenCalledWith('where.exe', [executable])
+  })
+
   it('rejects unsafe command names before invoking where.exe', async () => {
     const run = vi.fn()
     const locator = new CliLocator(runnerWith(run), async () => true)

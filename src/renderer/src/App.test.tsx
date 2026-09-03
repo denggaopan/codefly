@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { AGENT_KINDS, type AgentKind } from '../../shared/agent-kinds'
 import type {
   AppInfo,
   AppSnapshot,
@@ -13,13 +14,14 @@ import type {
   ProjectRecord,
   SessionKind,
   SessionRecord,
+  ToolAvailability,
   UpdateCheckResult,
   UpdateDownloadResult,
   UpdateInstallResult
 } from '../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../shared/links'
 import App from './App'
-import { useAppStore } from './store/use-app-store'
+import { SESSION_KINDS_STORAGE_KEY, useAppStore } from './store/use-app-store'
 
 // App renders TerminalWorkspace, which embeds real @xterm/xterm and @xterm/addon-fit
 // instances. Both rely on browser APIs (canvas, matchMedia, ResizeObserver) that jsdom does
@@ -141,15 +143,27 @@ const runningClaudeSession: SessionRecord = {
 
 const stoppedClaudeSession: SessionRecord = { ...runningClaudeSession, id: 'session-claude-stopped', status: 'stopped' }
 
+// Every agent kind is probed at startup, so a snapshot always carries one entry per kind.
+// Built from the registry so adding a CLI does not mean hand-editing each fixture.
+const agentCapabilities = (
+  overrides: Partial<Record<AgentKind, ToolAvailability>> = {}
+): Record<AgentKind, ToolAvailability> =>
+  Object.fromEntries(
+    AGENT_KINDS.map((kind) => [kind, overrides[kind] ?? { available: true, detail: `C:\\${kind}\\${kind}.exe` }])
+  ) as Record<AgentKind, ToolAvailability>
+
 const allAvailableCapabilities: CapabilityState = {
-  claude: { available: true, detail: 'C:\\claude\\claude.exe' },
-  codex: { available: true, detail: 'C:\\codex\\codex.exe' },
+  ...agentCapabilities(),
   vscode: { available: true, detail: 'C:\\Code\\Code.exe' }
 }
 
 const claudeDisabledCapabilities: CapabilityState = {
-  claude: { available: false, detail: 'Claude CLI not found. Install claude and sign in.' },
-  codex: { available: true, detail: 'C:\\codex\\codex.exe' },
+  ...agentCapabilities({ claude: { available: false, detail: 'Claude CLI not found. Install claude and sign in.' } }),
+  vscode: { available: true, detail: 'C:\\Code\\Code.exe' }
+}
+
+const cursorDisabledCapabilities: CapabilityState = {
+  ...agentCapabilities({ cursor: { available: false, detail: 'Install the Cursor CLI (cursor-agent) and sign in.' } }),
   vscode: { available: true, detail: 'C:\\Code\\Code.exe' }
 }
 
@@ -507,6 +521,26 @@ describe('App', () => {
     expect(await screen.findByText('Claude CLI not found. Install claude and sign in.')).toBeVisible()
 
     await user.click(claudeButton)
+    expect(api.createSession).not.toHaveBeenCalled()
+  })
+
+  // An opt-in agent behaves exactly like Claude once its switch is on: present, and disabled
+  // with the lookup detail when its CLI is missing.
+  it('lists an opt-in agent once enabled and disables it while its CLI is missing', async () => {
+    const user = userEvent.setup()
+    window.localStorage.setItem(SESSION_KINDS_STORAGE_KEY, JSON.stringify({ cursor: { enabled: true } }))
+    api = createFakeApi(stateWith(), cursorDisabledCapabilities)
+    window.codefly = api
+    render(<App />)
+
+    await screen.findByText(project1.name)
+    await openNewSessionLauncher(user)
+
+    const cursorButton = await screen.findByRole('button', { name: /^Cursor$/ })
+    expect(cursorButton).toBeDisabled()
+    expect(await screen.findByText('Install the Cursor CLI (cursor-agent) and sign in.')).toBeVisible()
+
+    await user.click(cursorButton)
     expect(api.createSession).not.toHaveBeenCalled()
   })
 

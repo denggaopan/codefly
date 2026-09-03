@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" focusable="false">
+  <!-- An original two-tone prism, light like codex.svg for CodeFly's dark-only UI. The two
+       shaded faces read as a solid at 16px while still telling the mark apart from a plain
+       triangle. -->
+  <path fill="#8C8C8C" d="M512 72 L96 792 L512 792 Z" />
+  <path fill="#EDEDED" d="M512 72 L928 792 L512 792 Z" />
+</svg>

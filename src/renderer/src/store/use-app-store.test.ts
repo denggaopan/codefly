@@ -15,12 +15,15 @@ import type {
   UpdateInstallResult
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
+import { AGENT_KINDS, type AgentKind } from '../../../shared/agent-kinds'
 import { DEFAULT_SESSION_KIND_PREFERENCES } from '../../../shared/contracts'
 import { AGENT_IDLE_MS, SESSION_KINDS_STORAGE_KEY, useAppStore } from './use-app-store'
 
 const defaultCapabilities = (): CapabilityState => ({
-  claude: { available: true, detail: '' },
-  codex: { available: true, detail: '' },
+  ...(Object.fromEntries(AGENT_KINDS.map((kind) => [kind, { available: true, detail: '' }])) as Record<
+    AgentKind,
+    { available: boolean; detail: string }
+  >),
   vscode: { available: true, detail: '' }
 })
 
@@ -130,6 +133,20 @@ beforeEach(async () => {
 afterEach(() => {
   dispose()
   vi.useRealTimers()
+})
+
+// The launcher reads availability by kind with no fallback, and it can be opened before the
+// first snapshot arrives — a kind missing from the resting state would crash it.
+describe('useAppStore resting capabilities', () => {
+  it('carries a placeholder entry for every agent kind before the snapshot arrives', () => {
+    useAppStore.getState().reset()
+
+    const { capabilities } = useAppStore.getState()
+
+    for (const kind of AGENT_KINDS) {
+      expect(capabilities[kind]).toEqual({ available: false, detail: 'Checking availability…' })
+    }
+  })
 })
 
 describe('useAppStore.reorderProjects', () => {
@@ -288,7 +305,12 @@ describe('useAppStore session-kind preferences', () => {
       powershell: { enabled: false, worktree: false },
       cmd: { enabled: false, worktree: false },
       claude: { enabled: true, worktree: false },
-      codex: { enabled: true, worktree: true }
+      codex: { enabled: true, worktree: true },
+      gemini: { enabled: false, worktree: true },
+      copilot: { enabled: false, worktree: true },
+      cursor: { enabled: false, worktree: true },
+      comate: { enabled: false, worktree: true },
+      qwen: { enabled: false, worktree: true }
     })
   })
 })

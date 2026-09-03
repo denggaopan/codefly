@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" focusable="false">
+  <!-- An original paired-lens mark, light like codex.svg because CodeFly's UI is dark-only.
+       Two rounded lenses joined by a bridge stay distinguishable at a 16px launcher icon. -->
+  <g fill="#E6E6E6">
+    <rect x="80" y="368" width="360" height="288" rx="144" />
+    <rect x="584" y="368" width="360" height="288" rx="144" />
+    <rect x="408" y="472" width="208" height="80" rx="40" />
+  </g>
+</svg>

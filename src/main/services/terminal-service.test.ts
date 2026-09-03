@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { AgentKind } from '../../shared/agent-kinds'
 import type { SessionRecord } from '../../shared/contracts'
 import {
   TerminalService,
@@ -79,13 +80,13 @@ const session = (id: string, kind: SessionRecord['kind'] = 'powershell', launchP
 type Locator = {
   resolveShell(): Promise<string | undefined>
   resolvePowerShell(): Promise<string | undefined>
-  resolveAgent(agent: 'claude' | 'codex'): Promise<string | undefined>
+  resolveAgent(agent: AgentKind): Promise<string | undefined>
 }
 
-const locatorWith = (resolved: Partial<Record<'shell' | 'powershell' | 'claude' | 'codex', string>> = {}): Locator => ({
+const locatorWith = (resolved: Partial<Record<'shell' | 'powershell' | AgentKind, string>> = {}): Locator => ({
   resolveShell: vi.fn(async () => resolved.shell),
   resolvePowerShell: vi.fn(async () => resolved.powershell ?? 'C:\\Program Files\\PowerShell\\7\\pwsh.exe'),
-  resolveAgent: vi.fn(async (agent: 'claude' | 'codex') => resolved[agent])
+  resolveAgent: vi.fn(async (agent: AgentKind) => resolved[agent])
 })
 
 type ServiceOptions = {
@@ -315,6 +316,49 @@ describe('TerminalService launch adapters', () => {
       `/d /s /c ""${shim}" --dangerously-skip-permissions --continue"`,
       expect.any(Object)
     )
+  })
+
+  // The five opt-in agent CLIs, each with the argv its own vendor documents. Asserted as one
+  // table so a registry edit that drops or reorders a flag fails per kind rather than as one
+  // vague failure.
+  it.each([
+    ['gemini' as const, ['--approval-mode=yolo'], ['--approval-mode=yolo', '--resume', 'latest']],
+    ['copilot' as const, ['--allow-all-tools'], ['--allow-all-tools', '--continue']],
+    ['cursor' as const, ['--force'], ['--force', '--resume']],
+    ['comate' as const, [], ['--resume']],
+    ['qwen' as const, ['--approval-mode=yolo'], ['--approval-mode=yolo', '--continue']]
+  ])('spawns %s with its own bypass argv fresh and its own resume argv on restore', async (kind, freshArgs, resumeArgs) => {
+    const executable = `C:\\Agents With Spaces\\${kind}.exe`
+    const factory = new FakePtyFactory(new FakePty(), new FakePty())
+    const service = serviceWith(factory, { locator: locatorWith({ [kind]: executable }) })
+
+    await service.start(session(`${kind}-fresh`, kind))
+    await service.start(session(`${kind}-resume`, kind), { resume: true })
+
+    expect(factory.spawn).toHaveBeenNthCalledWith(1, executable, freshArgs, expect.any(Object))
+    expect(factory.spawn).toHaveBeenNthCalledWith(2, executable, resumeArgs, expect.any(Object))
+  })
+
+  // Comate's TUI resets its run mode to `ZULU_TERMINAL_RUN_MODE || 'manual'` on every launch,
+  // so its bypass travels as environment rather than argv — and must not leak into any other
+  // session's environment.
+  it('injects the Comate bypass through the PTY environment and nowhere else', async () => {
+    const factory = new FakePtyFactory(new FakePty(), new FakePty())
+    const service = serviceWith(factory, {
+      locator: locatorWith({ comate: 'C:\\npm\\comatecli.exe', claude: 'C:\\npm\\claude.exe' })
+    })
+
+    await service.start(session('comate-env', 'comate'))
+    await service.start(session('claude-env', 'claude'))
+
+    expect(factory.spawn).toHaveBeenNthCalledWith(1, 'C:\\npm\\comatecli.exe', [], {
+      name: 'xterm-256color',
+      cols: 120,
+      rows: 30,
+      cwd: 'C:\\Projects\\App One',
+      env: { PATH: 'C:\\Windows', KEEP_ME: 'yes', TERM: 'xterm-256color', ZULU_TERMINAL_RUN_MODE: 'yolo' }
+    })
+    expect(factory.spawn.mock.calls[1]?.[2].env).not.toHaveProperty('ZULU_TERMINAL_RUN_MODE')
   })
 
   it('starts a restored shell without resume arguments', async () => {

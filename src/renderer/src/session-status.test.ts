@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { AGENT_KINDS } from '../../shared/agent-kinds'
 import type { SessionRecord } from '../../shared/contracts'
 import { createTranslator } from './i18n'
 import { isAgentDone, sessionStatusLabel } from './session-status'
@@ -21,12 +22,12 @@ const session = (overrides: Partial<SessionRecord> = {}): SessionRecord =>
   }) as SessionRecord
 
 describe('sessionStatusLabel with agent idle detection', () => {
-  it.each(['claude', 'codex'] as const)('labels a quiet running %s session Done', (kind) => {
+  it.each(AGENT_KINDS)('labels a quiet running %s session Done', (kind) => {
     expect(sessionStatusLabel(t, session({ kind }), true)).toBe('Done')
     expect(isAgentDone(session({ kind }), true)).toBe(true)
   })
 
-  it.each(['claude', 'codex'] as const)('keeps Running for a %s session that is still producing output', (kind) => {
+  it.each(AGENT_KINDS)('keeps Running for a %s session that is still producing output', (kind) => {
     expect(sessionStatusLabel(t, session({ kind }), false)).toBe('Running')
     expect(isAgentDone(session({ kind }), false)).toBe(false)
   })

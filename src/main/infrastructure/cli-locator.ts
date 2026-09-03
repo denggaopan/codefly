@@ -2,6 +2,7 @@ import { access } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { posix as posixPath } from 'node:path'
 
+import { AGENT_LAUNCH, type AgentKind } from '../../shared/agent-kinds'
 import { commandRunner } from './command-runner'
 import type { CommandRunner } from './command-runner'
 
@@ -106,8 +107,12 @@ export class CliLocator {
     return (await this.resolve('pwsh.exe')) ?? this.resolve('powershell.exe')
   }
 
-  resolveAgent(agent: 'claude' | 'codex'): Promise<string | undefined> {
-    return this.resolve(agent)
+  /**
+   * Looks up an agent CLI by the executable its vendor actually installs, which is not
+   * always the session kind: `cursor` would find the editor launcher and `comate` nothing.
+   */
+  resolveAgent(agent: AgentKind): Promise<string | undefined> {
+    return this.resolve(AGENT_LAUNCH[agent].command)
   }
 }
 

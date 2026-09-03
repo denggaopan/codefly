@@ -89,7 +89,73 @@ describe('SettingsDialog', () => {
     expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('offers an enable and a worktree switch per session kind, with every kind on by default', async () => {
+  // Ten kinds in one flat list would bury the four that matter, and the opt-in CLIs are off
+  // anyway — so they are collapsed away entirely, not merely dimmed.
+  it('hides the opt-in agent CLIs behind a collapsed group', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+    const optInKinds = ['Gemini', 'GitHub Copilot', 'Cursor', 'Comate', 'Qwen Code']
+
+    const toggle = screen.getByRole('button', { name: 'More agent CLIs (5)' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    for (const kind of optInKinds) {
+      expect(screen.queryByRole('switch', { name: `Enable ${kind}` })).not.toBeInTheDocument()
+    }
+    // The established kinds are never behind the disclosure.
+    expect(screen.getByRole('switch', { name: 'Enable Claude' })).toBeInTheDocument()
+
+    await user.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    for (const kind of optInKinds) {
+      expect(screen.getByRole('switch', { name: `Enable ${kind}` })).toHaveAttribute('aria-checked', 'false')
+      // Off means the worktree switch is disabled but keeps its stored value, exactly as for
+      // an established kind the user turned off.
+      expect(screen.getByRole('switch', { name: `New worktree for ${kind}` })).toBeDisabled()
+    }
+  })
+
+  // The dialog stays mounted while closed (it renders null), so the disclosure state has to be
+  // re-derived when it reopens. Staying collapsed over an enabled kind would hide the switches
+  // the user just turned on; staying expanded over an all-off group would defeat the point.
+  it('reopens expanded only while an opt-in agent is enabled', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    window.codefly = createFakeApi() as unknown as typeof window.codefly
+    const view = render(<SettingsDialog open onClose={onClose} />)
+    const disclosureName = { name: 'More agent CLIs (5)' }
+
+    // Expanded to look, nothing turned on: reopening must not keep ten rows on screen.
+    await user.click(screen.getByRole('button', disclosureName))
+    expect(screen.getByRole('button', disclosureName)).toHaveAttribute('aria-expanded', 'true')
+    view.rerender(<SettingsDialog open={false} onClose={onClose} />)
+    view.rerender(<SettingsDialog open onClose={onClose} />)
+    expect(screen.getByRole('button', disclosureName)).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(screen.getByRole('button', disclosureName))
+    await user.click(screen.getByRole('switch', { name: 'Enable Qwen Code' }))
+    view.rerender(<SettingsDialog open={false} onClose={onClose} />)
+    view.rerender(<SettingsDialog open onClose={onClose} />)
+
+    expect(screen.getByRole('button', disclosureName)).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('switch', { name: 'Enable Qwen Code' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('enables an opt-in agent from the expanded group and persists it', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    await user.click(screen.getByRole('button', { name: 'More agent CLIs (5)' }))
+    await user.click(screen.getByRole('switch', { name: 'Enable Comate' }))
+
+    expect(useAppStore.getState().sessionKindPreferences.comate).toEqual({ enabled: true, worktree: true })
+    expect(JSON.parse(window.localStorage.getItem('codefly.sessionKinds')!).comate).toEqual({
+      enabled: true,
+      worktree: true
+    })
+  })
+
+  it('offers an enable and a worktree switch per established session kind', async () => {
     renderDialog()
 
     for (const kind of ['PowerShell', 'Command Prompt', 'Claude', 'Codex']) {
@@ -117,7 +183,12 @@ describe('SettingsDialog', () => {
       powershell: { enabled: true, worktree: false },
       cmd: { enabled: true, worktree: true },
       claude: { enabled: true, worktree: true },
-      codex: { enabled: false, worktree: true }
+      codex: { enabled: false, worktree: true },
+      gemini: { enabled: false, worktree: true },
+      copilot: { enabled: false, worktree: true },
+      cursor: { enabled: false, worktree: true },
+      comate: { enabled: false, worktree: true },
+      qwen: { enabled: false, worktree: true }
     })
   })
 

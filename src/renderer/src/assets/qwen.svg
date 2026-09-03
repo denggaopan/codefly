@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" focusable="false">
+  <!-- An original flat-topped hexagon in Qwen's violet, not a copy of the vendor's logo
+       artwork. A solid convex silhouette stays legible at a 16px launcher icon. -->
+  <path
+    fill="#615CED"
+    d="M932 512 L722 876 L302 876 L92 512 L302 148 L722 148 Z"
+  />
+</svg>

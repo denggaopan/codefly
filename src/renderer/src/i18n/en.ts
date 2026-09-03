@@ -42,6 +42,11 @@ export const en = {
   'sessionKind.cmd': 'Command Prompt',
   'sessionKind.claude': 'Claude',
   'sessionKind.codex': 'Codex',
+  'sessionKind.gemini': 'Gemini',
+  'sessionKind.copilot': 'GitHub Copilot',
+  'sessionKind.cursor': 'Cursor',
+  'sessionKind.comate': 'Comate',
+  'sessionKind.qwen': 'Qwen Code',
 
   'status.running': 'Running',
   'status.done': 'Done',
@@ -54,7 +59,7 @@ export const en = {
   'terminal.restartSession': 'Restart session',
   'terminal.bypassWarning': 'Permissions and sandbox bypass enabled',
   'terminal.bypassTooltip':
-    'This agent runs with its fixed bypass flag (--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox): it edits files and runs commands without asking for confirmation.',
+    'This agent runs with its permission and sandbox checks bypassed: it edits files and runs commands without asking for confirmation.',
 
   'notice.genericError': 'Something went wrong.',
   'notice.dirtyWorktree': 'Worktree has {count} changed files. Commit or discard them before deleting.',
@@ -66,6 +71,7 @@ export const en = {
   'settings.sessionKinds': 'Session kinds',
   'settings.sessionKindsHint':
     'A kind that is turned off disappears from the New session menu. New worktree adds a second entry for that kind which runs the session in its own Git worktree and branch.',
+  'settings.moreSessionKinds': 'More agent CLIs ({count})',
   'settings.columnEnabled': 'Enabled',
   'settings.columnWorktree': 'New worktree',
   'settings.enableKind': 'Enable {kind}',

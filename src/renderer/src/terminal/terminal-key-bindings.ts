@@ -1,3 +1,4 @@
+import { isAgentKind } from '../../../shared/agent-kinds'
 import type { SessionKind } from '../../../shared/contracts'
 
 /**
@@ -28,8 +29,6 @@ export type TerminalKeyAction =
   /** Skip xterm and write this to the PTY instead. The caller must preventDefault the event. */
   | { action: 'send'; data: string }
 
-const isAgentSession = (kind: SessionKind): boolean => kind === 'claude' || kind === 'codex'
-
 // `code` is the physical key, so Ctrl/Cmd+V still pastes on non-Latin layouts (where `key` is e.g.
 // 'м') — matching how the browser itself resolves the shortcut; `key` covers exotic layouts
 // whose V sits on another physical key.
@@ -52,7 +51,7 @@ const isShiftEnter = (event: TerminalKeyEvent): boolean =>
  * {@link AGENT_NEWLINE_SEQUENCE}; shell sessions are left exactly as xterm handles them.
  */
 export function resolveTerminalKey(kind: SessionKind, event: TerminalKeyEvent): TerminalKeyAction {
-  if (!isAgentSession(kind)) return { action: 'xterm' }
+  if (!isAgentKind(kind)) return { action: 'xterm' }
   if (isPasteShortcut(event)) return { action: 'browser' }
   if (isShiftEnter(event)) {
     // Only keydown carries the action: with its default prevented no keypress follows, and the

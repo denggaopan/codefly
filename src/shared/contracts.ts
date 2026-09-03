@@ -3,7 +3,21 @@ import { z } from 'zod'
 import type { ExternalLinkTarget } from './links'
 
 export const hostPlatformSchema = z.enum(['win32', 'darwin'])
-export const sessionKindSchema = z.enum(['shell', 'powershell', 'cmd', 'claude', 'codex'])
+// Native shells first, then the agent CLIs in the order `AGENT_KINDS` lists them. The two
+// halves are spelled out here rather than derived from that registry so this file stays the
+// one place to read the wire format; `agent-kinds.test.ts` asserts the halves agree.
+export const sessionKindSchema = z.enum([
+  'shell',
+  'powershell',
+  'cmd',
+  'claude',
+  'codex',
+  'gemini',
+  'copilot',
+  'cursor',
+  'comate',
+  'qwen'
+])
 export const runtimeStatusSchema = z.enum(['creating', 'running', 'stopped', 'error', 'missing'])
 export const titleStateSchema = z.enum(['pending', 'complete'])
 
@@ -68,9 +82,17 @@ export const toolAvailabilitySchema = z.strictObject({
   detail: z.string()
 })
 
+// One entry per agent kind plus VS Code. Every agent is probed when the snapshot is built,
+// including the ones switched off by default: a kind can be enabled in Settings at any time
+// and the launcher reads availability by kind, with nothing to fall back to.
 export const capabilityStateSchema = z.strictObject({
   claude: toolAvailabilitySchema,
   codex: toolAvailabilitySchema,
+  gemini: toolAvailabilitySchema,
+  copilot: toolAvailabilitySchema,
+  cursor: toolAvailabilitySchema,
+  comate: toolAvailabilitySchema,
+  qwen: toolAvailabilitySchema,
   vscode: toolAvailabilitySchema
 })
 
@@ -130,7 +152,12 @@ const sessionKindPreferencesShape = {
   powershell: sessionKindPreferenceSchema,
   cmd: sessionKindPreferenceSchema,
   claude: sessionKindPreferenceSchema,
-  codex: sessionKindPreferenceSchema
+  codex: sessionKindPreferenceSchema,
+  gemini: sessionKindPreferenceSchema,
+  copilot: sessionKindPreferenceSchema,
+  cursor: sessionKindPreferenceSchema,
+  comate: sessionKindPreferenceSchema,
+  qwen: sessionKindPreferenceSchema
 }
 
 export const sessionKindPreferencesSchema = z.strictObject(sessionKindPreferencesShape)
@@ -145,7 +172,12 @@ export const storedSessionKindPreferencesSchema = z
     powershell: z.object(sessionKindPreferenceShape).partial(),
     cmd: z.object(sessionKindPreferenceShape).partial(),
     claude: z.object(sessionKindPreferenceShape).partial(),
-    codex: z.object(sessionKindPreferenceShape).partial()
+    codex: z.object(sessionKindPreferenceShape).partial(),
+    gemini: z.object(sessionKindPreferenceShape).partial(),
+    copilot: z.object(sessionKindPreferenceShape).partial(),
+    cursor: z.object(sessionKindPreferenceShape).partial(),
+    comate: z.object(sessionKindPreferenceShape).partial(),
+    qwen: z.object(sessionKindPreferenceShape).partial()
   })
   .partial()
 
@@ -153,13 +185,23 @@ export const storedSessionKindPreferencesSchema = z
  * Windows-compatible defaults used before the platform snapshot arrives and by browser
  * tests. Platform-aware renderer defaults enable only that host's native shell; all native
  * shells default to the project directory while agents default to an isolated worktree.
+ *
+ * Only Claude and Codex are offered out of the box. The other agent CLIs stay switched off
+ * so the New session menu does not list five tools the user may not have installed — but
+ * their worktree switch still defaults on, so enabling one immediately gives it the same
+ * pair of entries Claude and Codex have.
  */
 export const DEFAULT_SESSION_KIND_PREFERENCES: Readonly<SessionKindPreferences> = {
   shell: { enabled: false, worktree: false },
   powershell: { enabled: true, worktree: false },
   cmd: { enabled: true, worktree: false },
   claude: { enabled: true, worktree: true },
-  codex: { enabled: true, worktree: true }
+  codex: { enabled: true, worktree: true },
+  gemini: { enabled: false, worktree: true },
+  copilot: { enabled: false, worktree: true },
+  cursor: { enabled: false, worktree: true },
+  comate: { enabled: false, worktree: true },
+  qwen: { enabled: false, worktree: true }
 }
 
 export const themePreferenceSchema = z.enum(['dark', 'light'])
@@ -189,6 +231,7 @@ export type SessionRecord = z.infer<typeof sessionRecordSchema>
 export type SessionKind = z.infer<typeof sessionKindSchema>
 export type CapabilityState = z.infer<typeof capabilityStateSchema>
 export type ThemePreference = z.infer<typeof themePreferenceSchema>
+export type ToolAvailability = z.infer<typeof toolAvailabilitySchema>
 export type SessionKindPreference = z.infer<typeof sessionKindPreferenceSchema>
 export type SessionKindPreferences = z.infer<typeof sessionKindPreferencesSchema>
 

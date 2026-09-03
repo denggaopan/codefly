@@ -5,7 +5,7 @@ import type { AppInfo, UpdateCheckResult } from '../../../shared/contracts'
 import type { ExternalLinkTarget } from '../../../shared/links'
 import { LOCALES, type TranslationKey, type Translator } from '../i18n'
 import { useTranslation } from '../i18n/use-translation'
-import { sessionKindOptions } from '../session-kind-options'
+import { sessionKindOptions, type SessionKindOption } from '../session-kind-options'
 import { useAppStore } from '../store/use-app-store'
 
 type SettingsDialogProps = {
@@ -70,6 +70,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [autoLaunch, setAutoLaunch] = useState<boolean | null>(null)
   const [autoLaunchError, setAutoLaunchError] = useState<string | null>(null)
   const [updateState, setUpdateState] = useState<UpdateState>({ phase: 'idle' })
+  const [moreKindsExpanded, setMoreKindsExpanded] = useState(false)
 
   useEffect(() => {
     if (!open) return undefined
@@ -95,6 +96,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     let cancelled = false
     setUpdateState({ phase: 'idle' })
     setAutoLaunchError(null)
+    // The dialog stays mounted while closed (it renders null above), so the disclosure would
+    // otherwise reopen however the user last left it. Re-derived here instead: collapsed while
+    // every opt-in CLI is off, expanded once one is on — leaving an enabled kind's switches
+    // hidden behind a caret is worse than a slightly longer section.
+    setMoreKindsExpanded(
+      sessionKindOptions(useAppStore.getState().platform).some(
+        (item) => item.group === 'additional' && useAppStore.getState().sessionKindPreferences[item.kind].enabled
+      )
+    )
 
     void window.codefly
       .getAppInfo()
@@ -152,6 +162,45 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     beginUpdate(version, true)
     void startUpdateDownload()
     onClose()
+  }
+
+  const kindOptions = sessionKindOptions(platform)
+  const primaryKinds = kindOptions.filter((item) => item.group === 'primary')
+  const additionalKinds = kindOptions.filter((item) => item.group === 'additional')
+
+  // One row shape for both groups: a kind behind the disclosure gets exactly the switches an
+  // always-visible one does, so enabling it there is not a different interaction.
+  const renderKindRow = (item: SessionKindOption) => {
+    const preference = sessionKindPreferences[item.kind]
+    const kindLabel = t(item.labelKey)
+    return (
+      <li key={item.kind} className="settings-kind-row">
+        <span className="settings-kind-name">{kindLabel}</span>
+        <button
+          type="button"
+          className="settings-switch"
+          role="switch"
+          aria-checked={preference.enabled}
+          aria-label={t('settings.enableKind', { kind: kindLabel })}
+          onClick={() => setSessionKindPreference(item.kind, { enabled: !preference.enabled })}
+        >
+          <span className="settings-switch-thumb" aria-hidden="true" />
+        </button>
+        {/* A kind that is not offered at all cannot offer a worktree variant: the switch
+            keeps its stored value but is disabled until the kind is back on. */}
+        <button
+          type="button"
+          className="settings-switch"
+          role="switch"
+          aria-checked={preference.worktree}
+          aria-label={t('settings.worktreeForKind', { kind: kindLabel })}
+          disabled={!preference.enabled}
+          onClick={() => setSessionKindPreference(item.kind, { worktree: !preference.worktree })}
+        >
+          <span className="settings-switch-thumb" aria-hidden="true" />
+        </button>
+      </li>
+    )
   }
 
   // Extracted before the JSX so the narrowing survives into the click handler's closure.
@@ -272,39 +321,30 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <span>{t('settings.columnEnabled')}</span>
               <span>{t('settings.columnWorktree')}</span>
             </li>
-            {sessionKindOptions(platform).map((item) => {
-              const preference = sessionKindPreferences[item.kind]
-              const kindLabel = t(item.labelKey)
-              return (
-                <li key={item.kind} className="settings-kind-row">
-                  <span className="settings-kind-name">{kindLabel}</span>
-                  <button
-                    type="button"
-                    className="settings-switch"
-                    role="switch"
-                    aria-checked={preference.enabled}
-                    aria-label={t('settings.enableKind', { kind: kindLabel })}
-                    onClick={() => setSessionKindPreference(item.kind, { enabled: !preference.enabled })}
-                  >
-                    <span className="settings-switch-thumb" aria-hidden="true" />
-                  </button>
-                  {/* A kind that is not offered at all cannot offer a worktree variant: the
-                      switch keeps its stored value but is disabled until the kind is back on. */}
-                  <button
-                    type="button"
-                    className="settings-switch"
-                    role="switch"
-                    aria-checked={preference.worktree}
-                    aria-label={t('settings.worktreeForKind', { kind: kindLabel })}
-                    disabled={!preference.enabled}
-                    onClick={() => setSessionKindPreference(item.kind, { worktree: !preference.worktree })}
-                  >
-                    <span className="settings-switch-thumb" aria-hidden="true" />
-                  </button>
-                </li>
-              )
-            })}
+            {primaryKinds.map(renderKindRow)}
           </ul>
+          {/* The opt-in agent CLIs are all switched off by default, so listing them next to
+              the four that are on would bury them in a ten-row wall. They are removed from
+              the page while collapsed rather than dimmed: a row the user cannot act on yet
+              is noise, and the disclosure says how many are waiting. */}
+          {additionalKinds.length > 0 && (
+            <>
+              <button
+                type="button"
+                id="settings-more-kinds-toggle"
+                className="settings-kind-more-toggle"
+                aria-expanded={moreKindsExpanded}
+                onClick={() => setMoreKindsExpanded((expanded) => !expanded)}
+              >
+                {t('settings.moreSessionKinds', { count: additionalKinds.length })}
+              </button>
+              {moreKindsExpanded && (
+                <ul className="settings-kind-list" aria-labelledby="settings-more-kinds-toggle">
+                  {additionalKinds.map(renderKindRow)}
+                </ul>
+              )}
+            </>
+          )}
         </div>
 
         <div className="settings-dialog-about">

@@ -5,7 +5,14 @@ import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import type { Dialog } from 'electron'
 
-import { hostPlatformSchema, type AppSnapshot, type CapabilityState, type HostPlatform } from '../shared/contracts'
+import { AGENT_KINDS, type AgentKind } from '../shared/agent-kinds'
+import {
+  hostPlatformSchema,
+  type AppSnapshot,
+  type CapabilityState,
+  type HostPlatform,
+  type ToolAvailability
+} from '../shared/contracts'
 import { cliLocator, type CliLocator } from './infrastructure/cli-locator'
 import { registerIpc } from './ipc/register-ipc'
 import { createBeforeQuitHandler } from './shutdown-controller'
@@ -31,9 +38,16 @@ import {
 import { WorktreeService } from './services/worktree-service'
 import { applyWindowTheme, createMainWindow } from './window'
 
-const agentUnavailableDetail: Readonly<Record<'claude' | 'codex', string>> = {
+// Shown verbatim in the launcher under a kind whose CLI could not be found, so each names the
+// executable actually looked up (which is not always the kind — see AGENT_LAUNCH).
+const agentUnavailableDetail: Readonly<Record<AgentKind, string>> = {
   claude: 'Install the Claude Code CLI (claude) and sign in.',
-  codex: 'Install the Codex CLI (codex) and sign in.'
+  codex: 'Install the Codex CLI (codex) and sign in.',
+  gemini: 'Install the Gemini CLI (gemini) and sign in.',
+  copilot: 'Install the GitHub Copilot CLI (copilot) and sign in.',
+  cursor: 'Install the Cursor CLI (cursor-agent) and sign in.',
+  comate: 'Install the Comate CLI (comatecli) and sign in.',
+  qwen: 'Install the Qwen Code CLI (qwen) and sign in.'
 }
 
 type AgentLocator = Pick<CliLocator, 'resolveAgent'>
@@ -54,18 +68,24 @@ const buildGetSnapshot = (
   platform: HostPlatform
 ): (() => Promise<AppSnapshot>) => {
   return async () => {
-    const [state, claudePath, codexPath, vscode] = await Promise.all([
+    // Every agent kind is probed, including the ones switched off by default: the renderer can
+    // enable one at any moment without another snapshot, and the launcher looks availability
+    // up by kind with nothing to fall back to.
+    const [state, agentPaths, vscode] = await Promise.all([
       // Remotes are re-read before the state is handed out so the sidebar's repository
       // entries reflect the working trees as they are now, not as they were when added.
       projectService.refreshRemotes().then(() => coordinator.snapshot()),
-      agentLocator.resolveAgent('claude'),
-      agentLocator.resolveAgent('codex'),
+      Promise.all(AGENT_KINDS.map(async (kind) => [kind, await agentLocator.resolveAgent(kind)] as const)),
       externalAppService.capabilities()
     ])
 
     const capabilities: CapabilityState = {
-      claude: claudePath ? { available: true, detail: claudePath } : { available: false, detail: agentUnavailableDetail.claude },
-      codex: codexPath ? { available: true, detail: codexPath } : { available: false, detail: agentUnavailableDetail.codex },
+      ...(Object.fromEntries(
+        agentPaths.map(([kind, path]) => [
+          kind,
+          path ? { available: true, detail: path } : { available: false, detail: agentUnavailableDetail[kind] }
+        ])
+      ) as Record<AgentKind, ToolAvailability>),
       ...vscode
     }
 
@@ -83,7 +103,7 @@ const buildGetSnapshot = (
  * TitleService, ExternalAppService, and registerIpc's `dialog` dependency. None of those
  * services branch on environment variables themselves, and the bypass argv values
  * (`--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox`) are never
- * touched here — only the resolved *executable* changes for Claude/Codex in E2E mode, exactly
+ * touched here — only the resolved *executable* changes for the agent kinds in E2E mode, exactly
  * as production TerminalService/TitleService launch adapters would apply their fixed argv to
  * whatever executable the locator resolves. When CODEFLY_E2E is unset (every production
  * build), none of this file's E2E helpers are invoked and behavior is byte-for-byte identical

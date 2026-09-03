@@ -42,6 +42,11 @@ export const zhCN: Translations = {
   'sessionKind.cmd': '命令提示符',
   'sessionKind.claude': 'Claude',
   'sessionKind.codex': 'Codex',
+  'sessionKind.gemini': 'Gemini',
+  'sessionKind.copilot': 'GitHub Copilot',
+  'sessionKind.cursor': 'Cursor',
+  'sessionKind.comate': 'Comate',
+  'sessionKind.qwen': 'Qwen Code',
 
   'status.running': '运行中',
   'status.done': '已完成',
@@ -54,7 +59,7 @@ export const zhCN: Translations = {
   'terminal.restartSession': '重启会话',
   'terminal.bypassWarning': '已启用权限与沙箱绕过',
   'terminal.bypassTooltip':
-    '该 agent 以固定的绕过旗标运行（--dangerously-skip-permissions / --dangerously-bypass-approvals-and-sandbox）：它会直接修改文件、执行命令，不再逐次征求确认。',
+    '该 agent 以绕过权限与沙箱检查的方式运行：它会直接修改文件、执行命令，不再逐次征求确认。',
 
   'notice.genericError': '出错了。',
   'notice.dirtyWorktree': 'Worktree 中有 {count} 个文件已改动。请先提交或丢弃这些改动，再删除会话。',
@@ -66,6 +71,7 @@ export const zhCN: Translations = {
   'settings.sessionKinds': '会话类型',
   'settings.sessionKindsHint':
     '关闭的会话类型不会出现在“新建会话”菜单中。开启“新建 worktree”后，该类型会额外提供一个选项，让会话运行在独立的 Git worktree 与同名分支中。',
+  'settings.moreSessionKinds': '更多 agent CLI（{count}）',
   'settings.columnEnabled': '启用',
   'settings.columnWorktree': '新建 worktree',
   'settings.enableKind': '启用 {kind}',

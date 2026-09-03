@@ -1,12 +1,14 @@
 # CodeFly
 
-CodeFly is a Windows and macOS desktop application for running local shell, Claude Code,
-and Codex sessions against local projects. Windows provides PowerShell and Command Prompt;
-macOS provides the user's login Shell. It is a focused terminal workspace, not an embedded
-code editor: a session can run in the project directory or in its own isolated Git worktree
-and same-named branch, and Claude/Codex run through their locally installed,
-already-authenticated CLIs. CodeFly never collects, stores, or reads API keys or CLI
-credentials.
+CodeFly is a Windows and macOS desktop application for running local shell and coding-agent
+sessions against local projects. Windows provides PowerShell and Command Prompt; macOS
+provides the user's login Shell. Claude Code and Codex are offered by default, with Gemini,
+GitHub Copilot, Cursor, Comate, and Qwen Code available behind a switch (see
+[Session kinds and the New session menu](#session-kinds-and-the-new-session-menu)). It is a
+focused terminal workspace, not an embedded code editor: a session can run in the project
+directory or in its own isolated Git worktree and same-named branch, and every agent runs
+through its locally installed, already-authenticated CLI. CodeFly never collects, stores, or
+reads API keys or CLI credentials.
 
 Built with Electron, React, TypeScript, xterm.js, and node-pty.
 
@@ -20,13 +22,14 @@ Built with Electron, React, TypeScript, xterm.js, and node-pty.
   CodeFly still runs without it, but every session then falls back to an ordinary,
   non-isolated session in the project's own directory. Sessions created from a plain launcher
   entry run there by design and need no Git.
-- Optional, to actually use the Claude/Codex launcher entries: the
-  [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) and/or the
-  [Codex CLI](https://github.com/openai/codex) (`codex`) installed and signed in. CodeFly
-  detects them on `PATH` on Windows and through the login shell on macOS; a missing or
+- Optional, to actually use an agent launcher entry: that agent's CLI installed and signed
+  in — the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) and/or
+  the [Codex CLI](https://github.com/openai/codex) (`codex`) for the two offered by default,
+  and `gemini`, `copilot`, `cursor-agent`, `comatecli`, or `qwen` for the opt-in kinds.
+  CodeFly detects them on `PATH` on Windows and through the login shell on macOS; a missing or
   unauthenticated CLI leaves its launcher entry visible but disabled, with an installation
   hint. Finder-launched macOS apps do not inherit Terminal's `PATH`, so ensure
-  `command -v claude` / `command -v codex` succeeds from a login shell.
+  `command -v claude` (or whichever CLI you use) succeeds from a login shell.
 - Optional: [Visual Studio Code](https://code.visualstudio.com/) (or its `code` command on
   `PATH`) to use “Open project in VS Code” from a project's options menu.
 
@@ -65,11 +68,37 @@ Claude, and Codex.
   **Claude (new worktree)**. The plain entry runs the session in the project's own directory;
   the worktree entry gives it an isolated Git worktree and branch.
 
-Defaults: every platform-visible kind is enabled, **New worktree** is off for native shells
-(a quick terminal should not create a branch) and on for Claude and Codex (isolation is what
-the agents want). Both switches are renderer-owned preferences stored in `localStorage`,
-like the theme and language; the worktree choice itself is sent explicitly with each create
-request, so the main process never infers it from a stored setting.
+Defaults: every platform-visible kind above is enabled, **New worktree** is off for native
+shells (a quick terminal should not create a branch) and on for the agents (isolation is what
+they want). Both switches are renderer-owned preferences stored in `localStorage`, like the
+theme and language; the worktree choice itself is sent explicitly with each create request, so
+the main process never infers it from a stored setting.
+
+### More agent CLIs
+
+Five further agent CLIs are supported on both platforms and collapsed behind **More agent
+CLIs** in the same section: **Gemini** (`gemini`), **GitHub Copilot** (`copilot`),
+**Cursor** (`cursor-agent`), **Comate** (`comatecli`), and **Qwen Code** (`qwen`). They ship
+**switched off**, so a default install offers the same New session menu it always did.
+
+Turn one on and it behaves exactly like Claude or Codex: it appears in the New session menu,
+gets both a plain and a **(new worktree)** entry (its **New worktree** switch defaults on),
+carries its own permission bypass, shows the bypass warning while running, and accepts
+Shift+Enter for a newline and Ctrl/Cmd+V for paste. A missing CLI leaves the entry listed but
+disabled with an installation hint, naming the executable CodeFly actually looks for — note
+that Cursor's is `cursor-agent` and Comate's is `comatecli`, not the product name.
+
+The group opens collapsed while all five are off and reopens expanded once any of them is on,
+so an enabled kind's switches are never hidden behind the caret.
+
+Two differences from Claude and Codex, both deliberate:
+
+- **No AI-generated session titles.** These CLIs' non-interactive output formats are not
+  verified here, and a title process must never run with a permission bypass, so their titles
+  come from the local first-input normalizer instead.
+- **Comate has no resume.** Restoring a stopped session reopens its CLI in the same directory;
+  `comatecli` 1.0.8 has no resume flag, so a restored Comate session starts a fresh
+  conversation rather than continuing the previous one.
 
 ## Git and worktree sessions
 
@@ -104,22 +133,41 @@ Deleting a session with a worktree:
 CodeFly never force-removes a worktree and never deletes commits, stashes, or the original
 project's files.
 
-## Interactive Claude and Codex sessions
+## Interactive agent sessions
 
-Interactive Claude sessions launch the resolved `claude` CLI with exactly one fixed
-argument: **`--dangerously-skip-permissions`**. Interactive Codex sessions launch the
-resolved `codex` CLI with exactly one fixed argument:
-**`--dangerously-bypass-approvals-and-sandbox`**.
+Every interactive agent session launches its CLI with that vendor's own fixed permission
+bypass, and nothing else:
 
-**These flags bypass Claude's/Codex's own permission and sandbox protections for the
-lifetime of that session.** The agent can read, write, and execute commands in its worktree
-without per-action confirmation. This is a deliberate design choice for a fast, low-friction
-terminal workflow, and CodeFly keeps it continuously visible rather than hidden: whenever the
-active session is a running Claude or Codex session, a compact "Permissions and sandbox
-bypass enabled" warning badge is shown in that session's terminal header for as long as the
-session is running. There is no per-session
-setting to turn the bypass off in this release — if you don't want an agent running with its
-protections bypassed, don't start a Claude or Codex session in CodeFly.
+| Session kind | Executable | Bypass carried on every interactive session |
+| --- | --- | --- |
+| Claude | `claude` | `--dangerously-skip-permissions` |
+| Codex | `codex` | `--dangerously-bypass-approvals-and-sandbox` |
+| Gemini | `gemini` | `--approval-mode=yolo` |
+| GitHub Copilot | `copilot` | `--allow-all-tools` |
+| Cursor | `cursor-agent` | `--force` |
+| Comate | `comatecli` | `ZULU_TERMINAL_RUN_MODE=yolo` in the session's environment |
+| Qwen Code | `qwen` | `--approval-mode=yolo` (see the note below) |
+
+Comate is the one CLI with no bypass flag: its TUI resets its run mode to
+`ZULU_TERMINAL_RUN_MODE || "manual"` on every launch, so the request has to travel as
+environment. It is set only for that interactive PTY, never for CodeFly's own process.
+
+Qwen Code is a partial exception in the other direction: `--approval-mode=yolo` is the flag
+its documentation describes, but not every build implements it — 0.22.3 ignores it without
+erroring, taking its approval mode from `~/.qwen/settings.json` or from Shift+Tab in the TUI
+instead. CodeFly keeps sending the flag (it costs nothing and starts working as soon as the
+CLI supports it) and does not write anyone's settings file, so on such a build the badge
+warns about a bypass the CLI has not actually applied — an over-warning, never the reverse.
+
+**These bypass the agent's own permission and sandbox protections for the lifetime of that
+session.** The agent can read, write, and execute commands in its worktree without
+per-action confirmation. This is a deliberate design choice for a fast, low-friction terminal
+workflow, and CodeFly keeps it continuously visible rather than hidden: whenever the active
+session is a running agent session, a compact "Permissions and sandbox bypass enabled"
+warning badge is shown in that session's terminal header for as long as the session is
+running. There is no per-session setting to turn the bypass off in this release — if you
+don't want an agent running with its protections bypassed, don't start an agent session in
+CodeFly.
 
 The background, non-interactive process CodeFly uses to generate a session's title (see
 below) never receives either bypass flag, does not share the interactive session's PTY, and
@@ -127,11 +175,11 @@ runs in a neutral directory, not your project or worktree.
 
 ### Keyboard: paste and multi-line input
 
-In Claude and Codex sessions **Ctrl+V** on Windows or **Cmd+V** on macOS pastes clipboard text
+In every agent session **Ctrl+V** on Windows or **Cmd+V** on macOS pastes clipboard text
 into the CLI prompt, and **Shift+Enter** inserts a newline while **Enter** sends the message.
 CodeFly hands the platform paste shortcut back to the browser so xterm's paste path (including
 bracketed paste) feeds the PTY. It sends Shift+Enter as `ESC CR`, the Meta/Alt+Enter-compatible
-sequence both CLIs accept. Native Shell, PowerShell, and Command Prompt sessions keep xterm's
+sequence these CLIs accept. Native Shell, PowerShell, and Command Prompt sessions keep xterm's
 normal key handling.
 
 ## Session titles
@@ -139,8 +187,9 @@ normal key handling.
 The title shown for a session starts as a placeholder (e.g. "New Claude session") and
 updates once, based on the first text you submit in its terminal. Claude and Codex sessions
 try an AI-generated title first (via a separate, non-interactive CLI invocation with a
-15-second timeout); Shell, PowerShell and Command Prompt sessions, and any failed/timed-out
-AI attempt, fall back to a local normalization of your input, and finally to plain truncation.
+15-second timeout); every other kind — the native shells and the five opt-in agent CLIs — and
+any failed/timed-out AI attempt, fall back to a local normalization of your input, and finally
+to plain truncation.
 Title generation never delays your terminal input.
 
 ## Visual Studio Code and project folders
@@ -236,10 +285,12 @@ Projects and session metadata (not terminal scrollback, not PTY handles, not cre
 are stored in a versioned JSON file under Electron's `userData` directory. Every session is
 marked `stopped` the moment the app starts, regardless of its status when the app last
 closed; click a stopped session to restart the same terminal or agent type in its original
-directory. Restoring a Claude session passes `--continue` (continuing the most recent
-conversation recorded for that directory) and restoring a Codex session runs
-`codex resume --last`, so the prior agent conversation is reattached on a best-effort
-basis; shell sessions restart fresh.
+directory. Restoring an agent session also asks its CLI to reattach the previous
+conversation, in whatever way that vendor spells it: `claude --continue`,
+`codex resume --last`, `gemini --resume latest`, `copilot --continue`,
+`cursor-agent --resume`, `qwen --continue`. This is best-effort, and `comatecli` has no
+resume of its own, so a restored Comate session starts a fresh conversation. Shell sessions
+restart fresh.
 
 The sidebar width is a renderer-owned preference (`localStorage`, like the theme and language)
 and never enters the state file. Drag the seam between the sidebar and the terminal to resize
@@ -260,7 +311,8 @@ project, creating Claude/Codex/PowerShell/Command-Prompt sessions, verifying the
 bypass argv Claude and Codex receive (and that title-generation processes never receive
 either flag), the persistent bypass warning, worktree sequence numbering, the per-kind
 Session kinds switches (a kind switched off leaves the New session menu, a worktree switch
-adds its second entry, and both survive a restart), restart persistence, VS Code/Explorer
+adds its second entry, the opt-in agent CLIs stay collapsed and off until enabled, and all of
+it survives a restart), restart persistence, VS Code/Explorer
 options-menu actions, dirty-worktree delete protection followed by a clean delete that
 retains the branch, and the whole update journey (startup prompt, **Later**, the Settings
 hand-off, a real streamed download, and the installer launch).
@@ -338,8 +390,14 @@ inheriting Terminal's `PATH`. PowerShell and Command Prompt remain Windows-only.
 
 ### Manual smoke checklist (authenticated CLIs, packaged builds)
 
-The automated suites use test doubles for Claude/Codex and do not require live credentials.
+The automated suites use test doubles for the agent CLIs and do not require live credentials.
 Before handing off a build, test with real, logged-in `claude` and `codex` CLIs.
+
+The five opt-in agent CLIs ship switched off, so they are not part of the required pass. When
+one is enabled for a smoke test, verify the two things the automated suites cannot: that the
+CLI actually starts under its bypass (Comate's arrives as `ZULU_TERMINAL_RUN_MODE=yolo`, not
+as argv), and that restoring a stopped session reattaches the previous conversation — except
+for Comate, which has no resume and is expected to start fresh.
 
 #### Windows x64
 

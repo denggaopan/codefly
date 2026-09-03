@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" focusable="false">
+  <!-- An original open-ring "C" in Baidu's blue, not a copy of the vendor's logo artwork.
+       The arc endpoints sit on a radius-280 circle centred in the viewBox, so the 150-wide
+       round stroke stays inside the canvas. -->
+  <path
+    fill="none"
+    stroke="#2468F2"
+    stroke-width="150"
+    stroke-linecap="round"
+    d="M710 314 A 280 280 0 1 0 710 710"
+  />
+</svg>

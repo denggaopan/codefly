@@ -2,7 +2,12 @@ import type { SessionKind } from '../../shared/contracts'
 import claudeIconUrl from './assets/claude.svg'
 import cmdIconUrl from './assets/cmd.svg'
 import codexIconUrl from './assets/codex.svg'
+import comateIconUrl from './assets/comate.svg'
+import copilotIconUrl from './assets/copilot.svg'
+import cursorIconUrl from './assets/cursor.svg'
+import geminiIconUrl from './assets/gemini.svg'
 import powershellIconUrl from './assets/powershell.svg'
+import qwenIconUrl from './assets/qwen.svg'
 import shellIconUrl from './assets/shell.svg'
 
 const iconUrls: Readonly<Record<SessionKind, string>> = {
@@ -10,12 +15,21 @@ const iconUrls: Readonly<Record<SessionKind, string>> = {
   powershell: powershellIconUrl,
   cmd: cmdIconUrl,
   claude: claudeIconUrl,
-  codex: codexIconUrl
+  codex: codexIconUrl,
+  gemini: geminiIconUrl,
+  copilot: copilotIconUrl,
+  cursor: cursorIconUrl,
+  comate: comateIconUrl,
+  qwen: qwenIconUrl
 }
 
 /**
  * Brand icon for each session kind, shared by the sidebar rows and the session launcher so
  * a kind always shows the same mark. The codex/cmd sources are recolored light in their
  * asset files because CodeFly's UI is dark-only.
+ *
+ * The five opt-in agents carry original geometric marks in their vendors' colours rather
+ * than traced logo artwork — each has to stay readable as a 16px launcher icon, and a rough
+ * imitation of a trademark would be worse than a clean shape.
  */
 export const sessionKindIconUrl = (kind: SessionKind): string => iconUrls[kind]

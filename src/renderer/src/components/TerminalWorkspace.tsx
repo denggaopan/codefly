@@ -8,9 +8,10 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useEffect, useRef, useState } from 'react'
 
+import { isAgentKind } from '../../../shared/agent-kinds'
 import type { SessionRecord, ThemePreference } from '../../../shared/contracts'
-import type { Translator } from '../i18n'
 import { useTranslation } from '../i18n/use-translation'
+import { sessionKindLabelKey } from '../session-kind-options'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { alignBlockGlyphGrid } from '../terminal/block-glyph-alignment'
@@ -75,23 +76,6 @@ const attachWebglRenderer = (terminal: Terminal): void => {
   }
 }
 
-const sessionKindLabel = (t: Translator, kind: SessionRecord['kind']): string => {
-  switch (kind) {
-    case 'shell':
-      return t('sessionKind.shell')
-    case 'powershell':
-      return t('sessionKind.powershell')
-    case 'cmd':
-      return t('sessionKind.cmd')
-    case 'claude':
-      return t('sessionKind.claude')
-    case 'codex':
-      return t('sessionKind.codex')
-    default:
-      return kind
-  }
-}
-
 type TerminalHeaderProps = {
   session: SessionRecord
   onRestart: () => void
@@ -101,7 +85,8 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
   const { t } = useTranslation()
   const agentIdle = useAppStore((state) => state.idleAgentSessionIds[session.id] === true)
   const running = session.status === 'running'
-  const showBypass = running && (session.kind === 'claude' || session.kind === 'codex')
+  // Every agent CLI carries a permission bypass, whether as argv or as launch environment.
+  const showBypass = running && isAgentKind(session.kind)
   const canRestart = isSessionRestartable(session)
 
   return (
@@ -110,7 +95,7 @@ function TerminalHeader({ session, onRestart }: TerminalHeaderProps) {
         <span className="terminal-header-title" title={session.title}>
           {session.title}
         </span>
-        <span className="terminal-header-kind">{sessionKindLabel(t, session.kind)}</span>
+        <span className="terminal-header-kind">{t(sessionKindLabelKey(session.kind))}</span>
         <span className="terminal-header-status" data-status={isAgentDone(session, agentIdle) ? 'done' : session.status}>
           {sessionStatusLabel(t, session, agentIdle)}
         </span>

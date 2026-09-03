@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { AGENT_KINDS, type AgentKind } from '../../../shared/agent-kinds'
 import type {
   AppInfo,
   AppSnapshot,
@@ -11,6 +12,7 @@ import type {
   DeleteSessionResult,
   ProjectRecord,
   SessionRecord,
+  ToolAvailability,
   UpdateCheckResult,
   UpdateDownloadResult,
   UpdateInstallResult
@@ -64,9 +66,13 @@ const createFakeApi = (): FakeApi => ({
   onUpdateProgress: vi.fn(() => () => undefined)
 })
 
+// A real snapshot carries one entry per agent kind; built from the registry so adding a CLI
+// does not mean hand-editing every fixture in this file.
+const agentCapabilities = (detail = ''): Record<AgentKind, ToolAvailability> =>
+  Object.fromEntries(AGENT_KINDS.map((kind) => [kind, { available: true, detail }])) as Record<AgentKind, ToolAvailability>
+
 const defaultCapabilities = (): CapabilityState => ({
-  claude: { available: true, detail: 'C:\\claude\\claude.exe' },
-  codex: { available: true, detail: 'C:\\codex\\codex.exe' },
+  ...agentCapabilities('C:\\agents\\cli.exe'),
   vscode: { available: true, detail: 'C:\\Code\\Code.exe' }
 })
 
@@ -662,11 +668,7 @@ describe('ProjectSidebar', () => {
     const user = userEvent.setup()
     seedStore(
       { version: 1, projects: [project1], sessions: [] },
-      {
-        claude: { available: true, detail: '' },
-        codex: { available: true, detail: '' },
-        vscode: { available: false, detail: 'Install VS Code or the code command.' }
-      }
+      { ...agentCapabilities(), vscode: { available: false, detail: 'Install VS Code or the code command.' } }
     )
     render(<ProjectSidebar />)
 
@@ -1172,7 +1174,7 @@ describe('ProjectSidebar', () => {
     const detail = 'Install VS Code or the code command.'
     seedStore(
       { version: 1, projects: [project1], sessions: [] },
-      { claude: { available: true, detail: '' }, codex: { available: true, detail: '' }, vscode: { available: false, detail } }
+      { ...agentCapabilities(), vscode: { available: false, detail } }
     )
     render(<ProjectSidebar />)
 

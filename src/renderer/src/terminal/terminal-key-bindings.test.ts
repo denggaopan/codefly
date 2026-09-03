@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { AGENT_KINDS } from '../../../shared/agent-kinds'
 import type { SessionKind } from '../../../shared/contracts'
 import { AGENT_NEWLINE_SEQUENCE, resolveTerminalKey, type TerminalKeyEvent } from './terminal-key-bindings'
 
@@ -18,7 +19,9 @@ const ctrlV = (type: TerminalKeyEvent['type'] = 'keydown'): TerminalKeyEvent => 
 const commandV = (type: TerminalKeyEvent['type'] = 'keydown'): TerminalKeyEvent => key({ type, key: 'v', code: 'KeyV', metaKey: true })
 const shiftEnter = (type: TerminalKeyEvent['type'] = 'keydown'): TerminalKeyEvent => key({ type, key: 'Enter', code: 'Enter', shiftKey: true })
 
-const agentKinds: SessionKind[] = ['claude', 'codex']
+// Driven by the registry: a newly registered agent CLI must get the same rewrites, and
+// this is where forgetting one shows up.
+const agentKinds: SessionKind[] = [...AGENT_KINDS]
 const shellKinds: SessionKind[] = ['shell', 'powershell', 'cmd']
 
 describe('resolveTerminalKey', () => {

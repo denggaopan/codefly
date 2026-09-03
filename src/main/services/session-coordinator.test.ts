@@ -169,7 +169,12 @@ describe('SessionCoordinator.create', () => {
     ['powershell' as const, 'New PowerShell session'],
     ['cmd' as const, 'New Command Prompt session'],
     ['claude' as const, 'New Claude session'],
-    ['codex' as const, 'New Codex session']
+    ['codex' as const, 'New Codex session'],
+    ['gemini' as const, 'New Gemini session'],
+    ['copilot' as const, 'New GitHub Copilot session'],
+    ['cursor' as const, 'New Cursor session'],
+    ['comate' as const, 'New Comate session'],
+    ['qwen' as const, 'New Qwen Code session']
   ])('uses the exact initial title for %s sessions', async (kind, expectedTitle) => {
     const { coordinator } = buildHarness()
 

@@ -17,12 +17,20 @@ export class SessionNotFoundError extends Error {
   }
 }
 
+// Placeholder titles shown until the first input produces a real one. English regardless of
+// the renderer's locale: these are persisted into AppState, not UI copy, so they must not
+// change meaning when the user switches language.
 const initialTitles: Readonly<Record<SessionKind, string>> = {
   shell: 'New Shell session',
   powershell: 'New PowerShell session',
   cmd: 'New Command Prompt session',
   claude: 'New Claude session',
-  codex: 'New Codex session'
+  codex: 'New Codex session',
+  gemini: 'New Gemini session',
+  copilot: 'New GitHub Copilot session',
+  cursor: 'New Cursor session',
+  comate: 'New Comate session',
+  qwen: 'New Qwen Code session'
 }
 
 const withoutError = (session: SessionRecord): SessionRecord => {

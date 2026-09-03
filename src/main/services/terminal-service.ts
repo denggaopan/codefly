@@ -4,6 +4,7 @@ import { win32 as windowsPath } from 'node:path'
 
 import { spawn as spawnPty } from 'node-pty'
 
+import { agentLaunchArgs, agentLaunchEnv } from '../../shared/agent-kinds'
 import type { SessionKind, SessionRecord } from '../../shared/contracts'
 import { cliLocator, type CliLocator } from '../infrastructure/cli-locator'
 
@@ -11,20 +12,6 @@ const DEFAULT_COLS = 120
 const DEFAULT_ROWS = 30
 const MAX_DIMENSION = 1000
 const STOP_TIMEOUT_MS = 2_000
-
-type AgentKind = Extract<SessionKind, 'claude' | 'codex'>
-
-// On restore the previous agent conversation must come back, not a fresh one: claude
-// continues the newest conversation recorded for the launch directory, while codex only
-// exposes resume as a subcommand that reopens its most recent session.
-const agentArguments = (kind: AgentKind, resume: boolean): readonly string[] => {
-  if (kind === 'claude') {
-    return resume ? ['--dangerously-skip-permissions', '--continue'] : ['--dangerously-skip-permissions']
-  }
-  return resume
-    ? ['resume', '--last', '--dangerously-bypass-approvals-and-sandbox']
-    : ['--dangerously-bypass-approvals-and-sandbox']
-}
 
 export type TerminalStartOptions = {
   /** Relaunch an agent CLI so it reattaches its previous conversation instead of starting a new one. */
@@ -60,7 +47,9 @@ export interface IPtyFactory {
 
 type TerminalLocator = Pick<CliLocator, 'resolveShell' | 'resolvePowerShell' | 'resolveAgent'>
 type CandidateExists = (candidate: string) => Promise<boolean>
-type LaunchSpec = { file: string; args: readonly string[] | string }
+// `env` is the launch adapter's contribution to the PTY environment, used by the agent whose
+// permission bypass is a variable rather than a flag (see agentLaunchEnv). Absent for shells.
+type LaunchSpec = { file: string; args: readonly string[] | string; env?: Readonly<Record<string, string>> }
 
 type StopState = {
   promise: Promise<void>
@@ -164,7 +153,7 @@ export class TerminalService {
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
         cwd: session.launchPath,
-        env: { ...this.environment, TERM: 'xterm-256color' }
+        env: { ...this.environment, TERM: 'xterm-256color', ...(launch.env ?? {}) }
       })
 
       let entry!: PtyEntry
@@ -259,12 +248,16 @@ export class TerminalService {
       return { file: this.environment.ComSpec ?? this.environment.COMSPEC ?? 'cmd.exe', args: [] }
     }
 
+    // Every remaining kind is an agent, so the registry decides the executable, the argv and
+    // any bypass that has to travel as environment instead of a flag.
     const resolved = await this.locator.resolveAgent(kind)
     if (!resolved) throw new Error(`${kind} is not available.`)
-    const logicalArgs = agentArguments(kind, resume)
-    return this.platform === 'win32'
-      ? windowsAgentSpec(resolved, logicalArgs, this.environment, this.candidateExists)
+    const logicalArgs = agentLaunchArgs(kind, resume)
+    const env = agentLaunchEnv(kind)
+    const spec = this.platform === 'win32'
+      ? await windowsAgentSpec(resolved, logicalArgs, this.environment, this.candidateExists)
       : { file: resolved, args: logicalArgs }
+    return { ...spec, env }
   }
 
   private runningEntry(sessionId: string): PtyEntry {

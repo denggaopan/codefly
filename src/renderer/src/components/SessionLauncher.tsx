@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { isAgentKind } from '../../../shared/agent-kinds'
 import type { SessionKind } from '../../../shared/contracts'
 import { useTranslation } from '../i18n/use-translation'
 import { sessionKindIconUrl } from '../session-kind-icons'
@@ -20,7 +21,7 @@ type SessionLauncherProps = {
 
 /**
  * Popover for choosing which session kind to create in the currently active project.
- * Claude/Codex are disabled from CapabilityState with their lookup detail shown as
+ * Agent kinds are disabled from CapabilityState with their lookup detail shown as
  * visible help text (not just a tooltip) so an unauthenticated/missing CLI is discoverable
  * without hovering. The platform's native shell entries are always available.
  *
@@ -54,13 +55,10 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [closeLauncher])
 
-  const availability: Record<SessionKind, { available: boolean; detail?: string }> = {
-    shell: { available: true },
-    powershell: { available: true },
-    cmd: { available: true },
-    claude: capabilities.claude,
-    codex: capabilities.codex
-  }
+  // Only the agent CLIs can be missing: the platform's native shells always exist, and every
+  // agent kind has a probed capability entry whether or not its switch is currently on.
+  const availability = (kind: SessionKind): { available: boolean; detail?: string } =>
+    isAgentKind(kind) ? capabilities[kind] : { available: true }
 
   // The accelerator belongs only to the platform's plain native-shell entry. Repeating it
   // on the worktree variant would advertise a shortcut that does something else.
@@ -73,7 +71,7 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   })
 
   const handleSelect = async (kind: SessionKind, worktree: boolean): Promise<void> => {
-    if (!availability[kind].available || pending) return
+    if (!availability(kind).available || pending) return
     setPending(true)
     try {
       await createSession(projectId, kind, worktree)
@@ -95,7 +93,7 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
       {entries.length === 0 && <p className="session-launcher-empty">{t('launcher.allKindsDisabled')}</p>}
       <ul className="session-launcher-list">
         {entries.map((entry) => {
-          const info = availability[entry.kind]
+          const info = availability(entry.kind)
           return (
             <li key={entry.id} className="session-launcher-item" data-launcher-item>
               <button

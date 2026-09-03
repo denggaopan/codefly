@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 
+import { AGENT_KINDS, type AgentKind } from '../../../shared/agent-kinds'
 import type {
   AppState,
   CapabilityState,
@@ -10,7 +11,8 @@ import type {
   SessionRecord,
   SessionKindPreference,
   SessionKindPreferences,
-  ThemePreference
+  ThemePreference,
+  ToolAvailability
 } from '../../../shared/contracts'
 import { DEFAULT_SESSION_KIND_PREFERENCES, storedSessionKindPreferencesSchema } from '../../../shared/contracts'
 import { DEFAULT_LOCALE, isLocale, translate, type Locale } from '../i18n'
@@ -46,7 +48,7 @@ export type AppStore = {
   launcherOpen: boolean
   searchQuery: string
   notice: Notice | null
-  /** Running Claude/Codex sessions whose PTY output has been quiet for AGENT_IDLE_MS. */
+  /** Running agent sessions whose PTY output has been quiet for AGENT_IDLE_MS. */
   idleAgentSessionIds: Record<string, true>
   theme: ThemePreference
   locale: Locale
@@ -96,9 +98,13 @@ export type AppStore = {
 
 const emptyAppState = (): AppState => ({ version: 1, projects: [], sessions: [] })
 
+// The resting state the launcher may already be reading from: it looks availability up by
+// kind with nothing to fall back to, so every agent kind needs an entry before the first
+// snapshot replaces the whole object.
 const defaultCapabilities = (): CapabilityState => ({
-  claude: { available: false, detail: 'Checking availability…' },
-  codex: { available: false, detail: 'Checking availability…' },
+  ...(Object.fromEntries(
+    AGENT_KINDS.map((kind) => [kind, { available: false, detail: 'Checking availability…' }])
+  ) as Record<AgentKind, ToolAvailability>),
   vscode: { available: false, detail: 'Checking availability…' }
 })
 
@@ -213,7 +219,7 @@ const persistSidebarWidth = (width: number): void => {
 }
 
 /**
- * How long a running Claude/Codex session's PTY output must stay quiet before the session
+ * How long a running agent session's PTY output must stay quiet before the session
  * counts as Done. Agent TUIs repaint continuously (spinners, streamed tokens) while they
  * work, so a quiet PTY is the reliable "finished, waiting for input" signal; 3s is long
  * enough to bridge repaint gaps and short enough to feel immediate in the sidebar.

@@ -114,6 +114,22 @@ describe('TitleService', () => {
     expect(ensureDirectory).not.toHaveBeenCalled()
   })
 
+  // The opt-in agent CLIs register no title adapter: their non-interactive output formats are
+  // unverified, and the title process must never carry a permission bypass. They therefore
+  // fall back to the local normalizer without any process being started.
+  it.each(['gemini', 'copilot', 'cursor', 'comate', 'qwen'] satisfies SessionKind[])(
+    '%s falls back to a local title without spawning an adapter',
+    async (kind) => {
+      const generate = vi.fn(async () => 'must not run')
+      const ensureDirectory = vi.fn(async () => undefined)
+      const service = serviceWith({ claude: adapterFor(generate), codex: adapterFor(generate) }, ensureDirectory)
+
+      await expect(service.generate('session-1', kind, 'Fix the login bug. More details')).resolves.toBe('Fix the login bug')
+      expect(generate).not.toHaveBeenCalled()
+      expect(ensureDirectory).not.toHaveBeenCalled()
+    }
+  )
+
   it('cancels only the requested session while another AI job completes', async () => {
     const signals = new Map<string, AbortSignal>()
     const resolvers = new Map<string, (value: string) => void>()
