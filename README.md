@@ -347,8 +347,9 @@ Before handing off a build, test with real, logged-in `claude` and `codex` CLIs.
   their working directories, input/output, restore, and deletion behavior.
 - Verify Visual Studio Code and project-folder actions, project paths containing spaces and
   non-ASCII characters, and the Launch at startup toggle.
-- Verify **Ctrl+V**, agent **Shift+Enter**, the `Ctrl+T` ordinary PowerShell shortcut, and the
-  Windows in-app download/cancel/install update flow.
+- Verify **Ctrl+V**, agent **Shift+Enter**, and the Windows in-app download/cancel/install
+  update flow. Windows has no new-session accelerator: confirm `Ctrl+T` reaches the focused
+  terminal instead of creating a PowerShell session.
 
 #### macOS x64 and arm64 (two separate required runs)
 

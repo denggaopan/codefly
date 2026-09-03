@@ -3,12 +3,18 @@ import { describe, expect, it } from 'vitest'
 import { defaultSessionKindPreferences, sessionKindOptions } from './session-kind-options'
 
 describe('session kind options', () => {
-  it('keeps the established Windows kinds and shortcut order', () => {
+  it('keeps the established Windows kinds and advertises no accelerator', () => {
     expect(sessionKindOptions('win32')).toMatchObject([
-      { kind: 'powershell', shortcut: 'Ctrl+T' },
+      { kind: 'powershell' },
       { kind: 'cmd' },
       { kind: 'claude' },
       { kind: 'codex' }
+    ])
+    expect(sessionKindOptions('win32').map((option) => option.shortcut)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined
     ])
   })
 

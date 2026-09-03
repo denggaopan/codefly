@@ -9,7 +9,7 @@ export type SessionKindOption = {
 
 const PLATFORM_OPTIONS: Readonly<Record<HostPlatform, readonly SessionKindOption[]>> = {
   win32: [
-    { kind: 'powershell', labelKey: 'sessionKind.powershell', shortcut: 'Ctrl+T' },
+    { kind: 'powershell', labelKey: 'sessionKind.powershell' },
     { kind: 'cmd', labelKey: 'sessionKind.cmd' },
     { kind: 'claude', labelKey: 'sessionKind.claude' },
     { kind: 'codex', labelKey: 'sessionKind.codex' }

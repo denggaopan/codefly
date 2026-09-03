@@ -423,7 +423,7 @@ describe('App', () => {
     await waitFor(() => expect(trigger).toHaveFocus())
   })
 
-  it('shows Ctrl+T beside PowerShell in the launcher', async () => {
+  it('advertises no accelerator beside PowerShell in the launcher', async () => {
     const user = userEvent.setup()
     render(<App />)
 
@@ -432,7 +432,7 @@ describe('App', () => {
 
     const powershellButton = await screen.findByRole('button', { name: 'PowerShell' })
     const container = powershellButton.closest('[data-launcher-item]') ?? powershellButton.parentElement!
-    expect(container).toHaveTextContent('Ctrl+T')
+    expect(container).not.toHaveTextContent('Ctrl+T')
   })
 
   it('shows only Shell and agents on macOS, creates Shell, and advertises Cmd+T', async () => {
@@ -464,25 +464,33 @@ describe('App', () => {
     expect(api.createSession).toHaveBeenCalledWith('project-1', 'shell', false)
   })
 
-  it.each([
-    ['win32', { ctrlKey: true }, 'powershell'],
-    ['darwin', { metaKey: true }, 'shell']
-  ] as const)('creates the ordinary %s default with its platform shortcut', async (platform, modifier, kind) => {
-    api = createFakeApi(stateWith(), allAvailableCapabilities, platform)
+  it('creates the ordinary Shell session from Cmd+T on macOS', async () => {
+    api = createFakeApi(stateWith(), allAvailableCapabilities, 'darwin')
     api.createSession.mockResolvedValueOnce({
       ...stoppedPowerShellSession,
-      id: `session-shortcut-${kind}`,
-      kind,
-      title: kind === 'shell' ? 'New Shell session' : 'New PowerShell session',
+      id: 'session-shortcut-shell',
+      kind: 'shell',
+      title: 'New Shell session',
       status: 'running'
     })
     window.codefly = api
     render(<App />)
     await screen.findByText(project1.name)
 
-    fireEvent.keyDown(document, { key: 't', code: 'KeyT', ...modifier })
+    fireEvent.keyDown(document, { key: 't', code: 'KeyT', metaKey: true })
 
-    await waitFor(() => expect(api.createSession).toHaveBeenCalledWith('project-1', kind, false))
+    await waitFor(() => expect(api.createSession).toHaveBeenCalledWith('project-1', 'shell', false))
+  })
+
+  it('leaves Ctrl+T alone on Windows so the focused terminal keeps it', async () => {
+    api = createFakeApi(stateWith(), allAvailableCapabilities, 'win32')
+    window.codefly = api
+    render(<App />)
+    await screen.findByText(project1.name)
+
+    fireEvent.keyDown(document, { key: 't', code: 'KeyT', ctrlKey: true })
+
+    expect(api.createSession).not.toHaveBeenCalled()
   })
 
   it('disables Claude and Codex when unavailable and shows the capability detail as visible help text', async () => {

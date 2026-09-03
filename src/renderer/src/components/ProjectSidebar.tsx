@@ -159,14 +159,17 @@ export default function ProjectSidebar() {
   const launcherTriggerRef = useRef<HTMLButtonElement | null>(null)
   const wasLauncherOpenRef = useRef(false)
 
+  // Cmd+T creates an ordinary Shell session, macOS only. Windows has no counterpart: Ctrl+T is a
+  // live key inside the shells and agent CLIs we host, and a document-level listener would eat it
+  // before the focused terminal ever sees it.
   useEffect(() => {
+    if (platform !== 'darwin') return
+
     const handleShortcut = (event: KeyboardEvent): void => {
-      const hasPlatformModifier = platform === 'darwin'
-        ? event.metaKey && !event.ctrlKey
-        : event.ctrlKey && !event.metaKey
       if (
         event.repeat ||
-        !hasPlatformModifier ||
+        !event.metaKey ||
+        event.ctrlKey ||
         event.shiftKey ||
         event.altKey ||
         (event.code !== 'KeyT' && event.key.toLowerCase() !== 't')
@@ -174,10 +177,9 @@ export default function ProjectSidebar() {
         return
       }
 
-      const kind = platform === 'darwin' ? 'shell' : 'powershell'
-      if (!activeProjectId || !sessionKindPreferences[kind].enabled) return
+      if (!activeProjectId || !sessionKindPreferences.shell.enabled) return
       event.preventDefault()
-      void createSession(activeProjectId, kind, false)
+      void createSession(activeProjectId, 'shell', false)
     }
 
     document.addEventListener('keydown', handleShortcut)
