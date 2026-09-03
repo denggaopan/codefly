@@ -13,6 +13,7 @@ import type { Translator } from '../i18n'
 import { useTranslation } from '../i18n/use-translation'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
+import { alignBlockGlyphGrid } from '../terminal/block-glyph-alignment'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
 import { resolveTerminalKey } from '../terminal/terminal-key-bindings'
 
@@ -175,6 +176,10 @@ export default function TerminalWorkspace() {
     // visible again), so this guard — not the observer subscription — is what makes hidden
     // panes inert.
     if (sessionId !== activeSessionIdRef.current) return
+    // Before fitting, not after: the spacing changes how wide a cell is and therefore how many
+    // of them the pane holds. Re-checked on every fit because the device pixel ratio it depends
+    // on can change under a running window (moved to a display at a different scale).
+    alignBlockGlyphGrid(entry.terminal, entry.element)
     entry.fitAddon.fit()
     const dimensions = entry.fitAddon.proposeDimensions()
     if (!dimensions) return
@@ -207,6 +212,9 @@ export default function TerminalWorkspace() {
     terminal.open(element)
     // After open(): the addon needs the live screen element to attach its canvas to.
     attachWebglRenderer(terminal)
+    // Straight after the renderer exists, so the very first frame — the agent's startup logo —
+    // is already drawn on an aligned grid rather than being corrected on a later resize.
+    alignBlockGlyphGrid(terminal, element)
     ;(element as TerminalHostElement).codeflyTerminal = terminal
 
     const tracker = new FirstInputTracker()

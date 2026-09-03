@@ -350,10 +350,13 @@ Before handing off a build, test with real, logged-in `claude` and `codex` CLIs.
 - Verify **Ctrl+V**, agent **Shift+Enter**, and the Windows in-app download/cancel/install
   update flow. Windows has no new-session accelerator: confirm `Ctrl+T` reaches the focused
   terminal instead of creating a PowerShell session.
-- Check the pixel logo in the Claude and Codex startup banners for hairline seams. The
-  terminal uses the WebGL renderer to keep Block Elements solid, and a machine whose GPU
-  cannot provide a WebGL2 context falls back to the DOM renderer *silently* — cracks through
-  the artwork are the visible symptom of that fallback.
+- Check the pixel logo in the Claude and Codex startup banners for hairline seams, then repeat
+  the check at a different display scale (100% and 150% put the cell grid on different widths).
+  Two things keep the artwork solid, and a crack is the visible symptom of either failing: the
+  WebGL renderer, which a machine with no WebGL2 context falls back from *silently*, and a cell
+  grid held to an even number of device pixels — xterm composes U+259B (the logo's head) from
+  two rectangles that meet at half the cell width, so an odd width splits that join across a
+  pixel and lets the background leak through.
 
 #### macOS x64 and arm64 (two separate required runs)
 
@@ -371,7 +374,7 @@ Silicon Mac with `mac-arm64.zip`; a Rosetta-only run does not cover both archite
   both ordinary and clean worktree sessions. Confirm dirty-worktree protection still applies.
 - Verify a failed title-generation process still produces a usable local fallback title.
 - Check the pixel logo in the Claude and Codex startup banners for hairline seams (see the
-  Windows list above: seams mean the WebGL renderer silently fell back to the DOM one).
+  Windows list above for the two things a seam can mean).
 - Verify **Open in Visual Studio Code**, **Open project folder** (Finder), and **Open Git
   repository** without changing the active session.
 - Toggle **Launch at startup**, reopen Settings to confirm the system value, log out/in if the

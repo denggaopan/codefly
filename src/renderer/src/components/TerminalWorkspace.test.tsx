@@ -30,17 +30,42 @@ const { FakeTerminal, FakeFitAddon, FakeWebglAddon, FakeResizeObserver } = vi.ho
   class FakeTerminalImpl {
     static instances: FakeTerminalImpl[] = []
     options: Record<string, unknown>
-    open = vi.fn()
+    cols = 80
+    // xterm builds its layered DOM inside the host on open(); only .xterm-screen matters here,
+    // because that is where the WebGL addon attaches its canvas and where the block-glyph grid
+    // alignment reads the rendered cell width back from.
+    private screen: HTMLElement | undefined
+    private canvas: HTMLCanvasElement | undefined
+    open = vi.fn((element: HTMLElement) => {
+      this.screen = document.createElement('div')
+      this.screen.className = 'xterm-screen'
+      element.append(this.screen)
+    })
     write = vi.fn()
     dispose = vi.fn()
     focus = vi.fn()
     loadAddon = vi.fn((addon: unknown) => {
       // Mirrors the real Terminal.loadAddon, which synchronously calls addon.activate(this)
       // and lets its failure propagate — that is where a missing WebGL2 context surfaces.
-      if (addon instanceof FakeWebglAddonImpl && FakeWebglAddonImpl.activationError) {
-        throw FakeWebglAddonImpl.activationError
+      if (addon instanceof FakeWebglAddonImpl) {
+        if (FakeWebglAddonImpl.activationError) throw FakeWebglAddonImpl.activationError
+        // A successful activation attaches a canvas whose bitmap is sized in whole device
+        // pixels, which is what the block-glyph alignment measures the cell width from.
+        this.canvas = document.createElement('canvas')
+        this.screen?.append(this.canvas)
+        this.resizeCanvas()
       }
     })
+
+    // WebglRenderer computes device.cell.width as device.char.width + Math.round(letterSpacing)
+    // and sizes its canvas at cols * that, so changing letterSpacing feeds straight back into
+    // what a later measurement sees. Reproducing that loop is what makes an alignment that
+    // flip-flops between 0 and 1 on every fit fail this suite instead of passing it.
+    private resizeCanvas(): void {
+      if (!this.canvas) return
+      const letterSpacing = Math.round((this.options.letterSpacing as number | undefined) ?? 0)
+      this.canvas.width = this.cols * (FakeWebglAddonImpl.deviceCharWidth + letterSpacing)
+    }
     onData = vi.fn((listener: (data: string) => void) => {
       this.dataListeners.push(listener)
       return { dispose: vi.fn() }
@@ -53,7 +78,20 @@ const { FakeTerminal, FakeFitAddon, FakeWebglAddon, FakeResizeObserver } = vi.ho
     private dataListeners: Array<(data: string) => void> = []
 
     constructor(options?: Record<string, unknown>) {
-      this.options = options ?? {}
+      const initial = options ?? {}
+      let letterSpacing = (initial.letterSpacing as number | undefined) ?? 0
+      // Writing terminal.options.letterSpacing re-renders the real terminal at a new cell
+      // width; the accessor is how this double keeps its canvas in step.
+      Object.defineProperty(initial, 'letterSpacing', {
+        get: () => letterSpacing,
+        set: (value: number) => {
+          letterSpacing = value
+          this.resizeCanvas()
+        },
+        enumerable: true,
+        configurable: true
+      })
+      this.options = initial
       FakeTerminalImpl.instances.push(this)
     }
 
@@ -79,6 +117,10 @@ const { FakeTerminal, FakeFitAddon, FakeWebglAddon, FakeResizeObserver } = vi.ho
     // renderer process has no working WebGL2 context (GPU blocklisted, --disable-gpu, ...).
     // The real addon fails from activate(), which loadAddon() calls — not the constructor.
     static activationError: Error | undefined
+    // Width in whole device pixels of one CHARACTER once the renderer has measured the font,
+    // before letterSpacing is added on top. 13 is what Cascadia Mono measures at the default
+    // font size and 150% display scaling — odd, which is the case the alignment exists for.
+    static deviceCharWidth = 13
     dispose = vi.fn()
     private contextLossListeners: Array<() => void> = []
 
@@ -252,6 +294,7 @@ beforeEach(() => {
   FakeFitAddon.instances = []
   FakeWebglAddon.instances = []
   FakeWebglAddon.activationError = undefined
+  FakeWebglAddon.deviceCharWidth = 13
   FakeResizeObserver.instances = []
   // jsdom has no ResizeObserver; stub a controllable one so tests can trigger the callback
   // TerminalWorkspace registers per entry and assert what it does in response.
@@ -757,6 +800,31 @@ describe('TerminalWorkspace', () => {
     const openOrder = terminal.open.mock.invocationCallOrder[0]
     const webglOrder = terminal.loadAddon.mock.calls.findIndex((call) => call[0] === FakeWebglAddon.instances[0])
     expect(terminal.loadAddon.mock.invocationCallOrder[webglOrder]).toBeGreaterThan(openOrder)
+  })
+
+  // The WebGL renderer alone is not enough: it draws U+259B (▛) — which Claude Code's logo
+  // uses for the head — as two rectangles that MEET at deviceCellWidth / 2. On an odd cell
+  // width that join falls on a half pixel, both fillRects anti-alias into the same column and
+  // the two 50% passes composite to 75%, leaking a hairline of the cell's black background
+  // down through solid orange. One device pixel of letterSpacing moves the join onto a pixel
+  // boundary. See block-glyph-alignment.ts.
+  it('widens an odd cell grid by one device pixel so composed block glyphs have no seam', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeWebglAddon.instances).toHaveLength(1))
+    expect(FakeTerminal.instances[0].options.letterSpacing).toBe(1)
+  })
+
+  it('leaves an already-even cell grid alone', async () => {
+    FakeWebglAddon.deviceCharWidth = 12
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeWebglAddon.instances).toHaveLength(1))
+    expect(FakeTerminal.instances[0].options.letterSpacing ?? 0).toBe(0)
   })
 
   it('keeps the session usable when WebGL is unavailable', async () => {

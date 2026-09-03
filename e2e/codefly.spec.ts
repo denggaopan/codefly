@@ -304,6 +304,24 @@ test('renders the terminal through the WebGL renderer so Block Elements have no 
   await expect(pane.locator('.xterm-screen canvas')).not.toHaveCount(0)
   // The DOM renderer's text rows are the tell-tale of a silent fallback.
   await expect(pane.locator('.xterm-rows')).toHaveCount(0)
+
+  // The WebGL renderer on its own still is not enough. It composes U+259B (▛) — the character
+  // Claude Code's logo draws its head from — out of two rectangles that MEET at
+  // deviceCellWidth / 2 rather than overlapping. On an ODD cell width that join lands on a
+  // half pixel: both fillRects anti-alias into the same pixel column and the two 50% passes
+  // composite to 75%, leaking a hairline of the cell's black background down through solid
+  // orange (measured at 13 device pixels wide — Cascadia Mono at 150% scaling — before the
+  // fix). TerminalWorkspace nudges the grid onto an even width with one device pixel of
+  // letterSpacing; this is the only place that check runs against real font metrics and a
+  // real device pixel ratio. See src/renderer/src/terminal/block-glyph-alignment.ts.
+  const deviceCellWidth = await pane.locator('.terminal-instance-host').evaluate((host) => {
+    const canvas = host.querySelector('.xterm-screen canvas')
+    const terminal = (host as HTMLElement & { codeflyTerminal?: { cols: number } }).codeflyTerminal
+    if (!(canvas instanceof HTMLCanvasElement) || !terminal) return Number.NaN
+    return canvas.width / terminal.cols
+  })
+  expect(Number.isInteger(deviceCellWidth)).toBe(true)
+  expect(deviceCellWidth % 2).toBe(0)
 })
 
 test('Claude receives exactly its bypass flag and the persistent warning is visible', async () => {
