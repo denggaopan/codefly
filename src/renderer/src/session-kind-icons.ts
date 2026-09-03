@@ -5,7 +5,7 @@ import codexIconUrl from './assets/codex.svg'
 import comateIconUrl from './assets/comate.svg'
 import copilotIconUrl from './assets/copilot.svg'
 import cursorIconUrl from './assets/cursor.png'
-import geminiIconUrl from './assets/gemini.svg'
+import geminiIconUrl from './assets/gemini.png'
 import powershellIconUrl from './assets/powershell.svg'
 import qwenIconUrl from './assets/qwen.svg'
 import shellIconUrl from './assets/shell.svg'
@@ -28,11 +28,11 @@ const iconUrls: Readonly<Record<SessionKind, string>> = {
  * a kind always shows the same mark. The codex/cmd sources are recolored light in their
  * asset files because CodeFly's UI is dark-only.
  *
- * Copilot, Cursor, Comate and Qwen use the vendors' own marks, supplied by the maintainer.
- * Cursor's is the only raster source: it arrived as a greyscale PNG on an opaque white
- * background, which would read as a white sticker in this dark-only UI, so the
- * border-connected white was cleared to transparency (the cube's own near-white top-right
- * face is interior and survives). Gemini keeps an original geometric mark — no artwork for
- * it was supplied, and a rough imitation of a trademark would be worse than a clean shape.
+ * All five opt-in agents use their vendors' own marks, supplied by the maintainer. Two came
+ * from raster sources and are stored as PNG rather than SVG: Cursor's arrived greyscale on
+ * an opaque white background, which would read as a white sticker in this dark-only UI, so
+ * the border-connected white was cleared to transparency (the cube's own near-white
+ * top-right face is interior and survives); Gemini's arrived as a 1280px WebP whose alpha
+ * was already correct, rasterised down to 256px.
  */
 export const sessionKindIconUrl = (kind: SessionKind): string => iconUrls[kind]

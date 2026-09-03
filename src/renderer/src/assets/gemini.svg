@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" focusable="false">
-  <!-- An original four-point star drawn in Gemini's violet, not a copy of the vendor's logo
-       artwork. Concave edges keep the four points readable down to a 16px launcher icon. -->
-  <path
-    fill="#8E7CF8"
-    d="M512 48 Q592 432 976 512 Q592 592 512 976 Q432 592 48 512 Q432 432 512 48 Z"
-  />
-</svg>
