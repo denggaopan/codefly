@@ -26,15 +26,15 @@ describe('agent kind registry', () => {
     }
   })
 
-  // Two vendors ship a binary whose name is not the kind: looking up "cursor" finds the
-  // editor (or nothing), and "comate" finds nothing at all.
+  // Two vendors ship a binary whose name is not the kind: Cursor's terminal agent is
+  // `agent`, and "comate" finds nothing at all.
   it('maps each kind to the executable its vendor actually installs', () => {
     expect(Object.fromEntries(AGENT_KINDS.map((kind) => [kind, AGENT_LAUNCH[kind].command]))).toEqual({
       claude: 'claude',
       codex: 'codex',
       gemini: 'gemini',
       copilot: 'copilot',
-      cursor: 'cursor-agent',
+      cursor: 'agent',
       comate: 'comatecli',
       qwen: 'qwen'
     })

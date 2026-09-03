@@ -163,7 +163,7 @@ const claudeDisabledCapabilities: CapabilityState = {
 }
 
 const cursorDisabledCapabilities: CapabilityState = {
-  ...agentCapabilities({ cursor: { available: false, detail: 'Install the Cursor CLI (cursor-agent) and sign in.' } }),
+  ...agentCapabilities({ cursor: { available: false, detail: 'Install the Cursor CLI (agent) and sign in.' } }),
   vscode: { available: true, detail: 'C:\\Code\\Code.exe' }
 }
 
@@ -538,7 +538,7 @@ describe('App', () => {
 
     const cursorButton = await screen.findByRole('button', { name: /^Cursor$/ })
     expect(cursorButton).toBeDisabled()
-    expect(await screen.findByText('Install the Cursor CLI (cursor-agent) and sign in.')).toBeVisible()
+    expect(await screen.findByText('Install the Cursor CLI (agent) and sign in.')).toBeVisible()
 
     await user.click(cursorButton)
     expect(api.createSession).not.toHaveBeenCalled()

@@ -45,7 +45,7 @@ const agentUnavailableDetail: Readonly<Record<AgentKind, string>> = {
   codex: 'Install the Codex CLI (codex) and sign in.',
   gemini: 'Install the Gemini CLI (gemini) and sign in.',
   copilot: 'Install the GitHub Copilot CLI (copilot) and sign in.',
-  cursor: 'Install the Cursor CLI (cursor-agent) and sign in.',
+  cursor: 'Install the Cursor CLI (agent) and sign in.',
   comate: 'Install the Comate CLI (comatecli) and sign in.',
   qwen: 'Install the Qwen Code CLI (qwen) and sign in.'
 }

@@ -25,7 +25,7 @@ Built with Electron, React, TypeScript, xterm.js, and node-pty.
 - Optional, to actually use an agent launcher entry: that agent's CLI installed and signed
   in — the [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) (`claude`) and/or
   the [Codex CLI](https://github.com/openai/codex) (`codex`) for the two offered by default,
-  and `gemini`, `copilot`, `cursor-agent`, `comatecli`, or `qwen` for the opt-in kinds.
+  and `gemini`, `copilot`, `agent`, `comatecli`, or `qwen` for the opt-in kinds.
   CodeFly detects them on `PATH` on Windows and through the login shell on macOS; a missing or
   unauthenticated CLI leaves its launcher entry visible but disabled, with an installation
   hint. Finder-launched macOS apps do not inherit Terminal's `PATH`, so ensure
@@ -78,7 +78,7 @@ the main process never infers it from a stored setting.
 
 Five further agent CLIs are supported on both platforms and collapsed behind **More agent
 CLIs** in the same section: **Gemini** (`gemini`), **GitHub Copilot** (`copilot`),
-**Cursor** (`cursor-agent`), **Comate** (`comatecli`), and **Qwen Code** (`qwen`). They ship
+**Cursor** (`agent`), **Comate** (`comatecli`), and **Qwen Code** (`qwen`). They ship
 **switched off**, so a default install offers the same New session menu it always did.
 
 Turn one on and it behaves exactly like Claude or Codex: it appears in the New session menu,
@@ -86,7 +86,7 @@ gets both a plain and a **(new worktree)** entry (its **New worktree** switch de
 carries its own permission bypass, shows the bypass warning while running, and accepts
 Shift+Enter for a newline and Ctrl/Cmd+V for paste. A missing CLI leaves the entry listed but
 disabled with an installation hint, naming the executable CodeFly actually looks for — note
-that Cursor's is `cursor-agent` and Comate's is `comatecli`, not the product name.
+that Cursor's is `agent` and Comate's is `comatecli`, not the product name.
 
 The group opens collapsed while all five are off and reopens expanded once any of them is on,
 so an enabled kind's switches are never hidden behind the caret.
@@ -144,7 +144,7 @@ bypass, and nothing else:
 | Codex | `codex` | `--dangerously-bypass-approvals-and-sandbox` |
 | Gemini | `gemini` | `--approval-mode=yolo` |
 | GitHub Copilot | `copilot` | `--allow-all-tools` |
-| Cursor | `cursor-agent` | `--force` |
+| Cursor | `agent` | `--force` |
 | Comate | `comatecli` | `ZULU_TERMINAL_RUN_MODE=yolo` in the session's environment |
 | Qwen Code | `qwen` | `--approval-mode=yolo` (see the note below) |
 
@@ -288,7 +288,7 @@ closed; click a stopped session to restart the same terminal or agent type in it
 directory. Restoring an agent session also asks its CLI to reattach the previous
 conversation, in whatever way that vendor spells it: `claude --continue`,
 `codex resume --last`, `gemini --resume latest`, `copilot --continue`,
-`cursor-agent --resume`, `qwen --continue`. This is best-effort, and `comatecli` has no
+`agent --resume`, `qwen --continue`. This is best-effort, and `comatecli` has no
 resume of its own, so a restored Comate session starts a fresh conversation. Shell sessions
 restart fresh.
 

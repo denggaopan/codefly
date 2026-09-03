@@ -39,7 +39,7 @@ macOS 打包的几条约束（细节见 README「Packaging › macOS」）：ele
 几条容易踩的约束：
 
 - `resumeSubcommand` 必须**排在 bypassArgs 前面**（codex 是 `resume --last <bypass>`），其余 kind 是 `<bypass> <resumeArgs>`；`agentLaunchArgs` 是唯一决定这个顺序的地方。
-- `command` 不等于 kind：`cursor → cursor-agent`、`comate → comatecli`，按 kind 查会找到错的程序（cursor 是编辑器启动器）或找不到。
+- `command` 不等于 kind：`cursor → agent`、`comate → comatecli`，按 kind 查会找到错的程序（cursor 是编辑器启动器）或找不到。
 - Comate 没有 bypass 旗标：它的 TUI 每次启动把 run mode 重置为 `process.env.ZULU_TERMINAL_RUN_MODE || 'manual'`，所以全放行只能走 `bypassEnv`；给它传一个编造的 `--yolo` 会被静默忽略。**bypass 徽章因此不能按「有没有 bypass argv」判断，只能按 `isAgentKind`。**
 - Comate 的 `resumeArgs: ['--resume']` 在 comatecli 1.0.8 里**尚未实现**（argv 解析器只认 `-h/-l/-m/-t/-v`，多余参数静默忽略、不报错），是为后续版本预留的，代价为零。
 - `sessionKindSchema` 里的两半（shell 与 agent）是**手写枚举**而非从本表派生，让 contracts.ts 保持是读线格式的唯一入口；两者一致由 `agent-kinds.test.ts` 断言。
@@ -62,7 +62,7 @@ macOS 打包的几条约束（细节见 README「Packaging › macOS」）：ele
   - `DOWNLOAD_HEADERS` 带 `Accept-Encoding: identity`：否则网络栈会透明解压而 `Content-Length` 仍是压缩后的大小，完整性校验会永远失败。
   - 默认 fetch 是 `infrastructure/net-fetch.ts` 的 `electronFetch`（AppInfoService 同），**不是** Node 全局 `fetch`——原因见下面 net-fetch 条目。
 - **net-fetch**（infrastructure/）：把 Electron `net.fetch`（Chromium 网络栈）适配成两个更新服务的 `FetchLike` 形状，请求带 `credentials: 'omit'`。必须用它而不是 Node 全局 `fetch`：undici 直连、既不读 Windows 系统代理也不读 `HTTP(S)_PROXY`，在需要代理才能顺畅访问 GitHub 的机器上，应用内下载只有约 10 KB/s（117 MB 要三小时），而浏览器几秒下完；`net.fetch` 像浏览器一样解析系统代理，同一文件实测 8 秒。只能在 `app` `ready` 之后调用（两个服务都在 `whenReady` 里构造）。测试用 `createNetFetch(fakeNetFetch)` 注入替身，不 mock `electron` 模块。
-- **cli-locator**（infrastructure/）：`resolveAgent(kind)` 查 `AGENT_LAUNCH[kind].command` 而不是 kind 本身——`cursor` 的可执行名是 `cursor-agent`，`comate` 的是 `comatecli`，按 kind 查会找到错的程序或找不到。Windows 保留 `where.exe`；macOS 通过用户登录 shell 的 `command -v`（5s 超时）并回退 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`，Shell 解析 `$SHELL` 或 `/bin/zsh`。VS Code 的 macOS app 查找属于 `ExternalAppService`。
+- **cli-locator**（infrastructure/）：`resolveAgent(kind)` 查 `AGENT_LAUNCH[kind].command` 而不是 kind 本身——`cursor` 的可执行名是 `agent`，`comate` 的是 `comatecli`，按 kind 查会找到错的程序或找不到。Windows 保留 `where.exe`；macOS 通过用户登录 shell 的 `command -v`（5s 超时）并回退 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`，Shell 解析 `$SHELL` 或 `/bin/zsh`。VS Code 的 macOS app 查找属于 `ExternalAppService`。
 
 ### 渲染进程（src/renderer/）
 

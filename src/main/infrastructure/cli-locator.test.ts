@@ -45,9 +45,9 @@ describe('CliLocator', () => {
   })
 
   // Two kinds are not named after their binary, and looking up the kind instead would find
-  // the wrong program: `cursor` is the editor launcher, `comate` is nothing at all.
+  // nothing: Cursor's terminal agent is `agent`, and `comate` is not a command.
   it.each([
-    ['cursor' as const, 'cursor-agent'],
+    ['cursor' as const, 'agent'],
     ['comate' as const, 'comatecli'],
     ['gemini' as const, 'gemini'],
     ['copilot' as const, 'copilot'],

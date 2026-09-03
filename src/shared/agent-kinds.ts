@@ -18,8 +18,8 @@ export type AgentKind = (typeof AGENT_KINDS)[number]
 export type AgentLaunchSpec = {
   /**
    * The executable to look up on PATH. Usually the kind itself, but two vendors ship a
-   * binary under another name and guessing wrong finds the wrong program: `cursor` is the
-   * editor launcher, and `comate` is not installed at all.
+   * binary under another name and guessing wrong finds nothing: Cursor's terminal agent is
+   * `agent`, and Comate's is `comatecli`.
    */
   command: string
   /**
@@ -79,7 +79,7 @@ export const AGENT_LAUNCH: Readonly<Record<AgentKind, AgentLaunchSpec>> = {
     resumeArgs: ['--continue']
   },
   cursor: {
-    command: 'cursor-agent',
+    command: 'agent',
     bypassArgs: ['--force'],
     resumeArgs: ['--resume']
   },
