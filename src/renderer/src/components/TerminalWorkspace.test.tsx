@@ -26,7 +26,7 @@ import TerminalWorkspace from './TerminalWorkspace'
 // minimal, introspectable test doubles below (vi.hoisted so the factory can reference them)
 // rather than exercising the real library — the behavior under test is TerminalWorkspace's
 // own ownership/routing/dispose logic, not xterm's rendering internals.
-const { FakeTerminal, FakeFitAddon, FakeResizeObserver } = vi.hoisted(() => {
+const { FakeTerminal, FakeFitAddon, FakeWebglAddon, FakeResizeObserver } = vi.hoisted(() => {
   class FakeTerminalImpl {
     static instances: FakeTerminalImpl[] = []
     options: Record<string, unknown>
@@ -34,7 +34,13 @@ const { FakeTerminal, FakeFitAddon, FakeResizeObserver } = vi.hoisted(() => {
     write = vi.fn()
     dispose = vi.fn()
     focus = vi.fn()
-    loadAddon = vi.fn()
+    loadAddon = vi.fn((addon: unknown) => {
+      // Mirrors the real Terminal.loadAddon, which synchronously calls addon.activate(this)
+      // and lets its failure propagate — that is where a missing WebGL2 context surfaces.
+      if (addon instanceof FakeWebglAddonImpl && FakeWebglAddonImpl.activationError) {
+        throw FakeWebglAddonImpl.activationError
+      }
+    })
     onData = vi.fn((listener: (data: string) => void) => {
       this.dataListeners.push(listener)
       return { dispose: vi.fn() }
@@ -67,6 +73,29 @@ const { FakeTerminal, FakeFitAddon, FakeResizeObserver } = vi.hoisted(() => {
     }
   }
 
+  class FakeWebglAddonImpl {
+    static instances: FakeWebglAddonImpl[] = []
+    // Set by a test to make loading the addon throw, standing in for a machine where the
+    // renderer process has no working WebGL2 context (GPU blocklisted, --disable-gpu, ...).
+    // The real addon fails from activate(), which loadAddon() calls — not the constructor.
+    static activationError: Error | undefined
+    dispose = vi.fn()
+    private contextLossListeners: Array<() => void> = []
+
+    constructor() {
+      FakeWebglAddonImpl.instances.push(this)
+    }
+
+    onContextLoss = vi.fn((listener: () => void) => {
+      this.contextLossListeners.push(listener)
+      return { dispose: vi.fn() }
+    })
+
+    emitContextLoss(): void {
+      for (const listener of [...this.contextLossListeners]) listener()
+    }
+  }
+
   class FakeResizeObserverImpl {
     static instances: FakeResizeObserverImpl[] = []
     observe = vi.fn()
@@ -84,11 +113,17 @@ const { FakeTerminal, FakeFitAddon, FakeResizeObserver } = vi.hoisted(() => {
     }
   }
 
-  return { FakeTerminal: FakeTerminalImpl, FakeFitAddon: FakeFitAddonImpl, FakeResizeObserver: FakeResizeObserverImpl }
+  return {
+    FakeTerminal: FakeTerminalImpl,
+    FakeFitAddon: FakeFitAddonImpl,
+    FakeWebglAddon: FakeWebglAddonImpl,
+    FakeResizeObserver: FakeResizeObserverImpl
+  }
 })
 
 vi.mock('@xterm/xterm', () => ({ Terminal: FakeTerminal }))
 vi.mock('@xterm/addon-fit', () => ({ FitAddon: FakeFitAddon }))
+vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: FakeWebglAddon }))
 
 // Deliberately NOT annotated with a `CodeFlyApi`-shaped return type (see App.test.tsx): that
 // would widen every vi.fn() property down to a plain function type and lose access to mock
@@ -215,6 +250,8 @@ beforeEach(() => {
   window.codefly = api
   FakeTerminal.instances = []
   FakeFitAddon.instances = []
+  FakeWebglAddon.instances = []
+  FakeWebglAddon.activationError = undefined
   FakeResizeObserver.instances = []
   // jsdom has no ResizeObserver; stub a controllable one so tests can trigger the callback
   // TerminalWorkspace registers per entry and assert what it does in response.
@@ -699,6 +736,55 @@ describe('TerminalWorkspace', () => {
 
     await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
     expect(FakeTerminal.instances[0].options.fontFamily).toContain('Cascadia Mono')
+  })
+
+  // xterm's default DOM renderer lays each cell out on a fractional CSS grid (a Cascadia Mono
+  // cell measures 8.7875px wide at 100% zoom), so the glyph-drawn Block Elements that agents
+  // use for pixel art — U+2588 and the quadrants around it — cannot meet at a device-pixel
+  // boundary and leave hairline background-colored seams running through what should be solid
+  // fill (visible as cracks in Claude Code's startup logo). The WebGL renderer sizes cells in
+  // whole device pixels and draws those code points from its own vector CustomGlyphs table
+  // instead of the font, so the fill is seamless.
+  it('loads the WebGL renderer so Block Elements are drawn without seams', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeWebglAddon.instances).toHaveLength(1))
+    const terminal = FakeTerminal.instances[0]
+    expect(terminal.loadAddon).toHaveBeenCalledWith(FakeWebglAddon.instances[0])
+    // The addon needs a live element to attach its canvas to, so it must come after open().
+    const openOrder = terminal.open.mock.invocationCallOrder[0]
+    const webglOrder = terminal.loadAddon.mock.calls.findIndex((call) => call[0] === FakeWebglAddon.instances[0])
+    expect(terminal.loadAddon.mock.invocationCallOrder[webglOrder]).toBeGreaterThan(openOrder)
+  })
+
+  it('keeps the session usable when WebGL is unavailable', async () => {
+    FakeWebglAddon.activationError = new Error('WebGL2 is not supported')
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    // Terminal still opened and still receives PTY output through the DOM renderer.
+    expect(FakeTerminal.instances[0].open).toHaveBeenCalled()
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: 'hello' })
+    expect(FakeTerminal.instances[0].write).toHaveBeenCalledWith('hello')
+  })
+
+  it('drops the WebGL renderer instead of freezing the pane when the GPU context is lost', async () => {
+    seedStore(runningClaudeSession)
+    useAppStore.setState({ activeSessionId: runningClaudeSession.id })
+    render(<TerminalWorkspace />)
+
+    await waitFor(() => expect(FakeWebglAddon.instances).toHaveLength(1))
+    const addon = FakeWebglAddon.instances[0]
+    act(() => {
+      addon.emitContextLoss()
+    })
+
+    expect(addon.dispose).toHaveBeenCalled()
+    expect(FakeTerminal.instances[0].dispose).not.toHaveBeenCalled()
   })
 
   // A PTY-backed terminal must treat LF as a bare line feed: ConPTY emits

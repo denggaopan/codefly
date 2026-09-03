@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 // xterm's own stylesheet is REQUIRED for its layered DOM to lay out correctly: it makes
 // .xterm-viewport an absolute overlay instead of a normal-flow block. Without it, the
@@ -14,6 +15,12 @@ import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../sessio
 import { useAppStore } from '../store/use-app-store'
 import { FirstInputTracker } from '../terminal/first-input-tracker'
 import { resolveTerminalKey } from '../terminal/terminal-key-bindings'
+
+// The WebGL renderer paints the screen into a canvas, so xterm keeps no DOM text for a test
+// driver to read (see attachWebglRenderer). Each pane's host element carries a back-reference
+// to its Terminal so e2e can assert on the rendered screen through xterm's own buffer; nothing
+// in the application itself reads this property.
+export type TerminalHostElement = HTMLDivElement & { codeflyTerminal?: Terminal }
 
 type TerminalEntry = {
   terminal: Terminal
@@ -40,6 +47,32 @@ const XTERM_THEMES: Record<ThemePreference, { background: string; foreground: st
 }
 const MAX_PENDING_DATA_PER_SESSION = 65_536
 const MAX_PENDING_SESSIONS = 32
+
+// Swaps xterm's default DOM renderer for the WebGL one. This is a correctness fix, not just a
+// performance one: the DOM renderer lays cells out on a FRACTIONAL CSS grid (a Cascadia Mono
+// cell is 8.7875px wide at 100% zoom) and paints Block Elements with the font's glyphs, so the
+// pixel art agents draw with U+2588 and the quadrant characters cannot meet on a device-pixel
+// boundary and hairline seams of background colour run through what should be solid fill —
+// visible as cracks through Claude Code's startup logo. The WebGL renderer sizes cells in whole
+// device pixels and draws those code points from its own vector glyph table instead of the
+// font, so adjacent cells join seamlessly.
+//
+// Never fatal: activation throws on a machine with no usable WebGL2 context (GPU blocklisted,
+// --disable-gpu, a stale driver), and the context can be dropped at runtime — by the GPU
+// process, or by Chromium itself once enough panes are open, since it keeps only a bounded
+// number of WebGL contexts alive and reclaims the oldest. Disposing the addon on context loss
+// puts that terminal back on the DOM renderer (xterm re-creates the default renderer from
+// WebglAddon.dispose), which renders everything correctly apart from those seams; leaving a
+// lost context in place would freeze the pane's output instead.
+const attachWebglRenderer = (terminal: Terminal): void => {
+  try {
+    const addon = new WebglAddon()
+    addon.onContextLoss(() => addon.dispose())
+    terminal.loadAddon(addon)
+  } catch {
+    // DOM renderer stays in place.
+  }
+}
 
 const sessionKindLabel = (t: Translator, kind: SessionRecord['kind']): string => {
   switch (kind) {
@@ -172,6 +205,9 @@ export default function TerminalWorkspace() {
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.open(element)
+    // After open(): the addon needs the live screen element to attach its canvas to.
+    attachWebglRenderer(terminal)
+    ;(element as TerminalHostElement).codeflyTerminal = terminal
 
     const tracker = new FirstInputTracker()
     // Every byte bound for the PTY funnels through here — xterm's own key/paste output and the

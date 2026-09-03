@@ -17,7 +17,7 @@ import { createRepo } from './create-repo'
  * file, worktree lifecycle) is the real production implementation. Production builds
  * without CODEFLY_E2E never exercise any of this file's env-driven wiring.
  *
- * The 13 tests below run in one serial journey against one fixture repository/project so
+ * The 17 tests below run in one serial journey against one fixture repository/project so
  * that worktree sequence numbers, title generation, restart persistence, and deletion all
  * build on realistic prior state, the same way a user would experience them. Test 6
  * (relaunch) closes and re-opens the Electron app in the middle of the journey while
@@ -107,6 +107,25 @@ const openNewSessionLauncher = async () => {
 // exactly what the user can see: 1 badge when the active session is a running Claude/Codex
 // session, 0 otherwise (including while a running Claude/Codex session isn't the active one).
 const visibleBypassWarnings = () => window.locator('.terminal-header-bypass:visible')
+
+// The active pane's rendered screen, read out of xterm's own buffer. It CANNOT be read from
+// the DOM: TerminalWorkspace loads the WebGL renderer (so Block Elements — the pixel art
+// agents draw their logos with — join seamlessly instead of showing hairline cracks), and
+// that renderer paints into a canvas, leaving no .xterm-rows text behind. The pane's host
+// element carries a `codeflyTerminal` back-reference for exactly this purpose.
+const visibleTerminalText = (): Promise<string> =>
+  window.locator('.terminal-pane:visible .terminal-instance-host').evaluate((host) => {
+    const terminal = (host as HTMLElement & { codeflyTerminal?: { buffer: { active: { length: number; getLine(i: number): { translateToString(trim: boolean): string } | undefined } } } }).codeflyTerminal
+    if (!terminal) return ''
+    const buffer = terminal.buffer.active
+    const lines: string[] = []
+    for (let i = 0; i < buffer.length; i += 1) lines.push(buffer.getLine(i)?.translateToString(true) ?? '')
+    return lines.join('\n')
+  })
+
+const expectVisibleTerminalToContain = async (text: string): Promise<void> => {
+  await expect.poll(visibleTerminalText, { timeout: 20_000 }).toContain(text)
+}
 
 test.beforeAll(async () => {
   repoPath = createRepo()
@@ -268,7 +287,23 @@ test('adds the fixture project and creates a Claude session as the first worktre
   const claudeRow = sessionRowByKind('claude')
   await expect(claudeRow).toHaveCount(1, { timeout: 20_000 })
   await expect(claudeRow.locator('.session-secondary')).toHaveText(/^worktree-\d{6}-1$/)
-  await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_E2E_FAKE_AGENT_READY', { timeout: 20_000 })
+  await expectVisibleTerminalToContain('CODEFLY_E2E_FAKE_AGENT_READY')
+})
+
+// Agents draw their startup logos as pixel art out of Block Elements (U+2588 and the quadrant
+// characters). xterm's default DOM renderer lays cells out on a fractional CSS grid and paints
+// those code points with the font's glyphs, so neighbouring cells cannot meet on a device-pixel
+// boundary and hairline background-coloured seams run through the artwork — reported as cracks
+// in the Claude Code logo. The WebGL renderer sizes cells in whole device pixels and draws
+// those code points from its own vector glyph table, which is what this pins down. It also
+// confirms that a real Electron renderer process actually gets a WebGL2 context: activation
+// failure is deliberately silent (TerminalWorkspace falls back to the DOM renderer), so
+// without this assertion the cracks could come back unnoticed.
+test('renders the terminal through the WebGL renderer so Block Elements have no seams', async () => {
+  const pane = window.locator('.terminal-pane:visible')
+  await expect(pane.locator('.xterm-screen canvas')).not.toHaveCount(0)
+  // The DOM renderer's text rows are the tell-tale of a silent fallback.
+  await expect(pane.locator('.xterm-rows')).toHaveCount(0)
 })
 
 test('Claude receives exactly its bypass flag and the persistent warning is visible', async () => {
@@ -474,7 +509,7 @@ test('Ctrl+V pastes the clipboard text into the Claude session instead of sendin
   try {
     await window.locator('.terminal-pane:visible .terminal-instance-host').click()
     await window.keyboard.press('Control+V')
-    await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_PASTE_CHECK', { timeout: 20_000 })
+    await expectVisibleTerminalToContain('CODEFLY_PASTE_CHECK')
   } finally {
     await electronApp.evaluate(({ clipboard }, text) => clipboard.writeText(text), previousClipboard)
   }
@@ -511,7 +546,7 @@ test('creates PowerShell and Command Prompt sessions with the bypass warning abs
   // typing works immediately WITHOUT clicking into the terminal first. (No Enter pressed:
   // the guarded behavior is keystroke echo, not command execution or first-input titling.)
   await window.keyboard.type('CODEFLY_FOCUS_CHECK')
-  await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_FOCUS_CHECK', { timeout: 20_000 })
+  await expectVisibleTerminalToContain('CODEFLY_FOCUS_CHECK')
 
   // Regression guard: the terminal's rendered screen must sit at the TOP of its host and stay
   // inside it. Without xterm.css, the viewport layer participates in normal flow and pushes
@@ -607,7 +642,7 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
   // this exact flow (relaunch, click to restore, start typing) is where the missing focus
   // was reported as "cannot type".
   await window.keyboard.type('CODEFLY_RESTORE_FOCUS_CHECK')
-  await expect(window.locator('.terminal-pane:visible .xterm-rows')).toContainText('CODEFLY_RESTORE_FOCUS_CHECK', { timeout: 20_000 })
+  await expectVisibleTerminalToContain('CODEFLY_RESTORE_FOCUS_CHECK')
 })
 
 test('mocked VS Code, Explorer, and repository project-row actions do not toggle the row or change the active session', async () => {
