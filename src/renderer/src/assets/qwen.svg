@@ -1,7 +1,8 @@
 <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" focusable="false">
-  <!-- Qwen's own mark, supplied by the maintainer. -->
-  <path d="M0 512a512 512 0 1 0 1024 0 512 512 0 1 0-1024 0Z" fill="#FFFFFF">
-  </path>
+  <!-- Qwen's own mark, supplied by the maintainer. The vendor artwork sets it on a solid
+       white disc, dropped here because it would read as a white badge in this dark-only UI.
+       The white paths that remain are the mark itself - they draw the strokes separating the
+       purple shapes, and removing them collapses the logo into an unreadable blob. -->
   <path d="M311.2704 329.8816h-86.016a16.5632 16.5632 0 0 0-14.336 8.2688l-47.7952 82.7648a16.5888 16.5888 0 0 0 0 16.5632l196.1472 339.4048h95.36l141.696-119.04-285.056-327.9616z" fill="#615CED">
   </path>
   <path d="M253.952 594.7904l-43.0336 74.496a16.5376 16.5376 0 0 0 0 16.5632l47.7952 82.7648a16.4352 16.4352 0 0 0 14.336 8.2944h181.5808l-200.704-182.1184zM770.1248 429.184l43.008-74.4704a16.5632 16.5632 0 0 0 0-16.5632l-47.7952-82.7648a16.5888 16.5888 0 0 0-14.336-8.2944l-392.0128 0.1792-47.6928 82.5856 32.256 182.2208 426.5728-82.8928z" fill="#615CED">
