@@ -1,26 +1,54 @@
 <?xml version="1.0" standalone="no"?>
 <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
 <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" width="256" height="256">
-  <title>CodeFly Logo - Rocket with a "C" porthole</title>
-  <!-- One path, three subpaths, nonzero fill-rule:
+  <title>CodeFly Logo - white rocket on a purple rounded square</title>
+  <!-- The mark is a white rocket on a filled purple tile. The rocket used to be drawn in
+       brand purple straight onto transparency, which left the desktop shortcut borrowing
+       whatever the wallpaper happened to be: on a dark photo a mid-purple silhouette has
+       almost no contrast left and the icon disappears. The tile takes contrast back from
+       the wallpaper - the artwork now always sits on a known ground - and matches what
+       Windows 11 and macOS (Big Sur onwards) both expect of an app icon.
+
+       Geometry, in the 1024-unit box:
+       - The tile insets 72 on every side (7.03%) and rounds at 198, i.e. 22.5% of its
+         880-unit side. That is the squircle-ish ratio macOS uses (185.4/824), and the inset
+         keeps the corners clear of the icon slot's edge the way neighbouring icons do.
+       - The rocket scales to 60% and is translated so its bounding box - x 21.57..1023.56,
+         y 0.01..993.18, which is not symmetric in the 1024 box - lands centred on
+         (512, 512) rather than merely offset by equal margins. It spans ~600 units, 68% of
+         the tile, which is where a diagonal glyph reads as filling its tile without
+         crowding the corners.
+
+       The path is one path with three subpaths and the nonzero fill-rule:
        1. the exhaust dash below the rocket,
        2. the rocket body (clockwise, so it fills),
        3. the porthole (counter-clockwise, so it punches a hole).
        The porthole is the source artwork's "U" slot rotated 90 degrees clockwise about its
        own centre (662.766673, 360.937233) so the negative space reads as a "C" for CodeFly.
-       The fill is the brand purple that styles.css mirrors in its accent token.
-       The path is drawn edge to edge in its 1024-unit box, which made the desktop shortcut
-       look oversized next to other Windows app icons (their artwork keeps a margin inside
-       the icon slot). The transform scales the whole path to 85% about the box centre
-       (512, 512), leaving a 7.5% margin on every side. It sits on the element, not on a
-       subpath, so the nonzero fill-rule and the punched-out porthole are untouched.
-       icon.png and icon.ico are rasterised from this file (Chromium canvas); regenerate
-       both whenever it changes. -->
+       Punching rather than painting it is what lets the tile gradient show through the "C".
+       The transform sits on the element, not on a subpath, so the fill-rule and the punched
+       porthole are untouched.
+
+       The tile gradient is a more saturated take on the brand purple that styles.css mirrors
+       in its accent token (#6e5494): that hue at 27% saturation reads as grey once it fills
+       a whole tile, so the gradient runs #9a6fe0 to #5b34a8 and averages out brighter and
+       more saturated. The UI accent is deliberately left alone - this is the icon needing to
+       carry across a wallpaper, not a theme change.
+
+       icon.png (512) and icon.ico (16/24/32/48/64/128/256, 32bpp BMP) are rasterised from
+       this file with Chromium; regenerate both whenever it changes. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9a6fe0" />
+      <stop offset="1" stop-color="#5b34a8" />
+    </linearGradient>
+  </defs>
+  <rect x="72" y="72" width="880" height="880" rx="198" ry="198" fill="url(#tile)" />
   <path
-    transform="translate(76.8 76.8) scale(0.85)"
+    transform="translate(198.464 214.04) scale(0.6)"
     d="M218.144356 993.18135a49.021204 49.021204 0 0 1-34.805055-83.826258l69.119897-69.119897a49.021204 49.021204 0 0 1 69.119898 69.119897L252.949411 980.435837a49.021204 49.021204 0 0 1-34.805055 12.745513z
        M1023.562731 49.032969v143.632126a535.801755 535.801755 0 0 1-157.848276 381.384964l-122.062797 122.062797-28.92251 202.457571a123.043221 123.043221 0 0 1-34.805054 69.119897l-34.805055 34.805054a73.531805 73.531805 0 0 1-103.924951 0l-294.127222-294.127221-104.415164 103.434739a49.021204 49.021204 0 0 1-69.119897-69.610109L177.456757 637.287412 21.56933 482.380408a73.531805 73.531805 0 0 1 0-103.924951L56.374384 343.16019a123.043221 123.043221 0 0 1 69.119897-34.314842l202.457571-28.92251 122.062797-122.062797A535.801755 535.801755 0 0 1 833.360461 0.011765h143.632126a49.021204 49.021204 0 0 1 46.570144 49.021204z
        m-256.741697 415.829216a49.021204 49.021204 0 0 0-69.119897-69.119897 49.021204 49.021204 0 0 1-69.610109 0 49.021204 49.021204 0 0 1 0-69.119897 49.021204 49.021204 0 0 1 69.610109 0 49.021204 49.021204 0 0 0 69.119897-69.610109 147.063611 147.063611 0 1 0 0 207.849903z"
-    fill="#6e5494"
+    fill="#ffffff"
   />
 </svg>
