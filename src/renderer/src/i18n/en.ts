@@ -11,6 +11,7 @@ export const en = {
   'common.remove': 'Remove',
 
   'titleBar.settings': 'Settings',
+  'titleBar.launchRocket': 'CodeFly — launch a rocket',
 
   'sidebar.searchSessions': 'Search sessions',
   'sidebar.dismissNotice': 'Dismiss notice',

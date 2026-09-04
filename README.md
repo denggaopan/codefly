@@ -220,6 +220,22 @@ project are stopped and all of its session records are removed together with it;
 disk is touched — the project directory, its worktrees and their branches stay exactly as
 they are. Re-adding the directory later starts with an empty session list.
 
+## Title bar rocket
+
+Clicking the logo and **CODEFLY** wordmark launches a rocket: it falls nose-first a random
+distance (never more than 500px, and never past the bottom of the window), swings round to a
+random rightwards heading, cruises slowly for three seconds, then dashes off the screen. The
+nose always points along the course — position and heading are one `transform` inside a single
+animation, and all the geometry lives in `src/renderer/src/rocket-flight.ts` as pure functions
+with the random source injected, which is what lets the tests pin that promise.
+
+Purely decorative: the rocket is portalled to `document.body`, sits above every dialog and is
+pointer-transparent, so it can never intercept a click. Clicks stack, so several rockets can
+be in the air at once, and the flight is skipped entirely when the viewer asks for
+`prefers-reduced-motion: reduce`. The brand is now a button, so it has to be
+`-webkit-app-region: no-drag`; the strip between it and the gear button is what keeps the
+window draggable.
+
 ## Settings
 
 The title bar's gear button opens the settings dialog.

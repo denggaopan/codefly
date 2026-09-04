@@ -202,14 +202,54 @@ html[data-platform='darwin'] .title-bar {
   padding-right: 8px;
 }
 
+/* The brand is a button (it launches the rocket easter egg), so it has to opt out of the
+   drag region -- hence the negative margin, which pulls the button's own padding back so the
+   logo still lands on the strip's 12px gutter, and .title-bar-drag-area next to it, which
+   gives the window back the grab area the button took away. */
+.title-bar-brand {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: -8px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.title-bar-brand:hover {
+  background: var(--color-panel-elevated);
+}
+
+.title-bar-brand:hover .title-bar-app-name {
+  color: var(--color-text);
+}
+
+.title-bar-brand:hover .title-bar-logo {
+  transform: translateY(-1px);
+}
+
+.title-bar-brand:active .title-bar-logo {
+  transform: translateY(1px) scale(0.92);
+}
+
+.title-bar-drag-area {
+  flex: 1 1 auto;
+  align-self: stretch;
+}
+
 .title-bar-logo {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
+  transition: transform 140ms ease;
 }
 
 .title-bar-app-name {
-  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -236,6 +276,53 @@ html[data-platform='darwin'] .title-bar {
 .title-bar-settings:hover {
   background: var(--color-panel-elevated);
   color: var(--color-text);
+}
+
+/* Rocket easter egg (see RocketFlight.tsx). Portalled to document.body and anchored at the
+   launch point with left/top, because `transform` belongs entirely to the flight animation;
+   the body's negative margins are what put the rocket's centre on that anchor. Above every
+   dialog, but pointer-transparent: it flies over the UI without ever intercepting a click. */
+.rocket-flight {
+  position: fixed;
+  z-index: 120;
+  pointer-events: none;
+}
+
+.rocket-flight-body {
+  position: absolute;
+  width: 32px;
+  height: 44px;
+  margin-top: -22px;
+  margin-left: -16px;
+  filter: drop-shadow(0 6px 12px rgb(0 0 0 / 45%));
+  will-change: transform;
+}
+
+.rocket-flight-art {
+  display: block;
+}
+
+.rocket-flight-flame {
+  transform-origin: 16px 34px;
+  animation: rocket-flame-flicker 140ms steps(2, end) infinite alternate;
+}
+
+@keyframes rocket-flame-flicker {
+  from {
+    transform: scale(0.9, 0.78);
+    opacity: 0.85;
+  }
+
+  to {
+    transform: scale(1.05, 1.14);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rocket-flight-flame {
+    animation: none;
+  }
 }
 
 .app-body {

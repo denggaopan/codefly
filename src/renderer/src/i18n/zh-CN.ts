@@ -12,6 +12,7 @@ export const zhCN: Translations = {
   'common.remove': '移除',
 
   'titleBar.settings': '设置',
+  'titleBar.launchRocket': 'CodeFly — 发射一枚火箭',
 
   'sidebar.searchSessions': '搜索会话',
   'sidebar.dismissNotice': '关闭提示',

@@ -1,8 +1,15 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState, type MouseEvent } from 'react'
 
 import logoUrl from '../assets/logo.svg'
 import { useTranslation } from '../i18n/use-translation'
+import type { Point } from '../rocket-flight'
+import RocketFlight from './RocketFlight'
 import SettingsDialog from './SettingsDialog'
+
+interface RocketLaunch {
+  id: number
+  origin: Point
+}
 
 /**
  * Custom window title bar. Windows reserves its right-side titleBarOverlay; macOS reserves
@@ -12,11 +19,30 @@ import SettingsDialog from './SettingsDialog'
 export default function TitleBar() {
   const { t } = useTranslation()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [launches, setLaunches] = useState<RocketLaunch[]>([])
+  const nextLaunchId = useRef(1)
+
+  // The brand button is the easter egg's launch pad: every click drops another rocket from
+  // wherever the logo currently sits, so several can be in the air at once.
+  const launchRocket = (event: MouseEvent<HTMLButtonElement>) => {
+    const box = event.currentTarget.getBoundingClientRect()
+    const id = nextLaunchId.current++
+    setLaunches((current) => [...current, { id, origin: { x: box.left + box.width / 2, y: box.bottom } }])
+  }
+
+  const endLaunch = useCallback((id: number) => {
+    setLaunches((current) => current.filter((launch) => launch.id !== id))
+  }, [])
 
   return (
     <header className="title-bar">
-      <img className="title-bar-logo" src={logoUrl} alt="" aria-hidden="true" />
-      <span className="title-bar-app-name">CodeFly</span>
+      <button type="button" className="title-bar-brand" aria-label={t('titleBar.launchRocket')} onClick={launchRocket}>
+        <img className="title-bar-logo" src={logoUrl} alt="" aria-hidden="true" />
+        <span className="title-bar-app-name">CodeFly</span>
+      </button>
+      {/* Draggable filler: the brand button and the settings button are both no-drag, so
+          without this the window would have almost no grab area left. */}
+      <span className="title-bar-drag-area" aria-hidden="true" />
       <button
         type="button"
         className="title-bar-settings"
@@ -42,6 +68,9 @@ export default function TitleBar() {
         </svg>
       </button>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {launches.map((launch) => (
+        <RocketFlight key={launch.id} origin={launch.origin} onDone={() => endLaunch(launch.id)} />
+      ))}
     </header>
   )
 }
