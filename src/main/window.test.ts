@@ -8,6 +8,7 @@ const { mockApp, browserWindow, fakeWindow, mockMenu, mockNativeTheme } = vi.hoi
     setTitleBarOverlay: vi.fn(),
     setAlwaysOnTop: vi.fn(),
     isAlwaysOnTop: vi.fn(() => false),
+    maximize: vi.fn(),
     webContents: { setWindowOpenHandler: vi.fn() }
   }
   return {
@@ -33,6 +34,7 @@ describe('createMainWindow', () => {
     fakeWindow.loadFile.mockClear()
     fakeWindow.setBackgroundColor.mockClear()
     fakeWindow.setTitleBarOverlay.mockClear()
+    fakeWindow.maximize.mockClear()
     fakeWindow.webContents.setWindowOpenHandler.mockClear()
   })
 
@@ -88,6 +90,17 @@ describe('createMainWindow', () => {
     expect(mockMenu.setApplicationMenu).toHaveBeenCalledWith(null)
     const [options] = browserWindow.mock.calls[0] as unknown as [{ autoHideMenuBar?: boolean }]
     expect(options.autoHideMenuBar).toBe(true)
+  })
+
+  it('opens maximized while keeping a smaller restore size', () => {
+    createMainWindow()
+
+    expect(fakeWindow.maximize).toHaveBeenCalledOnce()
+    // The constructor size is what the user gets back when they un-maximize, so it stays
+    // windowed-sized rather than being grown to match the maximized frame.
+    const [options] = browserWindow.mock.calls[0] as unknown as [{ width?: number; height?: number }]
+    expect(options.width).toBe(1180)
+    expect(options.height).toBe(760)
   })
 
   it('sets the app icon on the window in development, deferring to the exe icon when packaged', () => {

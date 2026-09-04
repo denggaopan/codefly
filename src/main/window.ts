@@ -98,6 +98,11 @@ export function createMainWindow(platform: NodeJS.Platform = process.platform): 
     }
   })
 
+  // CodeFly is a workspace, not a utility panel: a terminal beside a project sidebar wants all
+  // the screen it can get, so the window opens maximized. The constructor width/height above
+  // stay windowed-sized on purpose — they become the restore bounds when the user un-maximizes.
+  window.maximize()
+
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
   const developmentUrl = app.isPackaged ? undefined : safeDevelopmentRendererUrl(process.env.ELECTRON_RENDERER_URL)

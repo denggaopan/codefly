@@ -327,6 +327,9 @@ jump to the bounds) and a double-click restores the default 300px. The width is 
 200px and 640px and can never leave the terminal workspace less than 360px, even when the window
 is later made narrower.
 
+The window itself is not remembered: CodeFly opens maximized every time, since a terminal beside
+a project sidebar wants the whole screen. Un-maximizing restores the 1180×760 windowed size.
+
 ## Testing
 
 ```bash
