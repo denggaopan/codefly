@@ -11,17 +11,22 @@ import {
   type AppSnapshot,
   type CapabilityState,
   type HostPlatform,
+  type SessionRecord,
   type ToolAvailability
 } from '../shared/contracts'
+import type { TerminalReplay } from '../shared/pty-protocol'
 import { cliLocator, type CliLocator } from './infrastructure/cli-locator'
 import { registerIpc } from './ipc/register-ipc'
 import { createBeforeQuitHandler } from './shutdown-controller'
 import { AppInfoService } from './services/app-info-service'
 import { ExternalAppService } from './services/external-app-service'
 import { ProjectService } from './services/project-service'
-import { SessionCoordinator } from './services/session-coordinator'
+import { PtyHostClient } from './services/pty-host-client'
+import { PtyHostLauncher } from './services/pty-host-launcher'
+import { PtyHostRuntime } from './services/pty-host-runtime'
+import { SessionCoordinator, type SessionTerminal } from './services/session-coordinator'
 import { SessionStore } from './services/session-store'
-import { TerminalService } from './services/terminal-service'
+import { TerminalService, type TerminalEventMap } from './services/terminal-service'
 import {
   createCliTitleAdapter,
   TitleService,
@@ -65,9 +70,18 @@ const buildGetSnapshot = (
   externalAppService: ExternalAppService,
   agentLocator: AgentLocator,
   store: Pick<SessionStore, 'recoveryWarning'>,
-  platform: HostPlatform
+  platform: HostPlatform,
+  /**
+   * Settles once the pty-host has been consulted and the session list reconciled against the
+   * PTYs it is actually holding. Awaited here, rather than blocking the window, so the first
+   * list the renderer ever draws is already the truth: without it a session that outlived the
+   * previous window would be painted from the persisted intent, and a terminal opened in that
+   * gap would ask for a replay no host had answered for yet and stay blank for good.
+   */
+  sessionsReconciled: Promise<void>
 ): (() => Promise<AppSnapshot>) => {
   return async () => {
+    await sessionsReconciled
     // Every agent kind is probed, including the ones switched off by default: the renderer can
     // enable one at any moment without another snapshot, and the launcher looks availability
     // up by kind with nothing to fall back to.
@@ -298,6 +312,154 @@ const buildE2EDialog = (projectPath: string | undefined): Dialog =>
       projectPath ? { canceled: false, filePaths: [projectPath] } : { canceled: true, filePaths: [] }
   }) as unknown as Dialog
 
+/**
+ * Everything the coordinator and the IPC layer need from a terminal implementation. Two
+ * satisfy it: `PtyHostClient`, a proxy to the resident host that keeps PTYs across UI
+ * restarts, and `TerminalService`, which owns them in this process and loses them with it.
+ */
+type TerminalImplementation = SessionTerminal & {
+  write(sessionId: string, data: string): void
+  resize(sessionId: string, cols: number, rows: number): void
+  isRunning(sessionId: string): boolean
+  replay?(sessionId: string): Promise<TerminalReplay>
+}
+
+/**
+ * Forwards every call to whichever implementation this launch settles on.
+ *
+ * The coordinator and the IPC handlers must be wired before the pty-host connection attempt
+ * can finish: the window has to open promptly, and the renderer's first request has to find
+ * its handler already registered. But which implementation answers is only known once that
+ * attempt resolves — the resident host if it can be reached, in-process PTYs if it cannot.
+ *
+ * Subscriptions taken before that point are held and re-issued against the winner. No other
+ * call can arrive early, because the renderer cannot name a session before `snapshot:get`
+ * answers, and that waits on the same reconciliation (see buildGetSnapshot).
+ */
+class DeferredTerminal implements TerminalImplementation {
+  private target: TerminalImplementation | undefined
+  private readonly heldSubscriptions: Array<(target: TerminalImplementation) => void> = []
+
+  bind(target: TerminalImplementation): void {
+    this.target = target
+    for (const attach of this.heldSubscriptions.splice(0)) attach(target)
+  }
+
+  private require(): TerminalImplementation {
+    if (!this.target) throw new Error('The terminal implementation was used before the pty-host attempt finished.')
+    return this.target
+  }
+
+  on<K extends keyof TerminalEventMap>(event: K, listener: (payload: TerminalEventMap[K]) => void): () => void {
+    const bound = this.target
+    if (bound) return bound.on(event, listener)
+
+    let dispose: (() => void) | undefined
+    let cancelled = false
+    this.heldSubscriptions.push((target) => {
+      if (!cancelled) dispose = target.on(event, listener)
+    })
+    return () => {
+      cancelled = true
+      dispose?.()
+    }
+  }
+
+  async start(session: SessionRecord, options?: { resume?: boolean }): Promise<void> {
+    return this.require().start(session, options)
+  }
+
+  write(sessionId: string, data: string): void {
+    this.require().write(sessionId, data)
+  }
+
+  resize(sessionId: string, cols: number, rows: number): void {
+    this.require().resize(sessionId, cols, rows)
+  }
+
+  async stop(sessionId: string): Promise<void> {
+    return this.require().stop(sessionId)
+  }
+
+  async stopAll(): Promise<void> {
+    return this.require().stopAll()
+  }
+
+  isRunning(sessionId: string): boolean {
+    return this.require().isRunning(sessionId)
+  }
+
+  async replay(sessionId: string): Promise<TerminalReplay> {
+    const target = this.require()
+    // The in-process fallback retains nothing, so there is nothing to repaint from. Reported
+    // as a failure rather than an empty screen because the IPC layer already folds a failed
+    // replay into "open this terminal empty", which is exactly right here.
+    if (!target.replay) throw new Error('This terminal implementation retains no output to replay.')
+    return target.replay(sessionId)
+  }
+
+  async detach(): Promise<void> {
+    const target = this.require()
+    if (target.detach) return target.detach()
+    // The fallback owns its PTYs and they die with this process regardless, so stopping them
+    // deliberately beats having the OS tear them down in the middle of a write.
+    return target.stopAll()
+  }
+}
+
+/**
+ * Records the host's pid for the E2E suite, whose whole point is that the host is still alive
+ * after the app it was started by has exited — so the suite needs a handle on it to clean up,
+ * and to assert the keepalive at all. Nothing in the application reads this.
+ */
+const recordE2EHostPid = (hostPid: number): void => {
+  const logPath = process.env.CODEFLY_E2E_HOST_PID_LOG
+  if (logPath === undefined) return
+  try {
+    writeFileSync(logPath, String(hostPid), 'utf8')
+  } catch (error) {
+    console.error('CodeFly: failed to record the pty-host pid for the E2E suite.', error)
+  }
+}
+
+/**
+ * Picks the terminal implementation for this launch and squares the persisted session list
+ * with the PTYs that actually exist. Never rejects: every outcome here has to leave a usable
+ * app, so a failure downgrades what sessions can do rather than what the app can do.
+ */
+const attachSessions = async (options: {
+  terminal: DeferredTerminal
+  coordinator: SessionCoordinator
+  client: PtyHostClient
+  fallback: TerminalImplementation
+}): Promise<void> => {
+  const { terminal, coordinator, client, fallback } = options
+
+  let liveSessionIds: ReadonlySet<string> = new Set()
+  let autoResume = true
+
+  const attachment = await client.connect()
+  if (attachment.status === 'connected') {
+    terminal.bind(client)
+    recordE2EHostPid(attachment.hostPid)
+    liveSessionIds = new Set(attachment.sessions.map((session) => session.sessionId))
+  } else {
+    // No host to talk to, so this window owns its PTYs and they end with it. The app stays
+    // fully usable; only the keepalive is gone.
+    console.error(
+      `CodeFly: running without a pty-host (${attachment.status}): ${attachment.message} Sessions will not outlive this window.`
+    )
+    terminal.bind(fallback)
+    // `unavailable` means no host exists, so nothing is running and resuming is safe.
+    // `incompatible` means one IS running, holding PTYs this build could not adopt and could
+    // not retire. Resuming then would start a SECOND agent process per session against the
+    // same worktree, which is worse than leaving them stopped for the user to restart by hand.
+    autoResume = attachment.status === 'unavailable'
+  }
+
+  await coordinator.reconcile(liveSessionIds, { autoResume })
+}
+
 app.whenReady().then(() => {
   const statePath = join(app.getPath('userData'), 'state.json')
   const store = new SessionStore(statePath)
@@ -324,7 +486,51 @@ app.whenReady().then(() => {
     : new UpdaterService(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, runtimePlatform)
   const dialogForIpc = isE2E ? buildE2EDialog(process.env.CODEFLY_E2E_PROJECT) : dialog
 
-  const coordinator = new SessionCoordinator(store, projectService, worktreeService, terminalService, titleService)
+  const userDataPath = app.getPath('userData')
+
+  /**
+   * The resident pty-host: it holds every PTY, so closing this window, reloading the renderer,
+   * or installing an update leaves the agents running and the next launch attaches to them.
+   *
+   * The endpoint is derived from the userData path, which keeps a second Windows account and
+   * the E2E suite's own --user-data-dir on hosts of their own. A dev run is separated from an
+   * installed build explicitly, even though both use the same userData: their `out/` builds
+   * differ, and a `npm run dev` window adopting the sessions of the installed CodeFly (or the
+   * reverse) would run this build's UI against the other build's host.
+   */
+  const ptyHostRuntime = new PtyHostRuntime({
+    platform: runtimePlatform,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    appPath: app.getAppPath(),
+    userDataPath,
+    appVersion: app.getVersion()
+  })
+  const ptyHostLauncher = new PtyHostLauncher(
+    app.isPackaged ? userDataPath : `${userDataPath}::dev`,
+    app.getVersion(),
+    async () => ({ ...(await ptyHostRuntime.resolve()), logPath: join(userDataPath, 'pty-host.log') })
+  )
+  const ptyHostClient = new PtyHostClient(ptyHostLauncher)
+  ptyHostClient.onDisconnected(() => {
+    // Deliberately not turned into 'stopped' status or a reconnect: a dropped socket says
+    // nothing about whether the PTYs behind it died, and guessing either way is worse than
+    // waiting. Restarting CodeFly reconciles against whatever is really there.
+    console.error('CodeFly: the pty-host connection dropped. Restart CodeFly to reattach or resume its sessions.')
+  })
+
+  const terminal = new DeferredTerminal()
+  const coordinator = new SessionCoordinator(store, projectService, worktreeService, terminal, titleService)
+  const sessionsReconciled = attachSessions({
+    terminal,
+    coordinator,
+    client: ptyHostClient,
+    fallback: terminalService
+  }).catch((error: unknown) => {
+    // attachSessions is written not to reject; if it somehow does, the snapshot must still be
+    // served or the window would sit empty forever.
+    console.error('CodeFly: failed to reconcile sessions at startup.', error)
+  })
 
   const window = createMainWindow(runtimePlatform)
 
@@ -337,8 +543,16 @@ app.whenReady().then(() => {
     externalAppService,
     appInfoService,
     updaterService,
-    terminalService,
-    getSnapshot: buildGetSnapshot(coordinator, projectService, externalAppService, agentLocator, store, runtimePlatform),
+    terminalService: terminal,
+    getSnapshot: buildGetSnapshot(
+      coordinator,
+      projectService,
+      externalAppService,
+      agentLocator,
+      store,
+      runtimePlatform,
+      sessionsReconciled
+    ),
     applyTheme: (theme) => applyWindowTheme(window, theme, runtimePlatform),
     applyPinned: (pinned) => applyWindowPinned(window, pinned)
   })

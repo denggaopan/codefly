@@ -4,9 +4,9 @@ import type { AppState, ProjectRecord, SessionRecord } from '../../shared/contra
 import type { ProjectService } from './project-service'
 import type { SessionStore } from './session-store'
 import type { RemoveWorktreeResult, SessionLocation, WorktreeService } from './worktree-service'
-import type { TerminalEventMap, TerminalService } from './terminal-service'
+import type { TerminalEventMap } from './terminal-service'
 import type { TitleService } from './title-service'
-import { SessionCoordinator, SessionNotFoundError } from './session-coordinator'
+import { SessionCoordinator, SessionNotFoundError, type SessionTerminal } from './session-coordinator'
 
 const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
 
@@ -64,13 +64,14 @@ type FakeWorktreeService = ReturnType<typeof fakeWorktreeService>
 
 type ExitListener = (payload: TerminalEventMap['exit']) => void
 
-class FakeTerminalService {
-  readonly start = vi.fn(async (_session: SessionRecord) => undefined)
+/** Stands in for the in-process TerminalService: owns its PTYs, so it cannot detach. */
+class FakeTerminalService implements SessionTerminal {
+  readonly start = vi.fn(async (_session: SessionRecord, _options?: { resume?: boolean }) => undefined)
   readonly stop = vi.fn(async (_sessionId: string) => undefined)
   readonly stopAll = vi.fn(async () => undefined)
   private readonly exitListeners = new Set<ExitListener>()
 
-  on(event: 'data' | 'exit', listener: (payload: never) => void): () => void {
+  on<K extends keyof TerminalEventMap>(event: K, listener: (payload: TerminalEventMap[K]) => void): () => void {
     if (event === 'exit') {
       const exitListener = listener as unknown as ExitListener
       this.exitListeners.add(exitListener)
@@ -86,6 +87,11 @@ class FakeTerminalService {
   }
 }
 
+/** Stands in for the pty-host client: the PTYs live elsewhere, so quitting only detaches. */
+class FakeDetachableTerminalService extends FakeTerminalService {
+  readonly detach = vi.fn(async () => undefined)
+}
+
 const fakeTitleService = () => ({
   generate: vi.fn(async (_sessionId: string, _kind: SessionRecord['kind'], input: string) => input),
   cancel: vi.fn((_sessionId: string): void => undefined)
@@ -93,29 +99,30 @@ const fakeTitleService = () => ({
 
 type FakeTitleService = ReturnType<typeof fakeTitleService>
 
-type Harness = {
+type Harness<T extends FakeTerminalService = FakeTerminalService> = {
   store: FakeStore
   projectService: FakeProjectService
   worktreeService: FakeWorktreeService
-  terminalService: FakeTerminalService
+  terminalService: T
   titleService: FakeTitleService
   coordinator: SessionCoordinator
 }
 
-const buildHarness = (options: {
+const buildHarness = <T extends FakeTerminalService = FakeTerminalService>(options: {
   initial?: AppState
   createId?: () => string
-} = {}): Harness => {
+  terminalService?: T
+} = {}): Harness<T> => {
   const store = fakeStore(options.initial)
   const projectService = fakeProjectService()
   const worktreeService = fakeWorktreeService()
-  const terminalService = new FakeTerminalService()
+  const terminalService = options.terminalService ?? (new FakeTerminalService() as T)
   const titleService = fakeTitleService()
   const coordinator = new SessionCoordinator(
     store as unknown as SessionStore,
     projectService as unknown as ProjectService,
     worktreeService as unknown as WorktreeService,
-    terminalService as unknown as TerminalService,
+    terminalService,
     titleService as unknown as TitleService,
     clock,
     options.createId ?? (() => 'session-1')
@@ -686,22 +693,209 @@ describe('SessionCoordinator.delete', () => {
 })
 
 describe('SessionCoordinator.shutdown', () => {
-  it('cancels title jobs, stops every PTY, and reconciles any still-running status', async () => {
+  it('cancels title jobs, detaches without killing anything, and leaves running sessions running', async () => {
     const sessions: SessionRecord[] = [
       runningSession({ id: 'a', status: 'running' }),
       runningSession({ id: 'b', status: 'creating' })
     ]
-    const { store, terminalService, titleService, coordinator } = buildHarness({
-      initial: { ...emptyState(), sessions }
+    const terminalService = new FakeDetachableTerminalService()
+    const { store, titleService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions },
+      terminalService
     })
 
     await coordinator.shutdown()
 
     expect(titleService.cancel).toHaveBeenCalledWith('a')
     expect(titleService.cancel).toHaveBeenCalledWith('b')
-    expect(terminalService.stopAll).toHaveBeenCalledOnce()
+    expect(terminalService.detach).toHaveBeenCalledOnce()
+    // The whole point of the resident host: quitting must not end a single session.
+    expect(terminalService.stop).not.toHaveBeenCalled()
+    expect(terminalService.stopAll).not.toHaveBeenCalled()
     const persisted = await store.load()
-    expect(persisted.sessions.map((s) => s.status)).toEqual(['stopped', 'stopped'])
+    expect(persisted.sessions.map((s) => s.status)).toEqual(['running', 'stopped'])
+  })
+
+  it('falls back to stopAll when the injected terminal owns its PTYs and cannot detach', async () => {
+    const sessions: SessionRecord[] = [
+      runningSession({ id: 'a', status: 'running' }),
+      runningSession({ id: 'b', status: 'creating' })
+    ]
+    const { store, terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions } })
+
+    await coordinator.shutdown()
+
+    expect(terminalService.stopAll).toHaveBeenCalledOnce()
+    // 'running' is still recorded as intent even on the fallback path: those PTYs die with the
+    // process, and reconcile() turning that intent into a resume on the next start is exactly
+    // the "restore whatever was running" behaviour the product promises.
+    const persisted = await store.load()
+    expect(persisted.sessions.map((s) => s.status)).toEqual(['running', 'stopped'])
+  })
+})
+
+describe('SessionCoordinator.reconcile', () => {
+  it('keeps a session running when the host still holds its PTY, without relaunching it', async () => {
+    const session = runningSession({ status: 'running' })
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+
+    const state = await coordinator.reconcile(new Set(['session-1']))
+
+    expect(state.sessions[0]).toMatchObject({ status: 'running' })
+    expect(terminalService.start).not.toHaveBeenCalled()
+  })
+
+  it('adopts a live session that was persisted as error and drops the stale message', async () => {
+    const session = runningSession({ status: 'error', lastError: 'claude not available' })
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+
+    const state = await coordinator.reconcile(new Set(['session-1']))
+
+    expect(state.sessions[0]).toMatchObject({ status: 'running' })
+    expect(state.sessions[0]).not.toHaveProperty('lastError')
+    expect(terminalService.start).not.toHaveBeenCalled()
+  })
+
+  it('adopts a live session that was persisted as creating rather than demoting it', async () => {
+    const session = runningSession({ status: 'creating' })
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+
+    const state = await coordinator.reconcile(new Set(['session-1']))
+
+    expect(state.sessions[0]).toMatchObject({ status: 'running' })
+    expect(terminalService.start).not.toHaveBeenCalled()
+  })
+
+  it('resumes a running session the host no longer has, using the agent resume flag', async () => {
+    const session = runningSession({ kind: 'claude', status: 'running' })
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+
+    const state = await coordinator.reconcile(new Set())
+
+    expect(terminalService.start).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), { resume: true })
+    expect(state.sessions[0]).toMatchObject({ status: 'running' })
+  })
+
+  it('demotes a creating session the host does not have to stopped instead of resuming it', async () => {
+    const session = runningSession({ status: 'creating' })
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+
+    const state = await coordinator.reconcile(new Set())
+
+    expect(terminalService.start).not.toHaveBeenCalled()
+    expect(state.sessions[0]).toMatchObject({ status: 'stopped' })
+  })
+
+  // 'stopped' is what stop() persists, which is how a session the user ended on purpose is
+  // told apart from one that was interrupted — no extra field needed.
+  it.each(['stopped' as const, 'error' as const, 'missing' as const])(
+    'never auto-resumes a session persisted as %s',
+    async (status) => {
+      const session = runningSession({ status })
+      const { store, terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+
+      const state = await coordinator.reconcile(new Set())
+
+      expect(terminalService.start).not.toHaveBeenCalled()
+      expect(state.sessions[0]).toMatchObject({ status })
+      expect(store.update).not.toHaveBeenCalled()
+    }
+  )
+
+  it('resumes the remaining sessions when one of them fails to start', async () => {
+    const sessions = [runningSession({ id: 'a', status: 'running' }), runningSession({ id: 'b', status: 'running' })]
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions } })
+    terminalService.start.mockRejectedValueOnce(new Error('claude not available'))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      const state = await coordinator.reconcile(new Set())
+
+      expect(terminalService.start).toHaveBeenCalledTimes(2)
+      expect(state.sessions.map((s) => s.status)).toEqual(['error', 'running'])
+      expect(state.sessions[0]).toMatchObject({ lastError: 'claude not available' })
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('failed to resume session a'), expect.any(Error))
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('marks a resumed session missing when its worktree is gone, without starting a PTY', async () => {
+    const session = runningSession({ mode: 'worktree', worktreeName: 'w', worktreePath: 'p', branchName: 'w', status: 'running' })
+    const { worktreeService, terminalService, coordinator } = buildHarness({
+      initial: { ...emptyState(), sessions: [session] }
+    })
+    worktreeService.validate.mockResolvedValue('missing')
+
+    const state = await coordinator.reconcile(new Set())
+
+    expect(terminalService.start).not.toHaveBeenCalled()
+    expect(state.sessions[0]).toMatchObject({ status: 'missing' })
+  })
+
+  it('kills a live host session that has no persisted record', async () => {
+    const { terminalService, coordinator } = buildHarness()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      await coordinator.reconcile(new Set(['orphan']))
+
+      expect(terminalService.stop).toHaveBeenCalledWith('orphan')
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('orphan'))
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('logs and continues when an orphan refuses to die, still reconciling the known sessions', async () => {
+    const session = runningSession({ status: 'running' })
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+    terminalService.stop.mockRejectedValueOnce(new Error('host refused'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    try {
+      const state = await coordinator.reconcile(new Set(['session-1', 'orphan']))
+
+      expect(state.sessions[0]).toMatchObject({ status: 'running' })
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('orphan'), expect.any(Error))
+    } finally {
+      warnSpy.mockRestore()
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('marks running sessions stopped without resuming when autoResume is false', async () => {
+    const sessions = [runningSession({ id: 'a', status: 'running' }), runningSession({ id: 'b', status: 'creating' })]
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions } })
+
+    const state = await coordinator.reconcile(new Set(), { autoResume: false })
+
+    expect(terminalService.start).not.toHaveBeenCalled()
+    expect(state.sessions.map((s) => s.status)).toEqual(['stopped', 'stopped'])
+  })
+
+  it('still adopts live sessions when autoResume is false', async () => {
+    const session = runningSession({ status: 'running' })
+    const { terminalService, coordinator } = buildHarness({ initial: { ...emptyState(), sessions: [session] } })
+
+    const state = await coordinator.reconcile(new Set(['session-1']), { autoResume: false })
+
+    expect(terminalService.start).not.toHaveBeenCalled()
+    expect(state.sessions[0]).toMatchObject({ status: 'running' })
+  })
+
+  it('broadcasts only states it has already persisted', async () => {
+    const sessions = [runningSession({ id: 'a', status: 'creating' }), runningSession({ id: 'b', status: 'running' })]
+    const { store, coordinator } = buildHarness({ initial: { ...emptyState(), sessions } })
+    const seen: AppState[] = []
+    coordinator.onStateChanged((state) => seen.push(state))
+
+    const state = await coordinator.reconcile(new Set(['b']))
+
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.at(-1)).toEqual(await store.load())
+    expect(state.sessions.map((s) => s.status)).toEqual(['stopped', 'running'])
   })
 })
 

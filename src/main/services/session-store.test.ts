@@ -59,33 +59,49 @@ describe('SessionStore', () => {
     await expect(store.load()).resolves.toEqual(state)
   })
 
-  it('normalizes interrupted sessions to stopped while preserving other statuses', async () => {
+  it('normalizes only creating sessions on load, leaving running as the recorded intent', async () => {
     const statuses = ['running', 'creating', 'error', 'missing', 'stopped'] as const
     const persisted = stateWith(statuses.map((status, index) => ({ ...stoppedSession, id: `s${index}`, status })))
     await writeFile(filePath, JSON.stringify(persisted), 'utf8')
 
     const loaded = await new SessionStore(filePath).load()
 
-    expect(loaded.sessions.map((session) => session.status)).toEqual(['stopped', 'stopped', 'error', 'missing', 'stopped'])
+    // 'running' survives because the PTYs now live in the resident pty-host: only that host's
+    // session table can retire the status, which SessionCoordinator.reconcile() consults.
+    expect(loaded.sessions.map((session) => session.status)).toEqual(['running', 'stopped', 'error', 'missing', 'stopped'])
   })
 
-  it('preserves live statuses across unrelated updates but normalizes recovered disk state once', async () => {
+  it('keeps a recovered running session running and demotes a recovered creating session', async () => {
+    const secondProject = { id: 'p2', name: 'Two', path: 'E:/two', createdAt: '2026-08-26T00:00:00.000Z' }
     const running = stateWith([{ ...stoppedSession, status: 'running' }])
     const store = new SessionStore(filePath)
     await store.save(running)
 
-    const liveUpdate = await store.update((state) => ({
-      ...state,
-      projects: [...state.projects, { id: 'p2', name: 'Two', path: 'E:/two', createdAt: '2026-08-26T00:00:00.000Z' }]
-    }))
+    const liveUpdate = await store.update((state) => ({ ...state, projects: [...state.projects, secondProject] }))
     expect(liveUpdate.sessions[0]!.status).toBe('running')
 
+    // A fresh process reading the very same file must reach the same conclusion.
     await writeFile(filePath, JSON.stringify(running), 'utf8')
-    const recoveredUpdate = await new SessionStore(filePath).update((state) => ({
+    const recoveredRunning = await new SessionStore(filePath).update((state) => ({
       ...state,
-      projects: [...state.projects, { id: 'p2', name: 'Two', path: 'E:/two', createdAt: '2026-08-26T00:00:00.000Z' }]
+      projects: [...state.projects, secondProject]
     }))
-    expect(recoveredUpdate.sessions[0]!.status).toBe('stopped')
+    expect(recoveredRunning.sessions[0]!.status).toBe('running')
+
+    await writeFile(filePath, JSON.stringify(stateWith([{ ...stoppedSession, status: 'creating' }])), 'utf8')
+    const recoveredCreating = await new SessionStore(filePath).load()
+    expect(recoveredCreating.sessions[0]!.status).toBe('stopped')
+  })
+
+  it('preserves a running status while recovering from a malformed primary', async () => {
+    await writeFile(filePath, '{ "version": 1, ', 'utf8')
+    await writeFile(`${filePath}.bak`, JSON.stringify(stateWith([{ ...stoppedSession, status: 'running' }])), 'utf8')
+    const store = new SessionStore(filePath)
+
+    const loaded = await store.load()
+
+    expect(loaded.sessions[0]!.status).toBe('running')
+    expect(store.recoveryWarning()).toContain('recovered from backup')
   })
 
   it('recovers from a primary operational read error by loading a valid backup', async () => {

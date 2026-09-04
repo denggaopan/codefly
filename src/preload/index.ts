@@ -16,6 +16,7 @@ import type {
 } from '../shared/contracts'
 import { IPC } from '../shared/ipc'
 import type { ExternalLinkTarget } from '../shared/links'
+import type { TerminalDataEvent, TerminalReplay } from '../shared/pty-protocol'
 
 export type CodeFlyApi = {
   getSnapshot(): Promise<AppSnapshot>
@@ -47,8 +48,12 @@ export type CodeFlyApi = {
   setAutoLaunch(enabled: boolean): Promise<boolean>
   writeTerminal(sessionId: string, data: string): void
   resizeTerminal(sessionId: string, cols: number, rows: number): void
+  // Answers `undefined` — never rejects — for a session the pty-host is not holding, which is
+  // every session that is not currently running. A terminal opened for one of those simply
+  // starts empty, exactly as it did before the host existed.
+  replayTerminal(sessionId: string): Promise<TerminalReplay | undefined>
   onStateChanged(listener: (state: AppState) => void): () => void
-  onTerminalData(listener: (event: { sessionId: string; data: string }) => void): () => void
+  onTerminalData(listener: (event: TerminalDataEvent) => void): () => void
   onTerminalExit(listener: (event: { sessionId: string; exitCode: number }) => void): () => void
   onUpdateProgress(listener: (progress: UpdateDownloadProgress) => void): () => void
 }
@@ -85,6 +90,7 @@ const api: CodeFlyApi = {
   resizeTerminal: (sessionId, cols, rows) => {
     ipcRenderer.send(IPC.terminalResize, { sessionId, cols, rows })
   },
+  replayTerminal: (sessionId) => ipcRenderer.invoke(IPC.terminalReplay, { sessionId }),
 
   onStateChanged: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, state: AppState): void => listener(state)

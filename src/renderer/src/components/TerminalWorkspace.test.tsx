@@ -18,6 +18,7 @@ import type {
   UpdateInstallResult
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
+import type { TerminalReplay } from '../../../shared/pty-protocol'
 import { BYPASS_WARNING_TEXT } from '../session-status'
 import { useAppStore } from '../store/use-app-store'
 import { AGENT_NEWLINE_SEQUENCE } from '../terminal/terminal-key-bindings'
@@ -174,7 +175,7 @@ vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: FakeWebglAddon }))
 // helpers like mockResolvedValueOnce/mockClear used below. Structural compatibility with
 // window.codefly is still checked at the `window.codefly = api` assignment site.
 const createFakeApi = () => {
-  const dataListeners = new Set<(payload: { sessionId: string; data: string }) => void>()
+  const dataListeners = new Set<(payload: { sessionId: string; data: string; sequence?: number }) => void>()
   const exitListeners = new Set<(payload: { sessionId: string; exitCode: number }) => void>()
   return {
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({
@@ -209,8 +210,9 @@ const createFakeApi = () => {
     onUpdateProgress: vi.fn(() => () => undefined),
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
+    replayTerminal: vi.fn(async (_sessionId: string): Promise<TerminalReplay | undefined> => undefined),
     onStateChanged: vi.fn(() => () => undefined),
-    onTerminalData: vi.fn((listener: (payload: { sessionId: string; data: string }) => void) => {
+    onTerminalData: vi.fn((listener: (payload: { sessionId: string; data: string; sequence?: number }) => void) => {
       dataListeners.add(listener)
       return vi.fn(() => {
         dataListeners.delete(listener)
@@ -222,7 +224,7 @@ const createFakeApi = () => {
         exitListeners.delete(listener)
       })
     }),
-    emitTerminalData: (payload: { sessionId: string; data: string }) => {
+    emitTerminalData: (payload: { sessionId: string; data: string; sequence?: number }) => {
       for (const listener of [...dataListeners]) listener(payload)
     },
     emitTerminalExit: (payload: { sessionId: string; exitCode: number }) => {
@@ -445,6 +447,107 @@ describe('TerminalWorkspace', () => {
 
     await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
     expect(FakeTerminal.instances[0].write).toHaveBeenCalledWith('CODEFLY_FAKE_AGENT_READY\r\n')
+  })
+
+  it('does not redraw pre-hydration live output already covered by the pty-host replay', async () => {
+    // The host sends the replay response before any later data event. Anything this renderer
+    // received before that boundary is therefore already present in the snapshot and must not
+    // be written a second time.
+    let releaseReplay: ((replay: TerminalReplay | undefined) => void) | undefined
+    api.replayTerminal.mockImplementationOnce(
+      () =>
+        new Promise<TerminalReplay | undefined>((resolve) => {
+          releaseReplay = resolve
+        })
+    )
+    seedStore(runningClaudeSession)
+    render(<TerminalWorkspace />)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    const terminal = FakeTerminal.instances[0]
+
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: 'LIVE-BEFORE-REPLAY', sequence: 4 })
+    expect(terminal.write).not.toHaveBeenCalled()
+
+    await act(async () => {
+      releaseReplay?.({
+        data: 'HISTORY-FROM-HOSTLIVE-BEFORE-REPLAY',
+        cols: 80,
+        rows: 24,
+        throughSequence: 4
+      })
+    })
+
+    expect(terminal.write.mock.calls.map((call) => call[0])).toEqual(['HISTORY-FROM-HOSTLIVE-BEFORE-REPLAY'])
+  })
+
+  it('releases pre-hydration live output when the host has no replay', async () => {
+    let releaseReplay: ((replay: TerminalReplay | undefined) => void) | undefined
+    api.replayTerminal.mockImplementationOnce(
+      () =>
+        new Promise<TerminalReplay | undefined>((resolve) => {
+          releaseReplay = resolve
+        })
+    )
+    seedStore(runningClaudeSession)
+    render(<TerminalWorkspace />)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    const terminal = FakeTerminal.instances[0]
+
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: 'LIVE-WITHOUT-REPLAY' })
+    await act(async () => {
+      releaseReplay?.(undefined)
+    })
+
+    expect(terminal.write).toHaveBeenCalledWith('LIVE-WITHOUT-REPLAY')
+  })
+
+  it('releases live output newer than the replay watermark', async () => {
+    let releaseReplay: ((replay: TerminalReplay | undefined) => void) | undefined
+    api.replayTerminal.mockImplementationOnce(
+      () =>
+        new Promise<TerminalReplay | undefined>((resolve) => {
+          releaseReplay = resolve
+        })
+    )
+    seedStore(runningClaudeSession)
+    render(<TerminalWorkspace />)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: 'AFTER-SNAPSHOT', sequence: 5 })
+    await act(async () => {
+      releaseReplay?.({ data: 'THROUGH-FOUR', cols: 80, rows: 24, throughSequence: 4 })
+    })
+
+    expect(FakeTerminal.instances[0].write.mock.calls.map((call) => call[0])).toEqual([
+      'THROUGH-FOUR',
+      'AFTER-SNAPSHOT'
+    ])
+  })
+
+  it('pushes one resize after attaching so a full-screen agent TUI repaints itself', async () => {
+    // The host keeps whatever geometry the previous window negotiated, and a TUI only redraws
+    // on a size change, so hydration deliberately defeats applyFit's dedupe.
+    api.replayTerminal.mockResolvedValueOnce({ data: 'HISTORY', cols: 200, rows: 50, throughSequence: 7 })
+    seedStore(runningClaudeSession)
+    render(<TerminalWorkspace />)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+
+    await waitFor(() => expect(api.resizeTerminal).toHaveBeenCalledWith(runningClaudeSession.id, 80, 24))
+  })
+
+  it('starts the terminal empty and keeps taking live output when the replay request fails', async () => {
+    api.replayTerminal.mockRejectedValueOnce(new Error('host connection lost'))
+    seedStore(runningClaudeSession)
+    render(<TerminalWorkspace />)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+
+    api.emitTerminalData({ sessionId: runningClaudeSession.id, data: 'STILL-WORKS' })
+
+    await waitFor(() => expect(FakeTerminal.instances[0].write).toHaveBeenCalledWith('STILL-WORKS'))
   })
 
   it('bounds pre-mount output to the newest 64 KiB per session', async () => {

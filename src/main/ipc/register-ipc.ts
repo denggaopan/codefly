@@ -31,6 +31,21 @@ import type { ProjectService } from '../services/project-service'
 import type { SessionCoordinator } from '../services/session-coordinator'
 import type { TerminalService } from '../services/terminal-service'
 import type { UpdaterService } from '../services/updater-service'
+import type { TerminalReplay } from '../../shared/pty-protocol'
+
+/**
+ * The slice of the terminal implementation this layer needs, structural rather than the
+ * concrete service: production wiring injects `PtyHostClient` — a proxy to the resident
+ * pty-host process that holds the PTYs across UI restarts — and falls back to the in-process
+ * `TerminalService` when no host can be reached.
+ *
+ * `replay` exists only on the host client. Without a host there is no retained output to hand
+ * back, so `terminal:replay` answers `undefined` and a terminal simply opens empty, exactly as
+ * it did before the host existed.
+ */
+export type IpcTerminal = Pick<TerminalService, 'write' | 'resize' | 'on'> & {
+  replay?(sessionId: string): Promise<TerminalReplay>
+}
 
 export type RegisterIpcDependencies = {
   ipcMain: IpcMain
@@ -41,7 +56,7 @@ export type RegisterIpcDependencies = {
   externalAppService: ExternalAppService
   appInfoService: AppInfoService
   updaterService: UpdaterService
-  terminalService: TerminalService
+  terminalService: IpcTerminal
   getSnapshot: () => Promise<AppSnapshot>
   applyTheme: (theme: ThemePreference) => void
   /** Returns the flag the window actually ended up with, which the renderer renders. */
@@ -156,6 +171,25 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
       async (_event, payload): Promise<DeleteSessionResult> => {
         const { sessionId } = sessionIdRequestSchema.parse(payload)
         return coordinator.delete(sessionId)
+      }
+    ],
+
+    [
+      // Answers the output the pty-host retained for a session so a terminal the current
+      // window has never drawn can be repainted. Never rejects: a session the host is not
+      // holding (never started, stopped long ago), a host that has gone away, and a build
+      // running without a host at all all mean "nothing to repaint", which is a blank
+      // terminal rather than a broken one.
+      IPC.terminalReplay,
+      async (_event, payload): Promise<TerminalReplay | undefined> => {
+        const { sessionId } = sessionIdRequestSchema.parse(payload)
+        if (terminalService.replay === undefined) return undefined
+        try {
+          return await terminalService.replay(sessionId)
+        } catch (error) {
+          console.error(`registerIpc: terminal:replay failed for session ${sessionId}.`, error)
+          return undefined
+        }
       }
     ],
 

@@ -20,6 +20,7 @@ import type {
   UpdateInstallResult
 } from '../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../shared/links'
+import type { TerminalReplay } from '../../shared/pty-protocol'
 import App from './App'
 import { SESSION_KINDS_STORAGE_KEY, useAppStore } from './store/use-app-store'
 
@@ -89,6 +90,7 @@ const createFakeApi = (state: AppState, capabilities: CapabilityState, platform:
     setAutoLaunch: vi.fn(async (enabled: boolean): Promise<boolean> => enabled),
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
+    replayTerminal: vi.fn(async (_sessionId: string): Promise<TerminalReplay | undefined> => undefined),
     onStateChanged: vi.fn((listener: (state: AppState) => void) => {
       stateListeners.add(listener)
       return () => {

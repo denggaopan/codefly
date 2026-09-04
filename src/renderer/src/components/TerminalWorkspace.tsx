@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { isAgentKind } from '../../../shared/agent-kinds'
 import type { SessionRecord, ThemePreference } from '../../../shared/contracts'
+import type { TerminalReplay } from '../../../shared/pty-protocol'
 import { useTranslation } from '../i18n/use-translation'
 import { sessionKindLabelKey } from '../session-kind-options'
 import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../session-status'
@@ -33,7 +34,16 @@ type TerminalEntry = {
   resizeObserver: ResizeObserver
   lastCols: number
   lastRows: number
+  // False until the session's retained output has been replayed into this instance. The PTY
+  // outlives the window (it lives in the pty-host process), so a terminal opened after a
+  // restart has to be repainted from the host's buffer BEFORE any live byte reaches it —
+  // otherwise new output would be drawn on a blank screen and the replay would then overwrite
+  // it. Live data arriving in the meantime waits in pendingDataRef; see hydrateEntry.
+  hydrated: boolean
 }
+
+type PendingDataChunk = { data: string; sequence?: number }
+type PendingData = { chunks: PendingDataChunk[]; chars: number }
 
 // Kept identical to the --font-mono value in styles.css: xterm renders to its own canvas,
 // so it cannot inherit the CSS custom property and needs the same Windows system font stack
@@ -137,7 +147,7 @@ export default function TerminalWorkspace() {
 
   const [mountedSessionIds, setMountedSessionIds] = useState<string[]>([])
   const entriesRef = useRef<Map<string, TerminalEntry>>(new Map())
-  const pendingDataRef = useRef<Map<string, string>>(new Map())
+  const pendingDataRef = useRef<Map<string, PendingData>>(new Map())
   const hostRefCallbacks = useRef<Map<string, (element: HTMLDivElement | null) => void>>(new Map())
 
   // Mirrors `activeSessionId` for use inside stable closures (the ResizeObserver callback
@@ -233,17 +243,73 @@ export default function TerminalWorkspace() {
     const resizeObserver = new ResizeObserver(() => applyFit(sessionId))
     resizeObserver.observe(element)
 
-    entriesRef.current.set(sessionId, { terminal, fitAddon, tracker, element, dataDisposable, resizeObserver, lastCols: 0, lastRows: 0 })
-    const pendingData = pendingDataRef.current.get(sessionId)
-    if (pendingData !== undefined) {
-      pendingDataRef.current.delete(sessionId)
-      terminal.write(pendingData)
+    const entry: TerminalEntry = {
+      terminal,
+      fitAddon,
+      tracker,
+      element,
+      dataDisposable,
+      resizeObserver,
+      lastCols: 0,
+      lastRows: 0,
+      hydrated: false
     }
+    entriesRef.current.set(sessionId, entry)
+    void hydrateEntry(sessionId, entry)
   }
 
-  const writeOrBuffer = (sessionId: string, data: string): void => {
+  /**
+   * Repaints a newly opened instance from the output the pty-host retained for that session,
+   * then releases the live bytes that queued up during the round trip. Ordering is the whole
+   * point: replay is older than anything in pendingDataRef, so it has to be written first.
+   *
+   * A session the host does not know about (never started, or stopped long ago) simply has no
+   * replay — the request answers `undefined` rather than failing, exactly like the rest of the
+   * app's "fold failures into a result" IPC surface, so a fresh session costs one no-op round
+   * trip and takes the same code path as an adopted one.
+   *
+   * The forced re-fit at the end is not cosmetic: the host's PTY keeps whatever geometry the
+   * previous window negotiated, and full-screen agent TUIs only repaint themselves when the
+   * size changes. Zeroing lastCols/lastRows defeats applyFit's dedupe so the PTY always gets
+   * one resize after an attach, which is what makes the agent redraw its current screen.
+   */
+  const hydrateEntry = async (sessionId: string, entry: TerminalEntry): Promise<void> => {
+    let replay: TerminalReplay | undefined
+    try {
+      replay = await window.codefly.replayTerminal(sessionId)
+    } catch {
+      // A failed replay must never leave the pane wedged behind an unhydrated gate: the
+      // session keeps working, it just starts from an empty screen.
+      replay = undefined
+    }
+
+    // The pane may have been disposed (session deleted, component unmounted) or replaced
+    // while the request was in flight; writing into a disposed Terminal throws.
+    if (entriesRef.current.get(sessionId) !== entry) return
+
+    if (replay !== undefined && replay.data.length > 0) entry.terminal.write(replay.data)
+    entry.hydrated = true
+
+    const pending = pendingDataRef.current.get(sessionId)
+    pendingDataRef.current.delete(sessionId)
+    if (pending !== undefined) {
+      for (const chunk of pending.chunks) {
+        // Host events at or below the snapshot watermark are already present in replay.data.
+        // Sequence-less chunks come from the no-replay fallback or local exit notices and can
+        // never safely be discarded.
+        if (replay !== undefined && chunk.sequence !== undefined && chunk.sequence <= replay.throughSequence) continue
+        entry.terminal.write(chunk.data)
+      }
+    }
+
+    entry.lastCols = 0
+    entry.lastRows = 0
+    applyFit(sessionId)
+  }
+
+  const writeOrBuffer = (sessionId: string, data: string, sequence?: number): void => {
     const entry = entriesRef.current.get(sessionId)
-    if (entry) {
+    if (entry?.hydrated) {
       entry.terminal.write(data)
       return
     }
@@ -252,8 +318,23 @@ export default function TerminalWorkspace() {
       const oldestSessionId = pendingDataRef.current.keys().next().value as string | undefined
       if (oldestSessionId !== undefined) pendingDataRef.current.delete(oldestSessionId)
     }
-    const combined = `${pendingDataRef.current.get(sessionId) ?? ''}${data}`
-    pendingDataRef.current.set(sessionId, combined.slice(-MAX_PENDING_DATA_PER_SESSION))
+    const previous = pendingDataRef.current.get(sessionId)
+    const chunks = [...(previous?.chunks ?? []), { data, sequence }]
+    let chars = (previous?.chars ?? 0) + data.length
+    let overflow = chars - MAX_PENDING_DATA_PER_SESSION
+    while (overflow > 0 && chunks.length > 0) {
+      const first = chunks[0]!
+      if (first.data.length <= overflow) {
+        overflow -= first.data.length
+        chars -= first.data.length
+        chunks.shift()
+      } else {
+        chunks[0] = { ...first, data: first.data.slice(overflow) }
+        chars -= overflow
+        overflow = 0
+      }
+    }
+    pendingDataRef.current.set(sessionId, { chunks, chars })
   }
 
   // `kind` is fixed for a session's lifetime, so capturing it in the callback created on first
@@ -354,8 +435,8 @@ export default function TerminalWorkspace() {
   // Subscribe to terminal data/exit exactly once and dispatch by session ID; dispose every
   // remaining entry and both subscriptions on unmount.
   useEffect(() => {
-    const disposeData = window.codefly.onTerminalData(({ sessionId, data }) => {
-      writeOrBuffer(sessionId, data)
+    const disposeData = window.codefly.onTerminalData(({ sessionId, data, sequence }) => {
+      writeOrBuffer(sessionId, data, sequence)
     })
     const disposeExit = window.codefly.onTerminalExit(({ sessionId, exitCode }) => {
       // The session record's status flips to 'stopped' via the main process's broadcast

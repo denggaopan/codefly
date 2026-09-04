@@ -11,5 +11,12 @@
     "noEmit": true,
     "types": ["node", "electron-vite/node"]
   },
-  "include": ["electron.vite.config.ts", "src/main/**/*.ts", "src/preload/**/*.ts", "src/shared/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "electron.vite.config.ts",
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/pty-host/**/*.ts",
+    "src/shared/**/*.ts",
+    "tests/**/*.ts"
+  ]
 }

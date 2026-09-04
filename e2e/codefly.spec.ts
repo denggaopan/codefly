@@ -20,9 +20,9 @@ import { createRepo } from './create-repo'
  * The 18 tests below run in one serial journey against one fixture repository/project so
  * that worktree sequence numbers, title generation, restart persistence, and deletion all
  * build on realistic prior state, the same way a user would experience them. Test 6
- * (relaunch) closes and re-opens the Electron app in the middle of the journey while
- * keeping the same --user-data-dir, so the remaining tests continue against the relaunched
- * window.
+ * (relaunch) closes and re-opens the Electron app in the middle of the journey while keeping
+ * the same --user-data-dir and resident pty-host, so the remaining tests continue against the
+ * same live sessions in the relaunched window.
  *
  * Covers the brief's 11 scenarios:
  *   1  Add the fixture project                              -> test 1
@@ -34,7 +34,7 @@ import { createRepo } from './create-repo'
  *   6  PowerShell/CMD sessions: bypass warning absent          -> test 5
  *   7  Second worktree session shows sequence 2 (the Codex
  *      session created in test 4 IS that second worktree)     -> test 4
- *   8  Stop/relaunch, click a stopped session to restore it    -> test 6
+ *   8  Relaunch, reattach to the same live PTYs                 -> test 6
  *   9  Mocked VS Code/Explorer actions don't toggle the row    -> test 7
  *  10  Dirty worktree blocks delete                            -> test 8
  *  11  Clean delete removes the directory, retains the branch  -> test 8
@@ -59,6 +59,7 @@ let repoPath: string
 let userDataDir: string
 let terminalArgvLog: string
 let titleArgvLog: string
+let hostPidLog: string
 let electronApp: ElectronApplication
 let window: Page
 
@@ -72,12 +73,31 @@ const launchApp = async (): Promise<{ app: ElectronApplication; page: Page }> =>
       CODEFLY_E2E_PROJECT: repoPath,
       CODEFLY_E2E_AGENT_CMD: fakeAgentCmd,
       CODEFLY_E2E_ARGV_LOG: terminalArgvLog,
-      CODEFLY_E2E_TITLE_ARGV_LOG: titleArgvLog
+      CODEFLY_E2E_TITLE_ARGV_LOG: titleArgvLog,
+      CODEFLY_E2E_HOST_PID_LOG: hostPidLog,
+      CODEFLY_PTY_HOST_IDLE_MS: '250'
     }
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   return { app, page }
+}
+
+const isProcessRunning = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const terminateUiProcess = async (app: ElectronApplication): Promise<void> => {
+  const uiPid = await app.evaluate(() => process.pid)
+  await app.evaluate(({ app }) => {
+    setImmediate(() => app.exit(0))
+  })
+  await expect.poll(() => isProcessRunning(uiPid), { timeout: 10_000 }).toBe(false)
 }
 
 const readJsonArgvLog = (path: string): unknown => JSON.parse(readFileSync(path, 'utf8'))
@@ -133,6 +153,7 @@ test.beforeAll(async () => {
   const logsDir = mkdtempSync(join(tmpdir(), 'codefly-e2e-logs-'))
   terminalArgvLog = join(logsDir, 'terminal-argv.json')
   titleArgvLog = join(logsDir, 'title-argv.json')
+  hostPidLog = join(logsDir, 'pty-host.pid')
 
   const launched = await launchApp()
   electronApp = launched.app
@@ -140,7 +161,19 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
-  await electronApp?.close()
+  try {
+    // Explicitly removing the project ends every PTY before the short E2E idle deadline lets
+    // the detached host exit. Without this, Playwright correctly sees the keepalive process
+    // still running and waits for its worker forever.
+    if (window && !window.isClosed()) {
+      await window.evaluate(async () => {
+        const snapshot = await window.codefly.getSnapshot()
+        for (const project of snapshot.state.projects) await window.codefly.removeProject(project.id)
+      })
+    }
+  } finally {
+    await electronApp?.close()
+  }
 })
 
 test('keeps Settings interactive outside the draggable title bar', async () => {
@@ -710,8 +743,21 @@ test('keeps the opt-in agent CLIs collapsed and off until enabled in Settings', 
   await expect(settingsDialog).toHaveCount(0)
 })
 
-test('stopping and relaunching the app preserves sessions as stopped, and clicking one restores it', async () => {
-  await electronApp.close()
+test('relaunches onto the same pty-host and keeps every session interactive', async () => {
+  const powershellRowBefore = sessionRowByKind('powershell')
+  await powershellRowBefore.locator('.session-row-content').click()
+  // The earlier focus test deliberately left text at this prompt. Clear it so this marker
+  // stays on one xterm row and a visual line wrap cannot turn a substring check into noise.
+  await window.keyboard.press('Control+C')
+  await window.keyboard.type('KEEPALIVE')
+  await expectVisibleTerminalToContain('KEEPALIVE')
+  await expect.poll(() => (existsSync(hostPidLog) ? Number(readFileSync(hostPidLog, 'utf8')) : 0)).toBeGreaterThan(0)
+  const originalHostPid = Number(readFileSync(hostPidLog, 'utf8'))
+
+  // Playwright's graceful close waits for every process in Electron's Windows job, including
+  // the resident host whose survival is the assertion. Terminating only the UI process models
+  // the crash/forced-close path and lets the next application attach to that same host.
+  await terminateUiProcess(electronApp)
 
   const relaunched = await launchApp()
   electronApp = relaunched.app
@@ -722,8 +768,9 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
 
   const rows = window.locator('.session-row')
   for (let index = 0; index < 4; index += 1) {
-    await expect(rows.nth(index).locator('.session-status-dot')).toHaveAttribute('aria-label', 'Click to restore')
+    await expect(rows.nth(index).locator('.session-status-dot')).toHaveAttribute('data-status', 'running')
   }
+  await expect.poll(() => (existsSync(hostPidLog) ? Number(readFileSync(hostPidLog, 'utf8')) : 0)).toBe(originalHostPid)
 
   // The session-kind switches live in the renderer's localStorage inside --user-data-dir, so
   // the Command Prompt worktree switch turned on earlier must still be on after the relaunch.
@@ -738,14 +785,13 @@ test('stopping and relaunching the app preserves sessions as stopped, and clicki
 
   const powershellRow = sessionRowByKind('powershell')
   await powershellRow.locator('.session-row-content').click()
-  await expect(powershellRow.locator('.session-status-dot')).toHaveAttribute('data-status', 'running', { timeout: 20_000 })
   await expect(powershellRow.locator('.session-row-content')).toHaveAttribute('aria-current', 'true')
+  await expectVisibleTerminalToContain('KEEPALIVE')
 
-  // Regression guard: restoring a session must also hand keyboard focus to its terminal —
-  // this exact flow (relaunch, click to restore, start typing) is where the missing focus
-  // was reported as "cannot type".
-  await window.keyboard.type('CODEFLY_RESTORE_FOCUS_CHECK')
-  await expectVisibleTerminalToContain('CODEFLY_RESTORE_FOCUS_CHECK')
+  // Reattachment must also hand keyboard focus to the adopted terminal, and input must reach
+  // the original PTY rather than a replacement process.
+  await window.keyboard.type('_AFTER')
+  await expectVisibleTerminalToContain('KEEPALIVE_AFTER')
 })
 
 test('mocked VS Code, Explorer, and repository project-row actions do not toggle the row or change the active session', async () => {
@@ -850,7 +896,8 @@ test('prompts on startup, downloads the installer in-app, and launches it on dem
       CODEFLY_E2E_PROJECT: repoPath,
       CODEFLY_E2E_AGENT_CMD: fakeAgentCmd,
       CODEFLY_E2E_RELEASE: JSON.stringify(release),
-      CODEFLY_E2E_INSTALL_LOG: installLog
+      CODEFLY_E2E_INSTALL_LOG: installLog,
+      CODEFLY_PTY_HOST_IDLE_MS: '250'
     }
   })
 

@@ -18,6 +18,7 @@ import type {
   UpdateInstallResult
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
+import type { TerminalReplay } from '../../../shared/pty-protocol'
 import closeIconUrl from '../assets/close.svg'
 import gitIconUrl from '../assets/git.svg'
 import githubIconUrl from '../assets/github.svg'
@@ -61,6 +62,7 @@ const createFakeApi = (): FakeApi => ({
   setAutoLaunch: vi.fn(async (enabled: boolean): Promise<boolean> => enabled),
   writeTerminal: vi.fn(),
   resizeTerminal: vi.fn(),
+  replayTerminal: vi.fn(async (_sessionId: string): Promise<TerminalReplay | undefined> => undefined),
   onStateChanged: vi.fn(() => () => undefined),
   onTerminalData: vi.fn(() => () => undefined),
   onTerminalExit: vi.fn(() => () => undefined),

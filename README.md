@@ -291,7 +291,9 @@ Both the release check and the download go through Chromium's network stack (Ele
 reaches GitHub through a proxy, the installer arrives in CodeFly as fast as it does in Chrome.
 
 When the download finishes CodeFly asks again: **Install now** quits the app and launches the
-installer (it has to quit — the installer replaces files the running app holds open), while
+installer (it has to quit — the installer replaces files the running app holds open; your
+sessions keep running, see [Sessions that outlive the window](#sessions-that-outlive-the-window)),
+while
 **Later** simply closes the dialog and leaves the downloaded installer on disk, so choosing
 **Update now** again later finds it already there and skips straight to the install prompt.
 Only that one installer is kept: every superseded installer and every `.part` file orphaned
@@ -307,14 +309,49 @@ IPC commands take no arguments, and the main process re-resolves the release ass
 refuses any download URL that is not an HTTPS GitHub release address. A non-Windows host, or
 a release without a `.exe` asset, offers only the download page and never an in-app download.
 
+## Sessions that outlive the window
+
+CodeFly's PTYs do not live in the window. They live in a resident **pty-host** process that the
+app starts on demand and then leaves running: closing CodeFly, reloading its renderer, a UI
+crash, and installing an update all leave every session — and every agent CLI working inside
+one — exactly where it was. Reopening CodeFly attaches to that host, repaints each terminal
+from the output it kept (the newest 256 KB per session), and pushes one resize so a
+full-screen agent TUI redraws its current screen.
+
+This is what makes an in-place update non-disruptive. **Install now** replaces the application
+while the host goes on holding the PTYs, and the freshly installed build attaches to the
+sessions the previous build started. The host that survives an update is, by design, still the
+*older* build; the two negotiate a protocol version on connect, and only a release that changes
+that protocol has to retire the old host — in which case its sessions are restarted with each
+agent's own resume flag rather than being adopted.
+
+On Windows the host cannot run from the installation directory, and that is not a detail: the
+installer NSIS generates kills every process whose image path starts with the install directory
+(regardless of executable name), and an upgrade renames every file in that directory away —
+one failure there aborts the whole upgrade. So on a packaged Windows build everything the host
+needs is staged under `pty-host/<version>/` in Electron's `userData` directory, and the
+executable is named `codefly-pty-host.exe` — that is the process to look for in Task Manager.
+The 244 MB Electron binary is hard-linked rather than copied wherever the filesystem allows it,
+so staging normally costs no disk space and no time; installing to a different volume falls
+back to a real copy. macOS needs none of this: replacing an `.app` there leaves the running
+process on its original inode.
+
+What actually ends a session, then: the session exiting on its own (quitting the agent, `exit`
+in a shell), deleting it, removing its project from the list, retiring the host on a protocol
+change, or restarting the machine. Quitting CodeFly is not on that list. The host itself exits
+once it has held no sessions and had no window connected for a minute.
+
 ## Persistence
 
 Projects and session metadata (not terminal scrollback, not PTY handles, not credentials)
-are stored in a versioned JSON file under Electron's `userData` directory. Every session is
-marked `stopped` the moment the app starts, regardless of its status when the app last
-closed; click a stopped session to restart the same terminal or agent type in its original
-directory. Restoring an agent session also asks its CLI to reattach the previous
-conversation, in whatever way that vendor spells it: `claude --continue`,
+are stored in a versioned JSON file under Electron's `userData` directory. A session recorded
+as `running` states an intention, not a fact: on startup CodeFly asks the pty-host which PTYs
+it is really holding and reconciles the two lists. Sessions the host still has are adopted
+untouched; sessions it no longer has are restarted in their original directory, and one the
+host has but the state file does not is killed rather than left running unattended. A session
+recorded as `stopped` — it exited on its own — is never restarted behind your back; click it
+to restart the same terminal or agent type. Restarting an agent session asks its CLI to
+reattach the previous conversation, in whatever way that vendor spells it: `claude --continue`,
 `codex resume --last`, `gemini --resume latest`, `copilot --continue`,
 `agent --resume`, `qwen --continue`. This is best-effort, and `comatecli` has no
 resume of its own, so a restored Comate session starts a fresh conversation. Shell sessions
@@ -441,6 +478,20 @@ for Comate, which has no resume and is expected to start fresh.
 - Verify **Ctrl+V**, agent **Shift+Enter**, and the Windows in-app download/cancel/install
   update flow. Windows has no new-session accelerator: confirm `Ctrl+T` reaches the focused
   terminal instead of creating a PowerShell session.
+- Verify session keepalive against a real installed build, which is the one thing the
+  automated suite cannot rehearse (it runs unpackaged, so nothing is staged and no installer
+  runs). Start a Claude session, give it a long task, then:
+  1. Quit CodeFly. `codefly-pty-host.exe` must still be in Task Manager and the agent must
+     still be working (its output keeps arriving in the host log under `userData`).
+  2. Reopen CodeFly. The session must come back **running**, not stopped, with its screen
+     repainted — check that the agent's current view is legible, not a half-drawn frame, since
+     the repaint depends on one resize reaching the TUI.
+  3. Install an update over it (**Update now** → **Install now**) with that session running.
+     The installer must not report a running application, must not fail, and the newly
+     installed build must attach to the same session rather than restarting it. Confirm
+     `userData/pty-host/` then holds a directory per version and that the superseded one
+     disappears after the old host exits.
+  4. Type into an adopted session and confirm the keystrokes reach the agent.
 - Check the pixel logo in the Claude and Codex startup banners for hairline seams, then repeat
   the check at a different display scale (100% and 150% put the cell grid on different widths).
   Two things keep the artwork solid, and a crack is the visible symptom of either failing: the

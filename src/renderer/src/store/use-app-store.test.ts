@@ -15,6 +15,7 @@ import type {
   UpdateInstallResult
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
+import type { TerminalReplay } from '../../../shared/pty-protocol'
 import { AGENT_KINDS, type AgentKind } from '../../../shared/agent-kinds'
 import { DEFAULT_SESSION_KIND_PREFERENCES } from '../../../shared/contracts'
 import { AGENT_IDLE_MS, SESSION_KINDS_STORAGE_KEY, WINDOW_PINNED_STORAGE_KEY, useAppStore } from './use-app-store'
@@ -81,6 +82,7 @@ const createFakeApi = () => {
     setAutoLaunch: vi.fn(async (enabled: boolean): Promise<boolean> => enabled),
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
+    replayTerminal: vi.fn(async (_sessionId: string): Promise<TerminalReplay | undefined> => undefined),
     onStateChanged: vi.fn(() => () => undefined),
     onTerminalData: vi.fn((listener: (payload: { sessionId: string; data: string }) => void) => {
       dataListeners.add(listener)

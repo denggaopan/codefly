@@ -290,6 +290,7 @@ describe('shared contracts', () => {
       appAutoLaunchSet: 'app:auto-launch-set',
       terminalWrite: 'terminal:write',
       terminalResize: 'terminal:resize',
+      terminalReplay: 'terminal:replay',
       stateChanged: 'state:changed',
       terminalData: 'terminal:data',
       terminalExit: 'terminal:exit',

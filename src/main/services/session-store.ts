@@ -19,11 +19,30 @@ const emptyState = (): AppState => ({ version: 1, projects: [], sessions: [] })
 
 const cloneState = (state: AppState): AppState => appStateSchema.parse(structuredClone(state))
 
+/**
+ * Reconciles the statuses read from disk with what a fresh process can actually know.
+ *
+ * `creating` becomes `stopped`: a session interrupted mid-creation has neither a PTY we can
+ * trust nor an agent conversation worth resuming (the CLI may never have printed a prompt),
+ * so it must not be picked up automatically. The user can start a new session instead.
+ *
+ * `running` is deliberately left alone. PTYs now live in the resident pty-host rather than in
+ * the Electron main process, so a `running` record that outlived a restart is no longer a lie
+ * — but it is not a verified fact either. Read it as *intent*: "the user wants this session
+ * alive". The only source of truth for what is actually alive is the session table the
+ * pty-host reports in its `welcome`, which `SessionCoordinator.reconcile()` diffs against this
+ * state at startup; until that diff runs, nothing here should claim to know.
+ *
+ * This is also why telling an involuntary interruption apart from a deliberate stop needs no
+ * extra field: `stop()` persists `stopped`, so a session the user stopped on purpose reads
+ * `stopped` here and is never a candidate for auto-resume, while a session that was `running`
+ * when the UI closed, crashed, or was replaced by an installer still reads `running`.
+ */
 const normalizeRuntimeStatuses = (state: AppState): AppState => ({
   ...state,
   projects: [...state.projects],
   sessions: state.sessions.map((session) =>
-    session.status === 'running' || session.status === 'creating' ? { ...session, status: 'stopped' } : { ...session }
+    session.status === 'creating' ? { ...session, status: 'stopped' } : { ...session }
   )
 })
 

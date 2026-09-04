@@ -4,7 +4,7 @@ import type { AppState, DeleteSessionResult, SessionKind, SessionRecord } from '
 import type { ProjectService } from './project-service'
 import type { SessionStore } from './session-store'
 import type { SessionLocation, WorktreeService } from './worktree-service'
-import type { TerminalEventMap, TerminalService } from './terminal-service'
+import type { TerminalEventMap } from './terminal-service'
 import type { TitleService } from './title-service'
 
 export class SessionNotFoundError extends Error {
@@ -63,6 +63,47 @@ export type CreateSessionOptions = {
 }
 
 /**
+ * Everything the coordinator needs from whatever owns the PTYs — and nothing more. Declared
+ * structurally rather than as `TerminalService` so both the in-process implementation and the
+ * pty-host client (which owns no PTY itself, it only talks to the resident host) satisfy it
+ * without either one having to know about the other.
+ *
+ * Only the members the coordinator actually calls are listed: `write`, `resize`, and
+ * `isRunning` belong to the IPC layer's path to the terminal, never to this class, so putting
+ * them here would widen the contract for no reason. There is deliberately no way to ask *this*
+ * object which sessions are alive either — `reconcile()` is handed that set, because the
+ * composition root already has it from the host's `welcome` handshake and is the only place
+ * that knows whether a host was reached at all.
+ */
+export interface SessionTerminal {
+  start(session: SessionRecord, options?: { resume?: boolean }): Promise<void>
+  /** Ends one session for good. Used where the user asked for it: stop, delete, remove project. */
+  stop(sessionId: string): Promise<void>
+  stopAll(): Promise<void>
+  on<K extends keyof TerminalEventMap>(event: K, listener: (payload: TerminalEventMap[K]) => void): () => void
+  /**
+   * Optional pty-host capability: drop the connection to the host and leave every PTY running.
+   * Absent on the in-process TerminalService, whose PTYs are children of this process and
+   * therefore cannot outlive it — see `shutdown()` for how that fallback is handled.
+   *
+   * Both return shapes are accepted because closing a socket needs no round trip (PtyHostClient
+   * detaches synchronously) while a future implementation might have to flush; `shutdown()`
+   * awaits the result either way, so neither side has to care which it is.
+   */
+  detach?(): void | Promise<void>
+}
+
+/**
+ * Options for `reconcile()`. `autoResume: false` is the degraded path for a startup where no
+ * host could be reached at all: without a host there is nothing to resume into, so the
+ * sessions the user had running are marked `stopped` and left for a manual click instead of
+ * being restarted into a void.
+ */
+export type ReconcileOptions = {
+  autoResume?: boolean
+}
+
+/**
  * Orchestrates the full lifecycle of a persistent session (create, restore, first-input
  * titling, stop, and delete) across SessionStore, ProjectService, WorktreeService,
  * TerminalService, and TitleService. State changes are only announced to subscribers
@@ -77,7 +118,7 @@ export class SessionCoordinator {
     private readonly store: SessionStore,
     private readonly projectService: ProjectService,
     private readonly worktreeService: WorktreeService,
-    private readonly terminalService: TerminalService,
+    private readonly terminalService: SessionTerminal,
     private readonly titleService: TitleService,
     private readonly clock: () => Date = () => new Date(),
     private readonly createId: () => string = randomUUID
@@ -135,35 +176,46 @@ export class SessionCoordinator {
   }
 
   async restore(sessionId: string): Promise<SessionRecord> {
-    return this.withLock(`session:${sessionId}`, async () => {
-      const current = await this.store.load()
-      const session = current.sessions.find((candidate) => candidate.id === sessionId)
-      if (!session) throw new SessionNotFoundError(sessionId)
-      if (session.status === 'running') return session
+    return this.withLock(`session:${sessionId}`, () => this.restoreLocked(sessionId))
+  }
 
-      const project = await this.projectService.get(session.projectId)
-      const validity = await this.worktreeService.validate(session, project)
+  /**
+   * The body of `restore()`, callable by `reconcile()` while it already holds the session lock
+   * (withLock is not reentrant). `adoptStaleRunning` exists because `running` is now intent
+   * rather than a verified fact: for a UI-driven restore, `running` means a PTY is already
+   * attached and the call is a no-op, but reconcile has just been told by the host that this
+   * particular `running` record has no PTY behind it, so the guard has to be skipped. The
+   * record is left at `running` while the relaunch is in flight rather than being demoted
+   * first: a crash mid-reconcile then still reads as "the user wants this alive" next time.
+   */
+  private async restoreLocked(sessionId: string, adoptStaleRunning = false): Promise<SessionRecord> {
+    const current = await this.store.load()
+    const session = current.sessions.find((candidate) => candidate.id === sessionId)
+    if (!session) throw new SessionNotFoundError(sessionId)
+    if (session.status === 'running' && !adoptStaleRunning) return session
 
-      if (validity === 'missing') {
-        const missing = await this.updateSession(sessionId, (existing) => withoutError({ ...existing, status: 'missing' }))
-        return missing ?? withoutError({ ...session, status: 'missing' })
-      }
+    const project = await this.projectService.get(session.projectId)
+    const validity = await this.worktreeService.validate(session, project)
 
-      try {
-        await this.terminalService.start(session, { resume: true })
-      } catch (error) {
-        await this.updateSession(sessionId, (existing) => ({ ...existing, status: 'error', lastError: errorMessage(error) }))
-        throw error
-      }
+    if (validity === 'missing') {
+      const missing = await this.updateSession(sessionId, (existing) => withoutError({ ...existing, status: 'missing' }))
+      return missing ?? withoutError({ ...session, status: 'missing' })
+    }
 
-      try {
-        const running = await this.updateSession(sessionId, (existing) => withoutError({ ...existing, status: 'running' }))
-        return running ?? withoutError({ ...session, status: 'running' })
-      } catch (error) {
-        await this.compensateStartedSession(sessionId, error)
-        throw error
-      }
-    })
+    try {
+      await this.terminalService.start(session, { resume: true })
+    } catch (error) {
+      await this.updateSession(sessionId, (existing) => ({ ...existing, status: 'error', lastError: errorMessage(error) }))
+      throw error
+    }
+
+    try {
+      const running = await this.updateSession(sessionId, (existing) => withoutError({ ...existing, status: 'running' }))
+      return running ?? withoutError({ ...session, status: 'running' })
+    } catch (error) {
+      await this.compensateStartedSession(sessionId, error)
+      throw error
+    }
   }
 
   async stop(sessionId: string): Promise<void> {
@@ -249,6 +301,11 @@ export class SessionCoordinator {
    * disk is touched — the directory, its worktrees, and their branches stay exactly as they
    * are, which is what "remove from list" promises. A PTY that refuses to stop is logged and
    * skipped rather than blocking the removal: the record is going away either way.
+   *
+   * Unlike `shutdown()`, this really does kill: the keepalive contract is "the sessions outlive
+   * the UI", not "the sessions outlive the record that names them". Once the last record is
+   * gone nothing could ever attach to those PTYs again, and an agent CLI running with its
+   * permission bypass on and no UI to show it is exactly what reconcile() has to hunt down.
    */
   async removeProject(projectId: string): Promise<void> {
     return this.withLock(`project:${projectId}`, async () => {
@@ -275,19 +332,128 @@ export class SessionCoordinator {
     })
   }
 
+  /**
+   * Startup handshake: diffs the sessions the pty-host reports as alive against what was
+   * persisted, so the UI ends up showing what is actually running rather than what happened
+   * to be running when it last quit. Call it once the host's session table is known — the
+   * composition root owns the connection, this class only owns the bookkeeping.
+   *
+   * Four cases:
+   *
+   * - **alive and known** — the PTY survived the UI, so the record is (re)marked `running` and
+   *   any stale `lastError` is dropped. This is the whole point of the resident host.
+   * - **known but not alive, record says `running`** — the host itself was replaced (installer,
+   *   reboot, crash) while the user still wanted those sessions. Each one is relaunched through
+   *   the normal restore path, which passes the agent's own resume flag so the previous
+   *   conversation continues. One failure never blocks the others.
+   * - **known but not alive, record says `creating`** — demoted to `stopped`. SessionStore
+   *   already does this when it loads a state file, but that only covers a state file read by
+   *   *this* process: reconcile also runs after a mid-session host restart, against state that
+   *   is already in memory and was never re-normalized. Cheap belt and braces for a status
+   *   that must never be auto-resumed.
+   * - **alive but unknown** — an orphan: the state file rolled back to a backup, or a delete
+   *   landed while the host was unreachable. It is killed. Leaving it would mean an agent CLI
+   *   running with its vendor's permission bypass fully enabled, in a directory the user is
+   *   working in, with no record anywhere in the UI and no way to stop it.
+   *
+   * Follows the usual rules: every status change is persisted before it is broadcast, and each
+   * session's transition happens under that session's lock.
+   */
+  async reconcile(liveSessionIds: ReadonlySet<string>, options: ReconcileOptions = {}): Promise<AppState> {
+    const autoResume = options.autoResume !== false
+    const current = await this.store.load()
+
+    const adopt: string[] = []
+    const resume: string[] = []
+    const demote: string[] = []
+
+    for (const session of current.sessions) {
+      if (liveSessionIds.has(session.id)) {
+        adopt.push(session.id)
+      } else if (session.status === 'creating') {
+        demote.push(session.id)
+      } else if (session.status === 'running') {
+        // `running` with no PTY behind it is the user's intent, not a fact: honour it by
+        // resuming, unless the caller told us there is no host to resume into.
+        if (autoResume) resume.push(session.id)
+        else demote.push(session.id)
+      }
+    }
+
+    for (const sessionId of adopt) {
+      try {
+        await this.withLock(`session:${sessionId}`, () => this.persistRunning(sessionId))
+      } catch (error) {
+        console.error(`SessionCoordinator: failed to adopt live session ${sessionId} during reconciliation.`, error)
+      }
+    }
+
+    for (const sessionId of demote) {
+      try {
+        await this.withLock(`session:${sessionId}`, () => this.persistStopped(sessionId))
+      } catch (error) {
+        console.error(`SessionCoordinator: failed to mark session ${sessionId} stopped during reconciliation.`, error)
+      }
+    }
+
+    for (const sessionId of resume) {
+      try {
+        // The lock is taken here rather than inside restore() so the "is it running" check and
+        // the relaunch cannot be interleaved with a UI-driven restore of the same session.
+        await this.withLock(`session:${sessionId}`, () => this.restoreLocked(sessionId, true))
+      } catch (error) {
+        // restoreLocked has already persisted 'error' (or 'missing'); a single unresumable
+        // session must not stop the rest of the user's workspace from coming back.
+        console.error(`SessionCoordinator: failed to resume session ${sessionId} during reconciliation.`, error)
+      }
+    }
+
+    const known = new Set(current.sessions.map((session) => session.id))
+    for (const sessionId of liveSessionIds) {
+      if (known.has(sessionId)) continue
+      console.warn(`SessionCoordinator: killing orphaned pty-host session ${sessionId} with no persisted record.`)
+      try {
+        await this.terminalService.stop(sessionId)
+      } catch (error) {
+        console.error(`SessionCoordinator: failed to kill orphaned pty-host session ${sessionId}.`, error)
+      }
+    }
+
+    return this.store.load()
+  }
+
+  /**
+   * Lets go of the sessions rather than ending them — the method name predates the pty-host
+   * and is kept because the composition root's `before-quit` hook still calls it.
+   *
+   * Quitting CodeFly (or replacing it with an installer) must leave every PTY, and therefore
+   * every agent CLI, running in the resident host so the next UI can attach to them; that is
+   * the entire feature. So nothing here kills a PTY. `detach()` drops the connection where the
+   * implementation has one. The `stopAll()` fallback is for an implementation that owns its
+   * PTYs inside this process (TerminalService, still used by unit tests and any build without
+   * a host): those children die with the process no matter what, so stopping them deliberately
+   * beats having the OS tear them down mid-write.
+   *
+   * Ending sessions on purpose still belongs to `stop()`, `delete()`, and `removeProject()`.
+   */
   async shutdown(): Promise<void> {
     const current = await this.store.load()
     for (const session of current.sessions) {
       this.titleService.cancel(session.id)
     }
 
-    await this.terminalService.stopAll()
+    if (this.terminalService.detach) {
+      await this.terminalService.detach()
+    } else {
+      await this.terminalService.stopAll()
+    }
 
+    // `running` survives on purpose: it is the record of intent that reconcile() needs on the
+    // next start to decide between "attach" and "resume". `creating` does not — whether those
+    // PTYs ever came up is exactly what nobody knows, so they are never auto-resumed.
     const next = await this.store.update((state) => ({
       ...state,
-      sessions: state.sessions.map((session) =>
-        session.status === 'running' || session.status === 'creating' ? { ...session, status: 'stopped' } : session
-      )
+      sessions: state.sessions.map((session) => (session.status === 'creating' ? { ...session, status: 'stopped' } : session))
     }))
     this.emit(next)
   }
@@ -340,6 +506,17 @@ export class SessionCoordinator {
 
   private async persistStopped(sessionId: string): Promise<void> {
     await this.updateSession(sessionId, (existing) => (existing.status === 'stopped' ? existing : { ...existing, status: 'stopped' }))
+  }
+
+  /**
+   * Marks a session running because a PTY for it was found alive, dropping any `lastError`
+   * left over from an earlier failed attempt — the same cleanup restore() does on success, and
+   * for the same reason: a running session showing a stale error message is a lie in the UI.
+   */
+  private async persistRunning(sessionId: string): Promise<void> {
+    await this.updateSession(sessionId, (existing) =>
+      existing.status === 'running' && existing.lastError === undefined ? existing : withoutError({ ...existing, status: 'running' })
+    )
   }
 
   private async appendSession(record: SessionRecord): Promise<void> {

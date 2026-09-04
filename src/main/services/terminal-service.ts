@@ -6,6 +6,7 @@ import { spawn as spawnPty } from 'node-pty'
 
 import { agentLaunchArgs, agentLaunchEnv } from '../../shared/agent-kinds'
 import type { SessionKind, SessionRecord } from '../../shared/contracts'
+import type { TerminalDataEvent } from '../../shared/pty-protocol'
 import { cliLocator, type CliLocator } from '../infrastructure/cli-locator'
 
 const DEFAULT_COLS = 120
@@ -19,7 +20,7 @@ export type TerminalStartOptions = {
 }
 
 export type TerminalEventMap = {
-  data: { sessionId: string; data: string }
+  data: TerminalDataEvent
   exit: { sessionId: string; exitCode: number }
 }
 

@@ -109,6 +109,15 @@ class FakeCoordinator {
 class FakeTerminalService {
   readonly write = vi.fn()
   readonly resize = vi.fn()
+  // Optional on purpose: only the pty-host client can replay retained output, and the
+  // in-process fallback has none, so the handler has to cope with the method being absent.
+  replay: ReturnType<typeof vi.fn> | undefined
+
+  constructor(withReplay = true) {
+    this.replay = withReplay
+      ? vi.fn(async () => ({ data: 'HISTORY', cols: 120, rows: 30, throughSequence: 9 }))
+      : undefined
+  }
   private readonly listeners = {
     data: new Set<(payload: { sessionId: string; data: string }) => void>(),
     exit: new Set<(payload: { sessionId: string; exitCode: number }) => void>()
@@ -219,6 +228,7 @@ const appInfo: AppInfo = { version: '0.4.1', links: EXTERNAL_LINKS }
 const buildHarness = (options: {
   dialogResult?: { canceled: boolean; filePaths: string[] }
   windowDestroyed?: boolean
+  terminalCanReplay?: boolean
 } = {}): Harness => {
   const window = fakeWindow(options.windowDestroyed ?? false)
   const ipcMain = new FakeIpcMain(window.webContents)
@@ -238,7 +248,7 @@ const buildHarness = (options: {
     setAutoLaunch: vi.fn((enabled: boolean) => enabled)
   }
   const updaterService = new FakeUpdaterService()
-  const terminalService = new FakeTerminalService()
+  const terminalService = new FakeTerminalService(options.terminalCanReplay ?? true)
   const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ platform: 'win32', state: emptyState(), capabilities: capabilities() }))
   const applyTheme = vi.fn()
   const applyPinned = vi.fn((pinned: boolean) => pinned)
@@ -720,6 +730,40 @@ describe('registerIpc: terminal:write (send-only)', () => {
     })
 
     expect(() => ipcMain.emit(IPC.terminalWrite, { sessionId: 'session-1', data: 'x' })).not.toThrow()
+  })
+})
+
+describe('registerIpc: terminal:replay', () => {
+  it('hands back the output the host retained for that session', async () => {
+    const { ipcMain, terminalService } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.terminalReplay, { sessionId: 'session-1' })).resolves.toEqual({
+      data: 'HISTORY',
+      cols: 120,
+      rows: 30,
+      throughSequence: 9
+    })
+    expect(terminalService.replay).toHaveBeenCalledWith('session-1')
+  })
+
+  it('answers undefined when the terminal implementation cannot replay at all', async () => {
+    const { ipcMain } = buildHarness({ terminalCanReplay: false })
+
+    await expect(ipcMain.invoke(IPC.terminalReplay, { sessionId: 'session-1' })).resolves.toBeUndefined()
+  })
+
+  it('answers undefined instead of rejecting when the host has no such session', async () => {
+    const { ipcMain, terminalService } = buildHarness()
+    terminalService.replay?.mockRejectedValue(new Error('Unknown session: session-1'))
+
+    await expect(ipcMain.invoke(IPC.terminalReplay, { sessionId: 'session-1' })).resolves.toBeUndefined()
+  })
+
+  it('rejects an invalid payload before touching the terminal', async () => {
+    const { ipcMain, terminalService } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.terminalReplay, { sessionId: '' })).rejects.toThrow()
+    expect(terminalService.replay).not.toHaveBeenCalled()
   })
 })
 
