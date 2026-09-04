@@ -210,6 +210,7 @@ type Harness = {
   terminalService: FakeTerminalService
   getSnapshot: ReturnType<typeof vi.fn>
   applyTheme: ReturnType<typeof vi.fn>
+  applyPinned: ReturnType<typeof vi.fn>
   dispose: () => void
 }
 
@@ -240,6 +241,7 @@ const buildHarness = (options: {
   const terminalService = new FakeTerminalService()
   const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ platform: 'win32', state: emptyState(), capabilities: capabilities() }))
   const applyTheme = vi.fn()
+  const applyPinned = vi.fn((pinned: boolean) => pinned)
 
   const dispose = registerIpc({
     ipcMain: ipcMain as unknown as Electron.IpcMain,
@@ -252,7 +254,8 @@ const buildHarness = (options: {
     updaterService: updaterService as unknown as UpdaterService,
     terminalService: terminalService as unknown as TerminalService,
     getSnapshot,
-    applyTheme
+    applyTheme,
+    applyPinned
   })
 
   return {
@@ -267,6 +270,7 @@ const buildHarness = (options: {
     terminalService,
     getSnapshot,
     applyTheme,
+    applyPinned,
     dispose
   }
 }
@@ -536,6 +540,29 @@ describe('registerIpc: theme:set', () => {
 
       await expect(ipcMain.invoke(IPC.themeSet, payload)).rejects.toBeInstanceOf(z.ZodError)
       expect(applyTheme).not.toHaveBeenCalled()
+    }
+  )
+})
+
+describe('registerIpc: window:pinned-set', () => {
+  it('parses the request and answers with the flag the window actually took', async () => {
+    const { ipcMain, applyPinned } = buildHarness()
+
+    await expect(ipcMain.invoke(IPC.windowPinnedSet, { pinned: true })).resolves.toBe(true)
+    expect(applyPinned).toHaveBeenCalledWith(true)
+
+    // A window manager that refuses always-on-top is reported back as-is, not echoed.
+    applyPinned.mockReturnValueOnce(false)
+    await expect(ipcMain.invoke(IPC.windowPinnedSet, { pinned: true })).resolves.toBe(false)
+  })
+
+  it.each([[{}], [{ pinned: 'yes' }], [{ pinned: true, extra: 1 }]])(
+    'rejects malformed payload %j without touching the window',
+    async (payload) => {
+      const { ipcMain, applyPinned } = buildHarness()
+
+      await expect(ipcMain.invoke(IPC.windowPinnedSet, payload)).rejects.toBeInstanceOf(z.ZodError)
+      expect(applyPinned).not.toHaveBeenCalled()
     }
   )
 })
@@ -811,6 +838,7 @@ describe('registerIpc: disposer', () => {
       IPC.sessionDelete,
       IPC.sessionFirstInput,
       IPC.themeSet,
+      IPC.windowPinnedSet,
       IPC.appInfoGet,
       IPC.appUpdateCheck,
       IPC.appUpdateDownload,

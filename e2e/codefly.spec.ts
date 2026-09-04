@@ -17,7 +17,7 @@ import { createRepo } from './create-repo'
  * file, worktree lifecycle) is the real production implementation. Production builds
  * without CODEFLY_E2E never exercise any of this file's env-driven wiring.
  *
- * The 17 tests below run in one serial journey against one fixture repository/project so
+ * The 18 tests below run in one serial journey against one fixture repository/project so
  * that worktree sequence numbers, title generation, restart persistence, and deletion all
  * build on realistic prior state, the same way a user would experience them. Test 6
  * (relaunch) closes and re-opens the Electron app in the middle of the journey while
@@ -170,6 +170,31 @@ test('keeps Settings interactive outside the draggable title bar', async () => {
   await dialog.getByRole('button', { name: 'Dark' }).click()
   await expect(window.locator('html')).toHaveAttribute('data-theme', 'dark')
   await window.keyboard.press('Escape')
+})
+
+/**
+ * Pinning is the one title-bar control whose entire effect lives in the main process, so this
+ * reads the real BrowserWindow flag rather than trusting the button. It is unpinned again at
+ * the end: the preference persists in the shared user-data dir, and an always-on-top window
+ * would hover over everything else the rest of the journey opens.
+ */
+test('pins the window on top from the title bar and unpins it again', async () => {
+  const isAlwaysOnTop = (): Promise<boolean> =>
+    electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isAlwaysOnTop() ?? false)
+  const pin = window.getByRole('button', { name: 'Keep window on top' })
+  const pinned = window.getByRole('button', { name: 'Stop keeping window on top' })
+
+  expect(await isAlwaysOnTop()).toBe(false)
+
+  await pin.click()
+  await expect(pinned).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(isAlwaysOnTop).toBe(true)
+  expect(await window.evaluate(() => window.localStorage.getItem('codefly.windowPinned'))).toBe('true')
+
+  await pinned.click()
+  await expect(pin).toHaveAttribute('aria-pressed', 'false')
+  await expect.poll(isAlwaysOnTop).toBe(false)
+  expect(await window.evaluate(() => window.localStorage.getItem('codefly.windowPinned'))).toBe('false')
 })
 
 /**

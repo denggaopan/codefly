@@ -6,6 +6,8 @@ const { mockApp, browserWindow, fakeWindow, mockMenu, mockNativeTheme } = vi.hoi
     loadFile: vi.fn(async () => undefined),
     setBackgroundColor: vi.fn(),
     setTitleBarOverlay: vi.fn(),
+    setAlwaysOnTop: vi.fn(),
+    isAlwaysOnTop: vi.fn(() => false),
     webContents: { setWindowOpenHandler: vi.fn() }
   }
   return {
@@ -21,7 +23,7 @@ const { mockApp, browserWindow, fakeWindow, mockMenu, mockNativeTheme } = vi.hoi
 
 vi.mock('electron', () => ({ app: mockApp, BrowserWindow: browserWindow, Menu: mockMenu, nativeTheme: mockNativeTheme }))
 
-import { applyWindowTheme, createMainWindow, TITLE_BAR_HEIGHT } from './window'
+import { applyWindowPinned, applyWindowTheme, createMainWindow, TITLE_BAR_HEIGHT } from './window'
 
 describe('createMainWindow', () => {
   beforeEach(() => {
@@ -154,5 +156,32 @@ describe('applyWindowTheme', () => {
     expect(mockNativeTheme.themeSource).toBe('light')
     expect(fakeWindow.setBackgroundColor).toHaveBeenCalledWith('#f5f7fa')
     expect(fakeWindow.setTitleBarOverlay).not.toHaveBeenCalled()
+  })
+})
+
+describe('applyWindowPinned', () => {
+  beforeEach(() => {
+    fakeWindow.setAlwaysOnTop.mockClear()
+    fakeWindow.isAlwaysOnTop.mockReturnValue(false)
+  })
+
+  it('pins the window and reports the flag it ended up with', () => {
+    fakeWindow.isAlwaysOnTop.mockReturnValue(true)
+
+    expect(applyWindowPinned(fakeWindow as unknown as Electron.BrowserWindow, true)).toBe(true)
+    expect(fakeWindow.setAlwaysOnTop).toHaveBeenCalledWith(true)
+  })
+
+  it('unpins the window again', () => {
+    expect(applyWindowPinned(fakeWindow as unknown as Electron.BrowserWindow, false)).toBe(false)
+    expect(fakeWindow.setAlwaysOnTop).toHaveBeenCalledWith(false)
+  })
+
+  // The window is asked, not assumed: a window manager that refuses always-on-top must not
+  // leave the title bar's pin button showing a state the window never took.
+  it('reports the window back rather than echoing the request', () => {
+    fakeWindow.isAlwaysOnTop.mockReturnValue(false)
+
+    expect(applyWindowPinned(fakeWindow as unknown as Electron.BrowserWindow, true)).toBe(false)
   })
 })

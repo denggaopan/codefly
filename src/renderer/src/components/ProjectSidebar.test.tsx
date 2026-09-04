@@ -50,6 +50,7 @@ const createFakeApi = (): FakeApi => ({
   deleteSession: vi.fn(async (_sessionId: string): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
   submitFirstInput: vi.fn(async () => undefined),
   setTheme: vi.fn(async (): Promise<void> => undefined),
+  setWindowPinned: vi.fn(async (pinned: boolean): Promise<boolean> => pinned),
   getAppInfo: vi.fn(async (): Promise<AppInfo> => ({ version: '0.0.0-test', links: EXTERNAL_LINKS })),
   checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: '0.0.0-test' })),
   downloadUpdate: vi.fn(async (): Promise<UpdateDownloadResult> => ({ status: 'cancelled' })),

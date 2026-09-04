@@ -33,6 +33,8 @@ export type CodeFlyApi = {
   deleteSession(sessionId: string): Promise<DeleteSessionResult>
   submitFirstInput(sessionId: string, text: string): Promise<void>
   setTheme(theme: ThemePreference): Promise<void>
+  // Resolves with the always-on-top flag the window actually ended up with.
+  setWindowPinned(pinned: boolean): Promise<boolean>
   getAppInfo(): Promise<AppInfo>
   checkForUpdates(): Promise<UpdateCheckResult>
   // No parameters by design: the main process re-resolves the release asset itself, so the
@@ -67,6 +69,7 @@ const api: CodeFlyApi = {
   deleteSession: (sessionId) => ipcRenderer.invoke(IPC.sessionDelete, { sessionId }),
   submitFirstInput: (sessionId, text) => ipcRenderer.invoke(IPC.sessionFirstInput, { sessionId, text }),
   setTheme: (theme) => ipcRenderer.invoke(IPC.themeSet, { theme }),
+  setWindowPinned: (pinned) => ipcRenderer.invoke(IPC.windowPinnedSet, { pinned }),
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfoGet),
   checkForUpdates: () => ipcRenderer.invoke(IPC.appUpdateCheck),
   downloadUpdate: () => ipcRenderer.invoke(IPC.appUpdateDownload),

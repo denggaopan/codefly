@@ -36,7 +36,7 @@ import {
   type UpdaterFileSystem
 } from './services/updater-service'
 import { WorktreeService } from './services/worktree-service'
-import { applyWindowTheme, createMainWindow } from './window'
+import { applyWindowPinned, applyWindowTheme, createMainWindow } from './window'
 
 // Shown verbatim in the launcher under a kind whose CLI could not be found, so each names the
 // executable actually looked up (which is not always the kind — see AGENT_LAUNCH).
@@ -339,7 +339,8 @@ app.whenReady().then(() => {
     updaterService,
     terminalService,
     getSnapshot: buildGetSnapshot(coordinator, projectService, externalAppService, agentLocator, store, runtimePlatform),
-    applyTheme: (theme) => applyWindowTheme(window, theme, runtimePlatform)
+    applyTheme: (theme) => applyWindowTheme(window, theme, runtimePlatform),
+    applyPinned: (pinned) => applyWindowPinned(window, pinned)
   })
 
   window.on('closed', () => {

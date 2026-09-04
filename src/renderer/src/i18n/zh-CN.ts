@@ -13,6 +13,8 @@ export const zhCN: Translations = {
 
   'titleBar.settings': '设置',
   'titleBar.launchRocket': 'CodeFly — 发射一枚火箭',
+  'titleBar.pinWindow': '窗口置顶',
+  'titleBar.unpinWindow': '取消窗口置顶',
 
   'sidebar.searchSessions': '搜索会话',
   'sidebar.dismissNotice': '关闭提示',

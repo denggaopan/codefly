@@ -261,23 +261,39 @@ html[data-platform='darwin'] .title-bar {
   color: var(--color-text-muted);
 }
 
-.title-bar-settings {
+/* The action buttons sit in their own row so they stay tight against each other: the strip's
+   own 8px gap is meant for brand-to-content spacing, not for a pair of icon buttons. */
+.title-bar-actions {
   -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 2px;
+}
+
+.title-bar-action {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
   width: 34px;
   height: 28px;
-  margin-right: 2px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--color-text-muted);
 }
 
-.title-bar-settings:hover {
+.title-bar-action:hover {
   background: var(--color-panel-elevated);
   color: var(--color-text);
+}
+
+/* Pinned is a sticky state, not a hover: it keeps the accent colour and the raised
+   background for as long as the window stays on top. */
+.title-bar-pin[aria-pressed='true'] {
+  background: var(--color-panel-elevated);
+  color: var(--color-accent);
 }
 
 /* Rocket easter egg (see RocketFlight.tsx). Portalled to document.body and anchored at the

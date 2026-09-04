@@ -34,6 +34,18 @@ export function applyWindowTheme(window: BrowserWindow, theme: ThemePreference, 
   }
 }
 
+/**
+ * Pins (or unpins) the window above every other window. Called from the window:pinned-set
+ * IPC handler when the user toggles the title bar's pin button, and once at startup when the
+ * renderer replays its persisted preference. The flag is read back off the window rather than
+ * echoed: a window manager that refuses to keep the window on top should leave the button
+ * showing what actually happened, not what was asked for.
+ */
+export function applyWindowPinned(window: BrowserWindow, pinned: boolean): boolean {
+  window.setAlwaysOnTop(pinned)
+  return window.isAlwaysOnTop()
+}
+
 const safeDevelopmentRendererUrl = (value: string | undefined): string | undefined => {
   if (!value) return undefined
   try {

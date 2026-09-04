@@ -11,6 +11,7 @@ export const IPC = {
   sessionDelete: 'session:delete',
   sessionFirstInput: 'session:first-input',
   themeSet: 'theme:set',
+  windowPinnedSet: 'window:pinned-set',
   appInfoGet: 'app:info',
   appUpdateCheck: 'app:update-check',
   appUpdateDownload: 'app:update-download',

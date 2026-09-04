@@ -16,6 +16,7 @@ import {
   DEFAULT_SESSION_KIND_PREFERENCES,
   setAutoLaunchRequestSchema,
   setThemeRequestSchema,
+  setWindowPinnedRequestSchema,
   terminalWriteRequestSchema,
   terminalResizeRequestSchema
 } from './contracts'
@@ -256,6 +257,14 @@ describe('shared contracts', () => {
     expect(setAutoLaunchRequestSchema.safeParse({ enabled: true, extra: 1 }).success).toBe(false)
   })
 
+  it('accepts only a boolean window-pin request', () => {
+    expect(setWindowPinnedRequestSchema.safeParse({ pinned: true }).success).toBe(true)
+    expect(setWindowPinnedRequestSchema.safeParse({ pinned: false }).success).toBe(true)
+    expect(setWindowPinnedRequestSchema.safeParse({ pinned: 'true' }).success).toBe(false)
+    expect(setWindowPinnedRequestSchema.safeParse({}).success).toBe(false)
+    expect(setWindowPinnedRequestSchema.safeParse({ pinned: true, extra: 1 }).success).toBe(false)
+  })
+
   it('defines every IPC channel once', () => {
     expect(IPC).toEqual({
       snapshotGet: 'snapshot:get',
@@ -270,6 +279,7 @@ describe('shared contracts', () => {
       sessionDelete: 'session:delete',
       sessionFirstInput: 'session:first-input',
       themeSet: 'theme:set',
+      windowPinnedSet: 'window:pinned-set',
       appInfoGet: 'app:info',
       appUpdateCheck: 'app:update-check',
       appUpdateDownload: 'app:update-download',

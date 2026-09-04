@@ -86,10 +86,28 @@ describe('TitleBar', () => {
     Element.prototype.animate = originalAnimate
   })
 
-  it('keeps a draggable strip next to the two no-drag buttons', () => {
+  it('keeps a draggable strip next to the no-drag action buttons', () => {
     render(<TitleBar />)
     expect(document.querySelector('.title-bar-drag-area')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Settings' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Keep window on top' })).not.toBeNull()
+  })
+
+  it('offers the pin unpressed, to the right of Settings', () => {
+    render(<TitleBar />)
+
+    const pin = screen.getByRole('button', { name: 'Keep window on top' })
+    expect(pin).toHaveAttribute('aria-pressed', 'false')
+    expect(pin.previousElementSibling).toBe(screen.getByRole('button', { name: 'Settings' }))
+  })
+
+  it('shows the pressed pin and the undo label while the window is pinned', () => {
+    useAppStore.setState({ windowPinned: true })
+    render(<TitleBar />)
+
+    const pin = screen.getByRole('button', { name: 'Stop keeping window on top' })
+    expect(pin).toHaveAttribute('aria-pressed', 'true')
+    expect(pin.querySelector('svg')).toHaveAttribute('fill', 'currentColor')
   })
 
   it('launches a rocket when the brand is clicked', async () => {

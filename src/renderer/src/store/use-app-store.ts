@@ -52,6 +52,8 @@ export type AppStore = {
   idleAgentSessionIds: Record<string, true>
   theme: ThemePreference
   locale: Locale
+  /** Whether the window is kept above every other window (the title bar's pin button). */
+  windowPinned: boolean
   /** Which kinds the New session launcher lists, and which of them offer a worktree entry. */
   sessionKindPreferences: SessionKindPreferences
   /** Project sidebar width in CSS pixels, already clamped (see sidebar-width.ts). */
@@ -71,6 +73,7 @@ export type AppStore = {
 
   setTheme: (theme: ThemePreference) => void
   setLocale: (locale: Locale) => void
+  setWindowPinned: (pinned: boolean) => void
   setSessionKindPreference: (kind: SessionKind, change: Partial<SessionKindPreference>) => void
   /** Clamps to the current viewport before storing, so callers can pass raw pointer maths. */
   setSidebarWidth: (width: number) => void
@@ -115,6 +118,7 @@ export const THEME_STORAGE_KEY = 'codefly.theme'
 export const LOCALE_STORAGE_KEY = 'codefly.locale'
 export const SESSION_KINDS_STORAGE_KEY = 'codefly.sessionKinds'
 export const SIDEBAR_WIDTH_STORAGE_KEY = 'codefly.sidebarWidth'
+export const WINDOW_PINNED_STORAGE_KEY = 'codefly.windowPinned'
 
 // The theme preference is renderer-owned (localStorage), not part of the main process's
 // persisted AppState: it is pure presentation, and localStorage survives restarts without
@@ -163,6 +167,29 @@ const applyLocaleEffects = (locale: Locale): void => {
   } catch {
     // localStorage unavailable: the preference just won't survive a restart.
   }
+}
+
+// Pinning (always-on-top) is renderer-owned (localStorage) like the theme: pure window chrome
+// that never belongs in the persisted AppState. Anything but an explicit "true" — including a
+// first launch with no stored key — means unpinned, the ordinary window behaviour.
+const readStoredWindowPinned = (): boolean => {
+  try {
+    return window.localStorage.getItem(WINDOW_PINNED_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+// Applies pinning everywhere outside this store's own state: the persisted preference and the
+// window itself (via window:pinned-set). Resolves with the flag the window actually ended up
+// with, which is what the button should show if a window manager refused the request.
+const applyWindowPinnedEffects = (pinned: boolean): Promise<boolean> => {
+  try {
+    window.localStorage.setItem(WINDOW_PINNED_STORAGE_KEY, String(pinned))
+  } catch {
+    // localStorage unavailable: the preference just won't survive a restart.
+  }
+  return window.codefly.setWindowPinned(pinned).catch(() => pinned)
 }
 
 // The per-kind launcher preferences are renderer-owned (localStorage) for the same reasons as
@@ -302,6 +329,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
     idleAgentSessionIds: {},
     theme: 'dark',
     locale: DEFAULT_LOCALE,
+    windowPinned: false,
     sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES,
     sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
     updater: { phase: 'idle' },
@@ -318,6 +346,12 @@ export const useAppStore = create<AppStore>()((set, get) => {
       // Re-applied on every startup (even for the dark default) so the main process's
       // nativeTheme/overlay colors always converge with the renderer preference.
       applyThemeEffects(storedTheme)
+
+      const storedPinned = readStoredWindowPinned()
+      set({ windowPinned: storedPinned })
+      // Replayed on every startup (even for the unpinned default) so the window's own
+      // always-on-top flag converges with the renderer preference.
+      void applyWindowPinnedEffects(storedPinned)
 
       window.codefly
         .getSnapshot()
@@ -393,6 +427,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
         idleAgentSessionIds: {},
         theme: 'dark',
         locale: DEFAULT_LOCALE,
+        windowPinned: false,
         sessionKindPreferences: DEFAULT_SESSION_KIND_PREFERENCES,
         sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
         updater: { phase: 'idle' }
@@ -482,6 +517,15 @@ export const useAppStore = create<AppStore>()((set, get) => {
     setLocale: (locale) => {
       set({ locale })
       applyLocaleEffects(locale)
+    },
+
+    setWindowPinned: (pinned) => {
+      set({ windowPinned: pinned })
+      void applyWindowPinnedEffects(pinned).then((actual) => {
+        // Only ever corrects a refusal, and only while the user has not toggled again since:
+        // a late reply from an older request must not undo a newer click.
+        if (actual !== pinned && get().windowPinned === pinned) set({ windowPinned: actual })
+      })
     },
 
     setSessionKindPreference: (kind, change) => {

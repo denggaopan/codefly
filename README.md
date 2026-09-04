@@ -220,6 +220,18 @@ project are stopped and all of its session records are removed together with it;
 disk is touched — the project directory, its worktrees and their branches stay exactly as
 they are. Re-adding the directory later starts with an empty session list.
 
+## Pinning the window on top
+
+The pin button next to the gear keeps CodeFly above every other window, which is what you want
+while an agent works in the background and you follow it from another app. Click it again to
+release; the pressed state, the accent colour and the filled pin all say the window is on top.
+
+The renderer owns the preference (`localStorage`, like the theme and language — it never enters
+the state file) and the main process owns the effect: all that crosses IPC is the boolean, and
+the button then renders the always-on-top flag read back off the window rather than the one it
+asked for, so a window manager that refuses the request cannot leave the button lying. The
+preference is replayed on the next launch.
+
 ## Title bar rocket
 
 Clicking the logo and **CodeFly** wordmark launches a rocket: it falls nose-first a random
@@ -233,7 +245,7 @@ Purely decorative: the rocket is portalled to `document.body`, sits above every 
 pointer-transparent, so it can never intercept a click. Clicks stack, so several rockets can
 be in the air at once, and the flight is skipped entirely when the viewer asks for
 `prefers-reduced-motion: reduce`. The brand is now a button, so it has to be
-`-webkit-app-region: no-drag`; the strip between it and the gear button is what keeps the
+`-webkit-app-region: no-drag`; the strip between it and the action buttons is what keeps the
 window draggable.
 
 ## Settings
@@ -421,6 +433,8 @@ for Comate, which has no resume and is expected to start fresh.
   their working directories, input/output, restore, and deletion behavior.
 - Verify Visual Studio Code and project-folder actions, project paths containing spaces and
   non-ASCII characters, and the Launch at startup toggle.
+- Pin the window on top, confirm it stays above another app's window, restart CodeFly and
+  confirm it comes back pinned, then unpin it.
 - Verify **Ctrl+V**, agent **Shift+Enter**, and the Windows in-app download/cancel/install
   update flow. Windows has no new-session accelerator: confirm `Ctrl+T` reaches the focused
   terminal instead of creating a PowerShell session.
@@ -455,6 +469,8 @@ Silicon Mac with `mac-arm64.zip`; a Rosetta-only run does not cover both archite
   test machine permits, then turn the setting back off.
 - Check for an available update and confirm macOS offers the Releases page only: it must not
   download or execute a Windows installer.
+- Pin the window on top, confirm it stays above another app's window, restart CodeFly and
+  confirm it comes back pinned, then unpin it.
 - Verify **Cmd+V** pastes into Claude and Codex, **Shift+Enter** inserts a newline without
   submitting, and `Cmd+T` creates an ordinary Shell session.
 - Switch between English and Simplified Chinese and confirm the choice survives a restart.

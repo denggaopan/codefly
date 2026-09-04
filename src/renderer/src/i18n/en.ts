@@ -12,6 +12,8 @@ export const en = {
 
   'titleBar.settings': 'Settings',
   'titleBar.launchRocket': 'CodeFly — launch a rocket',
+  'titleBar.pinWindow': 'Keep window on top',
+  'titleBar.unpinWindow': 'Stop keeping window on top',
 
   'sidebar.searchSessions': 'Search sessions',
   'sidebar.dismissNotice': 'Dismiss notice',

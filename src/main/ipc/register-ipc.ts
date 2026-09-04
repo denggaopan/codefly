@@ -20,6 +20,7 @@ import {
   sessionIdRequestSchema,
   setAutoLaunchRequestSchema,
   setThemeRequestSchema,
+  setWindowPinnedRequestSchema,
   terminalResizeRequestSchema,
   terminalWriteRequestSchema
 } from '../../shared/contracts'
@@ -43,6 +44,8 @@ export type RegisterIpcDependencies = {
   terminalService: TerminalService
   getSnapshot: () => Promise<AppSnapshot>
   applyTheme: (theme: ThemePreference) => void
+  /** Returns the flag the window actually ended up with, which the renderer renders. */
+  applyPinned: (pinned: boolean) => boolean
 }
 
 type InvokeHandler = (event: IpcMainInvokeEvent, payload?: unknown) => unknown
@@ -72,7 +75,8 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
     updaterService,
     terminalService,
     getSnapshot,
-    applyTheme
+    applyTheme,
+    applyPinned
   } = deps
 
   const invokeHandlers: ReadonlyArray<readonly [string, InvokeHandler]> = [
@@ -168,6 +172,14 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
       async (_event, payload): Promise<void> => {
         const { theme } = setThemeRequestSchema.parse(payload)
         applyTheme(theme)
+      }
+    ],
+
+    [
+      IPC.windowPinnedSet,
+      async (_event, payload): Promise<boolean> => {
+        const { pinned } = setWindowPinnedRequestSchema.parse(payload)
+        return applyPinned(pinned)
       }
     ],
 

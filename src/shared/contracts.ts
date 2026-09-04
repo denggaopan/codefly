@@ -210,6 +210,13 @@ export const setThemeRequestSchema = z.strictObject({
   theme: themePreferenceSchema
 })
 
+// "Pinned" is the title bar's word for the window's always-on-top flag. Like the theme it is
+// pure window chrome: the renderer owns the preference (localStorage) and the main process
+// owns the effect, so all that crosses IPC is the boolean.
+export const setWindowPinnedRequestSchema = z.strictObject({
+  pinned: z.boolean()
+})
+
 // The renderer picks a link by key; the URL table itself lives in shared/links.ts and is
 // resolved in the main process, so no renderer-supplied URL ever reaches the OS browser.
 export const externalLinkTargetSchema = z.enum(['repository', 'changelog', 'download'])

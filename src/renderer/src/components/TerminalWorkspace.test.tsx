@@ -197,6 +197,7 @@ const createFakeApi = () => {
     deleteSession: vi.fn(async (): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
     setTheme: vi.fn(async (): Promise<void> => undefined),
+    setWindowPinned: vi.fn(async (pinned: boolean): Promise<boolean> => pinned),
     getAppInfo: vi.fn(async (): Promise<AppInfo> => ({ version: '0.0.0-test', links: EXTERNAL_LINKS })),
     checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: '0.0.0-test' })),
     openExternalLink: vi.fn(async (): Promise<void> => undefined),

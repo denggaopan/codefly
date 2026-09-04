@@ -17,7 +17,7 @@ import type {
 import { EXTERNAL_LINKS } from '../../../shared/links'
 import { AGENT_KINDS, type AgentKind } from '../../../shared/agent-kinds'
 import { DEFAULT_SESSION_KIND_PREFERENCES } from '../../../shared/contracts'
-import { AGENT_IDLE_MS, SESSION_KINDS_STORAGE_KEY, useAppStore } from './use-app-store'
+import { AGENT_IDLE_MS, SESSION_KINDS_STORAGE_KEY, WINDOW_PINNED_STORAGE_KEY, useAppStore } from './use-app-store'
 
 const defaultCapabilities = (): CapabilityState => ({
   ...(Object.fromEntries(AGENT_KINDS.map((kind) => [kind, { available: true, detail: '' }])) as Record<
@@ -59,6 +59,7 @@ const createFakeApi = () => {
   const progressListeners = new Set<(progress: UpdateDownloadProgress) => void>()
   return {
     setTheme: vi.fn(async (): Promise<void> => undefined),
+    setWindowPinned: vi.fn(async (pinned: boolean): Promise<boolean> => pinned),
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ platform: 'win32', state: seededState, capabilities: defaultCapabilities() })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
     openProjectInVSCode: vi.fn(async (): Promise<void> => undefined),
@@ -544,5 +545,73 @@ describe('useAppStore updater', () => {
     useAppStore.getState().reset()
 
     expect(useAppStore.getState().updater).toEqual({ phase: 'idle' })
+  })
+})
+// Pinning is renderer-owned like the theme: the store keeps the preference, the main process
+// owns the window flag, and the button renders whatever the window actually took.
+describe('useAppStore window pinning', () => {
+  it('starts unpinned and replays that default at startup so the window converges', () => {
+    expect(useAppStore.getState().windowPinned).toBe(false)
+    expect(api.setWindowPinned).toHaveBeenCalledWith(false)
+  })
+
+  it('pins the window, persists the preference, and unpins again', async () => {
+    useAppStore.getState().setWindowPinned(true)
+
+    expect(useAppStore.getState().windowPinned).toBe(true)
+    expect(api.setWindowPinned).toHaveBeenLastCalledWith(true)
+    expect(window.localStorage.getItem(WINDOW_PINNED_STORAGE_KEY)).toBe('true')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useAppStore.getState().windowPinned).toBe(true)
+
+    useAppStore.getState().setWindowPinned(false)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(api.setWindowPinned).toHaveBeenLastCalledWith(false)
+    expect(window.localStorage.getItem(WINDOW_PINNED_STORAGE_KEY)).toBe('false')
+    expect(useAppStore.getState().windowPinned).toBe(false)
+  })
+
+  it('replays a stored pin at startup', async () => {
+    dispose()
+    useAppStore.getState().reset()
+    window.localStorage.setItem(WINDOW_PINNED_STORAGE_KEY, 'true')
+    api = createFakeApi()
+    window.codefly = api
+
+    dispose = useAppStore.getState().initialize()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(api.setWindowPinned).toHaveBeenCalledWith(true)
+    expect(useAppStore.getState().windowPinned).toBe(true)
+  })
+
+  it('shows the flag the window actually took when the request is refused', async () => {
+    api.setWindowPinned.mockResolvedValueOnce(false)
+
+    useAppStore.getState().setWindowPinned(true)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(useAppStore.getState().windowPinned).toBe(false)
+  })
+
+  it('lets a newer click win over a late refusal', async () => {
+    api.setWindowPinned.mockResolvedValueOnce(false)
+
+    useAppStore.getState().setWindowPinned(true)
+    // Toggled off again before the refusal lands: the stale reply must not pin it back.
+    useAppStore.getState().setWindowPinned(false)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(useAppStore.getState().windowPinned).toBe(false)
+  })
+
+  it('keeps the preference when the main process is unreachable', async () => {
+    api.setWindowPinned.mockRejectedValueOnce(new Error('window gone'))
+
+    useAppStore.getState().setWindowPinned(true)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(useAppStore.getState().windowPinned).toBe(true)
   })
 })

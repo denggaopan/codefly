@@ -3,6 +3,7 @@ import { useCallback, useRef, useState, type MouseEvent } from 'react'
 import logoUrl from '../assets/logo.svg'
 import { useTranslation } from '../i18n/use-translation'
 import type { Point } from '../rocket-flight'
+import { useAppStore } from '../store/use-app-store'
 import RocketFlight from './RocketFlight'
 import SettingsDialog from './SettingsDialog'
 
@@ -18,6 +19,8 @@ interface RocketLaunch {
  */
 export default function TitleBar() {
   const { t } = useTranslation()
+  const pinned = useAppStore((state) => state.windowPinned)
+  const setWindowPinned = useAppStore((state) => state.setWindowPinned)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [launches, setLaunches] = useState<RocketLaunch[]>([])
   const nextLaunchId = useRef(1)
@@ -34,39 +37,71 @@ export default function TitleBar() {
     setLaunches((current) => current.filter((launch) => launch.id !== id))
   }, [])
 
+  // One label per state rather than a fixed name plus aria-pressed alone: the tooltip is
+  // where most users read what the button will do next.
+  const pinLabel = pinned ? t('titleBar.unpinWindow') : t('titleBar.pinWindow')
+
   return (
     <header className="title-bar">
       <button type="button" className="title-bar-brand" aria-label={t('titleBar.launchRocket')} onClick={launchRocket}>
         <img className="title-bar-logo" src={logoUrl} alt="" aria-hidden="true" />
         <span className="title-bar-app-name">CodeFly</span>
       </button>
-      {/* Draggable filler: the brand button and the settings button are both no-drag, so
+      {/* Draggable filler: the brand button and the action buttons are all no-drag, so
           without this the window would have almost no grab area left. */}
       <span className="title-bar-drag-area" aria-hidden="true" />
-      <button
-        type="button"
-        className="title-bar-settings"
-        aria-label={t('titleBar.settings')}
-        title={t('titleBar.settings')}
-        aria-haspopup="dialog"
-        onClick={() => setSettingsOpen(true)}
-      >
-        <svg
-          className="icon"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+      <div className="title-bar-actions">
+        <button
+          type="button"
+          className="title-bar-action"
+          aria-label={t('titleBar.settings')}
+          title={t('titleBar.settings')}
+          aria-haspopup="dialog"
+          onClick={() => setSettingsOpen(true)}
         >
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-      </button>
+          <svg
+            className="icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="title-bar-action title-bar-pin"
+          aria-label={pinLabel}
+          title={pinLabel}
+          aria-pressed={pinned}
+          onClick={() => setWindowPinned(!pinned)}
+        >
+          {/* The same pin, filled once it is stuck: a shape change reads faster than a colour
+              change alone, and the accent colour in styles.css carries the rest. */}
+          <svg
+            className="icon"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill={pinned ? 'currentColor' : 'none'}
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 17v5" />
+            <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+          </svg>
+        </button>
+      </div>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       {launches.map((launch) => (
         <RocketFlight key={launch.id} origin={launch.origin} onDone={() => endLaunch(launch.id)} />

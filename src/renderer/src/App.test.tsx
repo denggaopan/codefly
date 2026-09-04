@@ -78,6 +78,7 @@ const createFakeApi = (state: AppState, capabilities: CapabilityState, platform:
     deleteSession: vi.fn(async (_sessionId: string): Promise<DeleteSessionResult> => ({ status: 'deleted' })),
     submitFirstInput: vi.fn(async (): Promise<void> => undefined),
     setTheme: vi.fn(async (): Promise<void> => undefined),
+    setWindowPinned: vi.fn(async (pinned: boolean): Promise<boolean> => pinned),
     getAppInfo: vi.fn(async (): Promise<AppInfo> => ({ version: '0.0.0-test', links: EXTERNAL_LINKS })),
     checkForUpdates: vi.fn(async (): Promise<UpdateCheckResult> => ({ status: 'none', currentVersion: '0.0.0-test' })),
     downloadUpdate: vi.fn(async (): Promise<UpdateDownloadResult> => ({ status: 'cancelled' })),
@@ -746,6 +747,36 @@ describe('App', () => {
     await user.keyboard('{Escape}')
 
     expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument()
+  })
+
+  it('pins and unpins the window from the title bar, persisting the choice', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    const pin = await screen.findByRole('button', { name: 'Keep window on top' })
+    expect(pin).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(pin)
+
+    expect(api.setWindowPinned).toHaveBeenLastCalledWith(true)
+    expect(window.localStorage.getItem('codefly.windowPinned')).toBe('true')
+    const pinned = screen.getByRole('button', { name: 'Stop keeping window on top' })
+    expect(pinned).toHaveAttribute('aria-pressed', 'true')
+
+    await user.click(pinned)
+
+    expect(api.setWindowPinned).toHaveBeenLastCalledWith(false)
+    expect(window.localStorage.getItem('codefly.windowPinned')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Keep window on top' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('replays a persisted pin on startup', async () => {
+    window.localStorage.setItem('codefly.windowPinned', 'true')
+
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: 'Stop keeping window on top' })).toHaveAttribute('aria-pressed', 'true')
+    expect(api.setWindowPinned).toHaveBeenCalledWith(true)
   })
 
   it('applies the persisted light theme (DOM, storage, and main process) on startup', async () => {
