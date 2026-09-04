@@ -1,6 +1,6 @@
 {
   "name": "codefly",
-  "version": "0.13.3",
+  "version": "0.14.0",
   "private": true,
   "description": "A Windows and macOS workspace for local terminal and AI coding sessions",
   "author": "CodeFly Contributors",
