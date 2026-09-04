@@ -88,8 +88,8 @@ Shift+Enter for a newline and Ctrl/Cmd+V for paste. A missing CLI leaves the ent
 disabled with an installation hint, naming the executable CodeFly actually looks for — note
 that Cursor's is `agent` and Comate's is `comatecli`, not the product name.
 
-The group opens collapsed while all five are off and reopens expanded once any of them is on,
-so an enabled kind's switches are never hidden behind the caret.
+The group always opens collapsed, whether or not any of the five is enabled: Settings leads
+with the established kinds, and an enabled one is a single caret click away.
 
 Two differences from Claude and Codex, both deliberate:
 

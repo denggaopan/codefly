@@ -116,9 +116,10 @@ describe('SettingsDialog', () => {
   })
 
   // The dialog stays mounted while closed (it renders null), so the disclosure state has to be
-  // re-derived when it reopens. Staying collapsed over an enabled kind would hide the switches
-  // the user just turned on; staying expanded over an all-off group would defeat the point.
-  it('reopens expanded only while an opt-in agent is enabled', async () => {
+  // re-derived when it reopens — and it always reopens collapsed, whether or not an opt-in kind
+  // is enabled: the four established kinds are what the dialog is about, and an enabled kind is
+  // one caret click away.
+  it('always reopens collapsed, even with an opt-in agent enabled', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     window.codefly = createFakeApi() as unknown as typeof window.codefly
@@ -137,7 +138,9 @@ describe('SettingsDialog', () => {
     view.rerender(<SettingsDialog open={false} onClose={onClose} />)
     view.rerender(<SettingsDialog open onClose={onClose} />)
 
-    expect(screen.getByRole('button', disclosureName)).toHaveAttribute('aria-expanded', 'true')
+    // Still collapsed: the enabled switch is preserved behind the caret, not shown by default.
+    expect(screen.getByRole('button', disclosureName)).toHaveAttribute('aria-expanded', 'false')
+    await user.click(screen.getByRole('button', disclosureName))
     expect(screen.getByRole('switch', { name: 'Enable Qwen Code' })).toHaveAttribute('aria-checked', 'true')
   })
 

@@ -96,16 +96,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     let cancelled = false
     setUpdateState({ phase: 'idle' })
     setAutoLaunchError(null)
-    // The dialog stays mounted while closed (it renders null above), so the disclosure would
-    // otherwise reopen however the user last left it. Re-derived here instead: collapsed while
-    // every opt-in CLI is off, expanded once one is on — leaving an enabled kind's switches
-    // hidden behind a caret is worse than a slightly longer section.
-    setMoreKindsExpanded(
-      sessionKindOptions(useAppStore.getState().platform).some(
-        (item) => item.group === 'additional' && useAppStore.getState().sessionKindPreferences[item.kind].enabled
-      )
-    )
-
     void window.codefly
       .getAppInfo()
       .then((info) => {
@@ -125,7 +115,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   }, [open])
 
-  if (!open) return null
+  // The dialog stays mounted while closed, so the disclosure would otherwise reopen however
+  // the user last left it. It always reopens collapsed instead, whether or not an opt-in CLI
+  // is enabled: Settings is about the established kinds, and an enabled one keeps its switches
+  // one caret click away rather than pushing the rest of the dialog down on every visit.
+  // Collapsed here — while hidden — rather than in the "every open" effect above: an effect
+  // runs after the reopened dialog has painted, so the user would catch one expanded frame.
+  if (!open) {
+    if (moreKindsExpanded) setMoreKindsExpanded(false)
+    return null
+  }
 
   const handleAutoLaunchToggle = async (): Promise<void> => {
     if (autoLaunch === null) return

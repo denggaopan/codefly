@@ -691,11 +691,12 @@ test('keeps the opt-in agent CLIs collapsed and off until enabled in Settings', 
   await window.keyboard.press('Escape')
   await expect(launcher).toHaveCount(0)
 
-  // Reopening with a kind enabled keeps the group open: hiding the switches the user just
-  // turned on behind a caret would be worse than a longer section. Turning it back off
-  // restores the state the rest of the journey expects.
+  // Reopening always starts collapsed, enabled kind or not: Settings leads with the four
+  // established kinds and the opt-in group stays one caret click away. Turning Gemini back
+  // off restores the state the rest of the journey expects.
   await settingsTrigger.click()
-  await expect(settingsDialog.getByRole('button', { name: 'More agent CLIs (5)' })).toHaveAttribute('aria-expanded', 'true')
+  await expect(settingsDialog.getByRole('button', { name: 'More agent CLIs (5)' })).toHaveAttribute('aria-expanded', 'false')
+  await settingsDialog.getByRole('button', { name: 'More agent CLIs (5)' }).click()
   await settingsDialog.getByRole('switch', { name: 'Enable Gemini' }).click()
   await expect(settingsDialog.getByRole('switch', { name: 'Enable Gemini' })).toHaveAttribute('aria-checked', 'false')
   await settingsDialog.getByRole('button', { name: 'Close settings' }).click()
