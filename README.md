@@ -222,7 +222,7 @@ they are. Re-adding the directory later starts with an empty session list.
 
 ## Title bar rocket
 
-Clicking the logo and **CODEFLY** wordmark launches a rocket: it falls nose-first a random
+Clicking the logo and **CodeFly** wordmark launches a rocket: it falls nose-first a random
 distance (never more than 500px, and never past the bottom of the window), swings round to a
 random rightwards heading, cruises slowly for three seconds, then dashes off the screen. The
 nose always points along the course — position and heading are one `transform` inside a single

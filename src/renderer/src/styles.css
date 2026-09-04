@@ -249,13 +249,15 @@ html[data-platform='darwin'] .title-bar {
   transition: transform 140ms ease;
 }
 
+/* The wordmark is set as written, "CodeFly". The tracking and the slightly larger size that
+   come with it are what the case change costs: 0.08em was there to open up small caps, and
+   lower-case letters need both less of it and a little more size to carry the same weight. */
 .title-bar-app-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
   color: var(--color-text-muted);
 }
 
