@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Rasterises build/icon.svg into the two files electron-builder actually ships:
-// build/icon.png (256px, used for the Linux/macOS pipelines and as the generic
-// fallback) and build/icon.ico (the Windows app icon, 7 frames).
+// build/icon.png (the source electron-builder converts into the macOS .icns)
+// and build/icon.ico (the Windows app icon, 7 frames).
 //
 // Why a script rather than a one-off: the repo has no image library, so both
 // files have to be produced by hand, and the ICO layout is easy to get subtly
@@ -37,7 +37,13 @@ const PNG_PATH = join(ROOT, 'build', 'icon.png')
 const ICO_PATH = join(ROOT, 'build', 'icon.ico')
 
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
-const PNG_SIZE = 256
+
+// build/icon.png is what electron-builder converts into the macOS .icns, and it
+// REFUSES anything under 512 - "Icon must be at least 512x512 pixels" fails the
+// whole mac build, after the Electron download, inside the Linux container. It
+// is therefore rendered on its own rather than reusing an ICO frame, none of
+// which is large enough. Do not lower it to match a frame size.
+const PNG_SIZE = 512
 
 /**
  * Rasterise the SVG at one pixel size.
@@ -143,18 +149,27 @@ try {
 
   const frames = []
   for (const size of ICO_SIZES) {
-    const { rgba, png } = await rasterize(page, svgText, size)
+    const { rgba } = await rasterize(page, svgText, size)
     frames.push({ size, data: dibFrame(Buffer.from(rgba, 'base64'), size) })
-    if (size === PNG_SIZE) {
-      writeFileSync(PNG_PATH, Buffer.from(png.split(',')[1], 'base64'))
-    }
     console.log(`rasterised ${size}x${size}`)
   }
 
   const ico = buildIco(frames)
   writeFileSync(ICO_PATH, ico)
   console.log(`wrote ${ICO_PATH} (${frames.length} frames, ${ico.length} bytes)`)
-  console.log(`wrote ${PNG_PATH}`)
+
+  const { png } = await rasterize(page, svgText, PNG_SIZE)
+  const pngBuffer = Buffer.from(png.split(',')[1], 'base64')
+  writeFileSync(PNG_PATH, pngBuffer)
+
+  // Read the size back out of the IHDR rather than trusting the request: a PNG
+  // that is silently too small only surfaces deep inside the mac build.
+  const width = pngBuffer.readUInt32BE(16)
+  const height = pngBuffer.readUInt32BE(20)
+  if (width < 512 || height < 512) {
+    throw new Error(`icon.png is ${width}x${height}; electron-builder needs at least 512x512 for macOS`)
+  }
+  console.log(`wrote ${PNG_PATH} (${width}x${height})`)
 } finally {
   await browser.close()
 }
