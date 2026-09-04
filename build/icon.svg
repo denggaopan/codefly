@@ -14,27 +14,49 @@
        (512, 512), leaving a 7.5% margin on every side. It sits on the element, not on a
        subpath, so the nonzero fill-rule and the punched-out porthole are untouched.
 
-       The fill is #9d4edd, not the #6e5494 that styles.css mirrors in its accent token.
-       Brand purple at 27% saturation and 45% lightness is what made the shortcut hard to
-       pick out: on a transparent ground the icon has no ground of its own, so a mid-dark
-       silhouette against a dark wallpaper has almost no contrast left. #9d4edd keeps the
-       purple but at 68% saturation and 58% lightness, which carries on a dark wallpaper and
-       a dark taskbar while still reading against a light desktop.
-       The accent token deliberately stays #6e5494: that is the UI's functional colour, and
-       this is the brand mark. src/renderer/src/assets/logo.svg tracks THIS colour, not the
-       accent, so the taskbar icon and the title-bar mark stay the same purple.
+       Depth: the mark used to be one flat #9d4edd, which read as a sticker rather than an
+       object. It now carries a diagonal gradient plus a cast shadow - the most restrained
+       of the four treatments that were rendered side by side, and the one that was picked.
+       Deliberately NOT chosen: a 2.5D extrude (thickens the outline), a specular bevel
+       (moulded-plastic sheen), and a hard-diagonal two-tone fold. All three change how the
+       silhouette itself reads; this one leaves the outline byte-identical and only changes
+       what is inside it, which is the point - the silhouette is the brand mark.
+
+       The gradient runs top-left #c77dff -> #9d4edd -> bottom-right #6a2ca8, i.e. a light
+       source off the top left, which is also where the cast shadow is thrown from. #9d4edd
+       stays the midpoint so the icon's overall colour is unchanged from the flat version:
+       it is the value that made the shortcut readable on a dark wallpaper (27%-saturation
+       #6e5494 did not) and it stays the colour the title-bar mark tracks.
+       The accent token in styles.css deliberately stays #6e5494: that is the UI's functional
+       colour, and this is the brand mark.
+
+       Shadow geometry is tighter than it looks: the scaled path ends at x=946.8 and y=921,
+       and the shadow reaches dx + 3*stdDeviation = 76 units past that, landing at x=1022.8 -
+       1.2 units inside the viewBox. Growing dx or stdDeviation clips the shadow against the
+       right edge, so change them together with the 85% scale, not on their own.
 
        A filled rounded tile (white rocket on purple) was tried and rejected for the desktop
        - a rectangle is not wanted here. That treatment is parked in design/mobile-app-icon.svg
        for a future mobile app, where the platform hands you an opaque square anyway.
 
-       icon.png and icon.ico are rasterised from this file (Chromium canvas); regenerate
-       both whenever it changes. -->
+       icon.png and icon.ico are rasterised from this file by scripts/rasterize-icons.mjs;
+       run it whenever this file changes. -->
+  <defs>
+    <linearGradient id="body" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#c77dff" />
+      <stop offset="0.5" stop-color="#9d4edd" />
+      <stop offset="1" stop-color="#6a2ca8" />
+    </linearGradient>
+    <filter id="cast" x="-20%" y="-20%" width="150%" height="150%">
+      <feDropShadow dx="10" dy="18" stdDeviation="22" flood-color="#1a0630" flood-opacity="0.55" />
+    </filter>
+  </defs>
   <path
     transform="translate(76.8 76.8) scale(0.85)"
     d="M218.144356 993.18135a49.021204 49.021204 0 0 1-34.805055-83.826258l69.119897-69.119897a49.021204 49.021204 0 0 1 69.119898 69.119897L252.949411 980.435837a49.021204 49.021204 0 0 1-34.805055 12.745513z
        M1023.562731 49.032969v143.632126a535.801755 535.801755 0 0 1-157.848276 381.384964l-122.062797 122.062797-28.92251 202.457571a123.043221 123.043221 0 0 1-34.805054 69.119897l-34.805055 34.805054a73.531805 73.531805 0 0 1-103.924951 0l-294.127222-294.127221-104.415164 103.434739a49.021204 49.021204 0 0 1-69.119897-69.610109L177.456757 637.287412 21.56933 482.380408a73.531805 73.531805 0 0 1 0-103.924951L56.374384 343.16019a123.043221 123.043221 0 0 1 69.119897-34.314842l202.457571-28.92251 122.062797-122.062797A535.801755 535.801755 0 0 1 833.360461 0.011765h143.632126a49.021204 49.021204 0 0 1 46.570144 49.021204z
        m-256.741697 415.829216a49.021204 49.021204 0 0 0-69.119897-69.119897 49.021204 49.021204 0 0 1-69.610109 0 49.021204 49.021204 0 0 1 0-69.119897 49.021204 49.021204 0 0 1 69.610109 0 49.021204 49.021204 0 0 0 69.119897-69.610109 147.063611 147.063611 0 1 0 0 207.849903z"
-    fill="#9d4edd"
+    fill="url(#body)"
+    filter="url(#cast)"
   />
 </svg>

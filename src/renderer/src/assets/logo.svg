@@ -2,16 +2,30 @@
   <!-- Same artwork as the packaged app icon (build/icon.svg): a rocket whose porthole reads
        as a "C". Kept as a separate copy because build/ ships to electron-builder while this
        one is bundled by Vite for the title bar.
-       The fill tracks the app icon's #9d4edd rather than the #6e5494 accent token, so the
-       taskbar icon and this title-bar mark are the same purple - they are both the brand
-       mark and are on screen together. The accent stays #6e5494 as the UI's functional
-       colour; see the comment in build/icon.svg for why the icon moved off it.
+       The fill tracks the app icon rather than the #6e5494 accent token, so the taskbar icon
+       and this title-bar mark are the same purple - they are both the brand mark and are on
+       screen together. The accent stays #6e5494 as the UI's functional colour; see the
+       comment in build/icon.svg for why the icon moved off it.
        The path is drawn edge to edge in its 1024-unit box; the transform scales it to 95%
        about the box centre (512, 512), so it renders with a 2.5% margin on every side
-       instead of touching the edges of its 16px slot. -->
+       instead of touching the edges of its 16px slot.
+
+       It carries the app icon's gradient (top-left #c77dff -> #9d4edd -> bottom-right
+       #6a2ca8) so both marks are lit from the same side. It deliberately does NOT carry the
+       app icon's cast shadow: this slot is 16px, where the shadow is a sub-pixel smudge that
+       only softens the outline, and the 2.5% margin here could not hold it anyway. A cast
+       shadow is there to lift the icon off a wallpaper - a title-bar mark sits on a UI
+       surface and has nothing to lift off. -->
+  <defs>
+    <linearGradient id="body" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#c77dff" />
+      <stop offset="0.5" stop-color="#9d4edd" />
+      <stop offset="1" stop-color="#6a2ca8" />
+    </linearGradient>
+  </defs>
   <path
     transform="translate(25.6 25.6) scale(0.95)"
-    fill="#9d4edd"
+    fill="url(#body)"
     d="M218.144356 993.18135a49.021204 49.021204 0 0 1-34.805055-83.826258l69.119897-69.119897a49.021204 49.021204 0 0 1 69.119898 69.119897L252.949411 980.435837a49.021204 49.021204 0 0 1-34.805055 12.745513z M1023.562731 49.032969v143.632126a535.801755 535.801755 0 0 1-157.848276 381.384964l-122.062797 122.062797-28.92251 202.457571a123.043221 123.043221 0 0 1-34.805054 69.119897l-34.805055 34.805054a73.531805 73.531805 0 0 1-103.924951 0l-294.127222-294.127221-104.415164 103.434739a49.021204 49.021204 0 0 1-69.119897-69.610109L177.456757 637.287412 21.56933 482.380408a73.531805 73.531805 0 0 1 0-103.924951L56.374384 343.16019a123.043221 123.043221 0 0 1 69.119897-34.314842l202.457571-28.92251 122.062797-122.062797A535.801755 535.801755 0 0 1 833.360461 0.011765h143.632126a49.021204 49.021204 0 0 1 46.570144 49.021204z m-256.741697 415.829216a49.021204 49.021204 0 0 0-69.119897-69.119897 49.021204 49.021204 0 0 1-69.610109 0 49.021204 49.021204 0 0 1 0-69.119897 49.021204 49.021204 0 0 1 69.610109 0 49.021204 49.021204 0 0 0 69.119897-69.610109 147.063611 147.063611 0 1 0 0 207.849903z"
   />
 </svg>
