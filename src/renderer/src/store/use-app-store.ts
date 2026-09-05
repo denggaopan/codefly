@@ -348,6 +348,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
     initialize: () => {
       let disposed = false
       let snapshotLoaded = false
+      let hydratingWorkspace = false
       let workspaceChanged = false
       let latestBroadcast: AppState | undefined
       set({ sidebarWidth: readStoredSidebarWidth() })
@@ -360,7 +361,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
       }
 
       // Save every navigation change, including selections made by create/delete actions.
-      // Wait for hydration so the empty startup state cannot erase the previous workspace.
+      // Suppress hydration writes, but persist clicks even while capabilities are loading.
       const disposeWorkspace = useAppStore.subscribe((state, previous) => {
         if (
           state.activeProjectId !== previous.activeProjectId ||
@@ -368,7 +369,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
           state.collapsedProjectIds !== previous.collapsedProjectIds
         ) {
           workspaceChanged = true
-          if (snapshotLoaded) persistWorkspace()
+          if (!hydratingWorkspace) persistWorkspace()
         }
       })
 
@@ -394,6 +395,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
           if (disposed) return
           const appState = latestBroadcast ?? snapshot.state
           document.documentElement.dataset.platform = snapshot.platform
+          hydratingWorkspace = true
           set((state) => ({
             platform: snapshot.platform,
             appState,
@@ -402,6 +404,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
             ...reconcileWorkspace(workspaceChanged ? state : snapshot.state.workspace ?? emptyWorkspace(), appState),
             notice: snapshot.recoveryWarning ? { message: snapshot.recoveryWarning, tone: 'info' } : state.notice
           }))
+          hydratingWorkspace = false
           snapshotLoaded = true
           persistWorkspace()
         })

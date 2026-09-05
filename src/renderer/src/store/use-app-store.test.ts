@@ -261,6 +261,9 @@ describe('workspace persistence', () => {
     const listener = api.onStateChanged.mock.calls.at(-1)![0] as (state: AppState) => void
     listener(snapshot.state)
     useAppStore.getState().setActiveSession(powershellSession.id)
+    expect(stored().activeSessionId).toBe(powershellSession.id)
+    useAppStore.getState().toggleProjectCollapsed(project.id)
+    expect(stored().collapsedProjectIds).toEqual([project.id])
     resolveSnapshot({ ...snapshot, state: { version: 1, projects: [], sessions: [] } })
     await vi.advanceTimersByTimeAsync(0)
     expect(useAppStore.getState().activeSessionId).toBe(powershellSession.id)
