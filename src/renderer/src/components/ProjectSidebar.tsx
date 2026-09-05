@@ -14,7 +14,6 @@ import { useAppStore } from '../store/use-app-store'
 import ConfirmDialog from './ConfirmDialog'
 import SessionLauncher from './SessionLauncher'
 
-const vscodeHintId = (projectId: string): string => `vscode-hint-${projectId}`
 const PROJECT_OPTIONS_GAP = 6
 
 type ProjectOptionsLayout = {
@@ -598,7 +597,6 @@ export default function ProjectSidebar() {
                       className="project-options-menu-item"
                       role="menuitem"
                       title={capabilities.vscode.available ? undefined : capabilities.vscode.detail}
-                      aria-describedby={capabilities.vscode.available ? undefined : vscodeHintId(project.id)}
                       disabled={!capabilities.vscode.available}
                       tabIndex={-1}
                       onPointerDown={(event) => {
@@ -666,18 +664,6 @@ export default function ProjectSidebar() {
                 )}
                 {launcherOpen && activeProjectId === project.id && <SessionLauncher projectId={project.id} />}
               </div>
-
-              {/*
-                Visible (not hover-only) explanation for a disabled tool: the `title`
-                attribute above still gives mouse users a native tooltip, but an
-                unauthenticated/missing VS Code install needs to be discoverable without
-                hovering, matching SessionLauncher's visible capability-detail text.
-              */}
-              {!capabilities.vscode.available && (
-                <p className="project-action-hint" id={vscodeHintId(project.id)}>
-                  {capabilities.vscode.detail}
-                </p>
-              )}
 
               {expanded && (
                 <ul className="session-list">

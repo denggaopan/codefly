@@ -1172,7 +1172,7 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
   })
 
-  it('keeps an unavailable VS Code menu item disabled with an accessible visible detail', async () => {
+  it('keeps an unavailable VS Code menu item disabled without showing an installation warning', async () => {
     const user = userEvent.setup()
     const detail = 'Install VS Code or the code command.'
     seedStore(
@@ -1181,13 +1181,13 @@ describe('ProjectSidebar', () => {
     )
     render(<ProjectSidebar />)
 
+    expect(screen.queryByText(detail)).not.toBeInTheDocument()
+
     const menu = await openProjectOptions(user)
     const item = within(menu).getByRole('menuitem', { name: 'Open project in VS Code' })
-    const hint = screen.getByText(detail)
     expect(item).toBeDisabled()
     expect(item).toHaveAttribute('title', detail)
-    expect(hint).toBeVisible()
-    expect(item).toHaveAttribute('aria-describedby', hint.id)
+    expect(screen.queryByText(detail)).not.toBeInTheDocument()
 
     await user.click(item)
     expect(api.openProjectInVSCode).not.toHaveBeenCalled()
