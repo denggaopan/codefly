@@ -142,6 +142,7 @@ export default function TerminalWorkspace() {
   const { t } = useTranslation()
   const sessions = useAppStore((state) => state.appState.sessions)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
+  const sessionFocusRequest = useAppStore((state) => state.sessionFocusRequest)
   const restoreSession = useAppStore((state) => state.restoreSession)
   const theme = useAppStore((state) => state.theme)
 
@@ -368,7 +369,7 @@ export default function TerminalWorkspace() {
     if (!entry) return
     applyFit(activeSessionId)
     entry.terminal.focus()
-  }, [activeSessionId, mountedSessionIds])
+  }, [activeSessionId, mountedSessionIds, sessionFocusRequest])
 
   // Re-focus when the ACTIVE session's status returns to running (the header's
   // "Restart session" action restarts in place: neither the active id nor the mounted list

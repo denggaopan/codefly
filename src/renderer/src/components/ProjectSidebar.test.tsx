@@ -31,6 +31,7 @@ import ProjectSidebar from './ProjectSidebar'
 type FakeApi = Window['codefly']
 
 const createFakeApi = (): FakeApi => ({
+  saveWorkspace: vi.fn(async () => undefined),
   getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({
     platform: 'win32',
     state: { version: 1, projects: [], sessions: [] },

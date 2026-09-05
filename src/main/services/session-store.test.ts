@@ -59,6 +59,42 @@ describe('SessionStore', () => {
     await expect(store.load()).resolves.toEqual(state)
   })
 
+  it('commits workspace changes without a shutdown and preserves concurrent session updates', async () => {
+    const store = new SessionStore(filePath)
+    await store.save(stateWith())
+    const workspace = { activeProjectId: 'p1', activeSessionId: 's1', collapsedProjectIds: ['p1'] }
+    await Promise.all([
+      store.saveWorkspace(workspace),
+      store.update((state) => ({ ...state, sessions: state.sessions.map((session) => ({ ...session, title: 'Updated title' })) }))
+    ])
+    const reopened = await new SessionStore(filePath).load()
+    expect(reopened.workspace).toEqual(workspace)
+    expect(reopened.sessions[0]!.title).toBe('Updated title')
+    await store.saveWorkspace({ ...workspace, collapsedProjectIds: [] })
+    expect((await new SessionStore(filePath).load()).workspace?.collapsedProjectIds).toEqual([])
+  })
+
+  it('drops stale workspace references when a project disappears during saving', async () => {
+    const store = new SessionStore(filePath)
+    await store.save(stateWith())
+    await Promise.all([
+      store.update((state) => ({ ...state, projects: [], sessions: [] })),
+      store.saveWorkspace({ activeProjectId: 'p1', activeSessionId: 's1', collapsedProjectIds: ['p1', 'p1'] })
+    ])
+    expect((await new SessionStore(filePath).load()).workspace).toEqual({
+      activeProjectId: null, activeSessionId: null, collapsedProjectIds: []
+    })
+  })
+
+  it.each([null, [], { collapsedProjectIds: [42] }])('ignores invalid workspace metadata without losing sessions: %j', async (workspace) => {
+    await writeFile(filePath, JSON.stringify({ ...stateWith(), workspace }))
+    const store = new SessionStore(filePath)
+    const state = await store.load()
+    expect(state.sessions).toEqual([stoppedSession])
+    expect(state.workspace).toBeUndefined()
+    expect(store.recoveryWarning()).toBeUndefined()
+  })
+
   it('normalizes only creating sessions on load, leaving running as the recorded intent', async () => {
     const statuses = ['running', 'creating', 'error', 'missing', 'stopped'] as const
     const persisted = stateWith(statuses.map((status, index) => ({ ...stoppedSession, id: `s${index}`, status })))

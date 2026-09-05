@@ -63,6 +63,7 @@ vi.stubGlobal(
 const createFakeApi = (state: AppState, capabilities: CapabilityState, platform: HostPlatform = 'win32') => {
   const stateListeners = new Set<(state: AppState) => void>()
   return {
+    saveWorkspace: vi.fn(async () => undefined),
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ platform, state, capabilities })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
     reopenProject: vi.fn(async (): Promise<ProjectRecord> => { throw new Error('reopenProject not stubbed') }),

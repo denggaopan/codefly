@@ -9,7 +9,8 @@ import type {
   ThemePreference,
   UpdateCheckResult,
   UpdateDownloadResult,
-  UpdateInstallResult
+  UpdateInstallResult,
+  WorkspaceState
 } from '../../shared/contracts'
 import {
   cloneProjectRequestSchema,
@@ -23,7 +24,8 @@ import {
   setThemeRequestSchema,
   setWindowPinnedRequestSchema,
   terminalResizeRequestSchema,
-  terminalWriteRequestSchema
+  terminalWriteRequestSchema,
+  workspaceStateSchema
 } from '../../shared/contracts'
 import { IPC } from '../../shared/ipc'
 import type { AppInfoService } from '../services/app-info-service'
@@ -59,6 +61,7 @@ export type RegisterIpcDependencies = {
   updaterService: UpdaterService
   terminalService: IpcTerminal
   getSnapshot: () => Promise<AppSnapshot>
+  saveWorkspace: (workspace: WorkspaceState) => Promise<void>
   applyTheme: (theme: ThemePreference) => void
   /** Returns the flag the window actually ended up with, which the renderer renders. */
   applyPinned: (pinned: boolean) => boolean
@@ -91,12 +94,14 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
     updaterService,
     terminalService,
     getSnapshot,
+    saveWorkspace,
     applyTheme,
     applyPinned
   } = deps
 
   const invokeHandlers: ReadonlyArray<readonly [string, InvokeHandler]> = [
     [IPC.snapshotGet, async (): Promise<AppSnapshot> => getSnapshot()],
+    [IPC.workspaceSave, async (_event, payload): Promise<void> => saveWorkspace(workspaceStateSchema.parse(payload))],
 
     [
       IPC.projectAdd,

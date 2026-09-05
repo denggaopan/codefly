@@ -178,6 +178,7 @@ const createFakeApi = () => {
   const dataListeners = new Set<(payload: { sessionId: string; data: string; sequence?: number }) => void>()
   const exitListeners = new Set<(payload: { sessionId: string; exitCode: number }) => void>()
   return {
+    saveWorkspace: vi.fn(async () => undefined),
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({
       platform: 'win32',
       state: { version: 1, projects: [], sessions: [] },
@@ -390,6 +391,20 @@ describe('TerminalWorkspace', () => {
     act(() => useAppStore.setState({ activeSessionId: runningPowerShellSession.id }))
     await waitFor(() => expect(FakeTerminal.instances).toHaveLength(2))
     await waitFor(() => expect(FakeTerminal.instances[1].focus).toHaveBeenCalled())
+  })
+
+  it('returns focus when the already active session is selected again after visiting another control', async () => {
+    seedStore(runningClaudeSession)
+    act(() => useAppStore.setState({ activeSessionId: runningClaudeSession.id }))
+    render(<TerminalWorkspace />)
+    await waitFor(() => expect(FakeTerminal.instances).toHaveLength(1))
+    const terminal = FakeTerminal.instances[0]
+    terminal.focus.mockClear()
+
+    act(() => useAppStore.getState().setActiveSession(runningClaudeSession.id))
+
+    expect(terminal.focus).toHaveBeenCalledOnce()
+    expect(FakeTerminal.instances).toHaveLength(1)
   })
 
   it('re-focuses the active terminal when its session is restarted back to running', async () => {

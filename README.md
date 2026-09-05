@@ -367,6 +367,13 @@ once it has held no sessions and had no window connected for a minute.
 
 ## Persistence
 
+Project groups keep their individual collapsed or expanded state across restarts, and
+CodeFly automatically opens the session that was active in the previous window, even if
+its project is collapsed. These workspace preferences are saved atomically in `state.json`
+on each change, without relying on a close event, so they also survive an unexpected UI exit.
+Search only expands matching groups temporarily. Deleted projects and sessions are ignored
+on restore; a selected session that has stopped is displayed without restarting it.
+
 Projects and session metadata (not terminal scrollback, not PTY handles, not credentials)
 are stored in a versioned JSON file under Electron's `userData` directory. A session recorded
 as `running` states an intention, not a fact: on startup CodeFly asks the pty-host which PTYs

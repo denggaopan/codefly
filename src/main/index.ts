@@ -544,6 +544,7 @@ app.whenReady().then(() => {
     appInfoService,
     updaterService,
     terminalService: terminal,
+    saveWorkspace: (workspace) => store.saveWorkspace(workspace),
     getSnapshot: buildGetSnapshot(
       coordinator,
       projectService,

@@ -72,11 +72,21 @@ export const sessionRecordSchema = z.discriminatedUnion('mode', [
   })
 ])
 
+export const workspaceStateSchema = z.strictObject({
+  activeProjectId: z.string().min(1).nullable(),
+  activeSessionId: z.string().min(1).nullable(),
+  collapsedProjectIds: z.array(z.string().min(1))
+})
+
+export type WorkspaceState = z.infer<typeof workspaceStateSchema>
+
 export const appStateSchema = z.strictObject({
   version: z.literal(1),
   projects: z.array(projectRecordSchema),
   recentProjects: z.array(projectRecordSchema).optional(),
-  sessions: z.array(sessionRecordSchema)
+  sessions: z.array(sessionRecordSchema),
+  // A bad UI preference must not discard otherwise recoverable projects and sessions.
+  workspace: workspaceStateSchema.optional().catch(undefined)
 })
 
 export const toolAvailabilitySchema = z.strictObject({

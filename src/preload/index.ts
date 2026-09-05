@@ -13,7 +13,8 @@ import type {
   UpdateCheckResult,
   UpdateDownloadProgress,
   UpdateDownloadResult,
-  UpdateInstallResult
+  UpdateInstallResult,
+  WorkspaceState
 } from '../shared/contracts'
 import { IPC } from '../shared/ipc'
 import type { ExternalLinkTarget } from '../shared/links'
@@ -21,6 +22,7 @@ import type { TerminalDataEvent, TerminalReplay } from '../shared/pty-protocol'
 
 export type CodeFlyApi = {
   getSnapshot(): Promise<AppSnapshot>
+  saveWorkspace(workspace: WorkspaceState): Promise<void>
   addProject(): Promise<ProjectRecord | null>
   reopenProject(projectId: string): Promise<ProjectRecord>
   selectCloneDirectory(): Promise<string | null>
@@ -67,6 +69,7 @@ export type CodeFlyApi = {
 // main process (see src/main/ipc/register-ipc.ts) against the schemas in shared/contracts.ts.
 const api: CodeFlyApi = {
   getSnapshot: () => ipcRenderer.invoke(IPC.snapshotGet),
+  saveWorkspace: (workspace) => ipcRenderer.invoke(IPC.workspaceSave, workspace),
   addProject: () => ipcRenderer.invoke(IPC.projectAdd),
   reopenProject: (projectId) => ipcRenderer.invoke(IPC.projectReopen, { projectId }),
   selectCloneDirectory: () => ipcRenderer.invoke(IPC.projectCloneDirectory),

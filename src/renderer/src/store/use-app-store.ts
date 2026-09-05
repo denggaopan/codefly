@@ -16,6 +16,7 @@ import type {
   ToolAvailability
 } from '../../../shared/contracts'
 import { DEFAULT_SESSION_KIND_PREFERENCES, storedSessionKindPreferencesSchema } from '../../../shared/contracts'
+import { emptyWorkspace, reconcileWorkspace } from '../../../shared/workspace-state'
 import { DEFAULT_LOCALE, isLocale, translate, type Locale } from '../i18n'
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH, parseStoredSidebarWidth } from '../sidebar-width'
 import { defaultSessionKindPreferences } from '../session-kind-options'
@@ -46,6 +47,8 @@ export type AppStore = {
   capabilities: CapabilityState
   activeProjectId: string | null
   activeSessionId: string | null
+  sessionFocusRequest: number
+  collapsedProjectIds: string[]
   launcherOpen: boolean
   searchQuery: string
   notice: Notice | null
@@ -92,6 +95,7 @@ export type AppStore = {
   createSession: (projectId: string, kind: SessionKind, worktree: boolean) => Promise<void>
 
   setActiveProject: (projectId: string) => void
+  toggleProjectCollapsed: (projectId: string) => void
   setActiveSession: (sessionId: string, projectId?: string) => void
   restoreSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<DeleteSessionResult | undefined>
@@ -328,6 +332,8 @@ export const useAppStore = create<AppStore>()((set, get) => {
     capabilities: defaultCapabilities(),
     activeProjectId: null,
     activeSessionId: null,
+    sessionFocusRequest: 0,
+    collapsedProjectIds: [],
     launcherOpen: false,
     searchQuery: '',
     notice: null,
@@ -340,7 +346,31 @@ export const useAppStore = create<AppStore>()((set, get) => {
     updater: { phase: 'idle' },
 
     initialize: () => {
+      let disposed = false
+      let snapshotLoaded = false
+      let workspaceChanged = false
+      let latestBroadcast: AppState | undefined
       set({ sidebarWidth: readStoredSidebarWidth() })
+
+      const persistWorkspace = (): void => {
+        const { activeProjectId, activeSessionId, collapsedProjectIds } = get()
+        void window.codefly.saveWorkspace({ activeProjectId, activeSessionId, collapsedProjectIds }).catch((error: unknown) => {
+          if (!disposed) set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
+        })
+      }
+
+      // Save every navigation change, including selections made by create/delete actions.
+      // Wait for hydration so the empty startup state cannot erase the previous workspace.
+      const disposeWorkspace = useAppStore.subscribe((state, previous) => {
+        if (
+          state.activeProjectId !== previous.activeProjectId ||
+          state.activeSessionId !== previous.activeSessionId ||
+          state.collapsedProjectIds !== previous.collapsedProjectIds
+        ) {
+          workspaceChanged = true
+          if (snapshotLoaded) persistWorkspace()
+        }
+      })
 
       const storedLocale = readStoredLocale()
       set({ locale: storedLocale })
@@ -361,22 +391,28 @@ export const useAppStore = create<AppStore>()((set, get) => {
       window.codefly
         .getSnapshot()
         .then((snapshot) => {
+          if (disposed) return
+          const appState = latestBroadcast ?? snapshot.state
           document.documentElement.dataset.platform = snapshot.platform
           set((state) => ({
             platform: snapshot.platform,
-            appState: snapshot.state,
+            appState,
             capabilities: snapshot.capabilities,
             sessionKindPreferences: readStoredSessionKindPreferences(snapshot.platform),
-            activeProjectId: state.activeProjectId ?? snapshot.state.projects[0]?.id ?? null,
+            ...reconcileWorkspace(workspaceChanged ? state : snapshot.state.workspace ?? emptyWorkspace(), appState),
             notice: snapshot.recoveryWarning ? { message: snapshot.recoveryWarning, tone: 'info' } : state.notice
           }))
+          snapshotLoaded = true
+          persistWorkspace()
         })
         .catch((error: unknown) => {
+          if (disposed) return
           set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
         })
 
       const disposeState = window.codefly.onStateChanged((state) => {
-        set({ appState: state })
+        latestBroadcast = state
+        set((current) => ({ appState: state, ...(snapshotLoaded ? reconcileWorkspace(current, state) : {}) }))
       })
       const disposeData = window.codefly.onTerminalData(({ sessionId }) => {
         noteAgentOutput(sessionId)
@@ -410,6 +446,8 @@ export const useAppStore = create<AppStore>()((set, get) => {
       void get().checkForUpdatesInBackground()
 
       return () => {
+        disposed = true
+        disposeWorkspace()
         disposeState()
         disposeData()
         disposeExit()
@@ -426,6 +464,8 @@ export const useAppStore = create<AppStore>()((set, get) => {
         capabilities: defaultCapabilities(),
         activeProjectId: null,
         activeSessionId: null,
+        sessionFocusRequest: 0,
+        collapsedProjectIds: [],
         launcherOpen: false,
         searchQuery: '',
         notice: null,
@@ -617,6 +657,7 @@ export const useAppStore = create<AppStore>()((set, get) => {
             appState: { ...state.appState, projects, sessions },
             activeProjectId: activeProjectRemoved ? (projects[0]?.id ?? null) : state.activeProjectId,
             activeSessionId: activeSessionRemoved ? null : state.activeSessionId,
+            collapsedProjectIds: state.collapsedProjectIds.filter((id) => id !== projectId),
             launcherOpen: activeProjectRemoved ? false : state.launcherOpen
           }
         })
@@ -644,8 +685,18 @@ export const useAppStore = create<AppStore>()((set, get) => {
 
     setActiveProject: (projectId) => set({ activeProjectId: projectId }),
 
+    toggleProjectCollapsed: (projectId) => set((state) => ({
+      collapsedProjectIds: state.collapsedProjectIds.includes(projectId)
+        ? state.collapsedProjectIds.filter((id) => id !== projectId)
+        : [...state.collapsedProjectIds, projectId]
+    })),
+
     setActiveSession: (sessionId, projectId) =>
-      set((state) => ({ activeSessionId: sessionId, activeProjectId: projectId ?? state.activeProjectId })),
+      set((state) => ({
+        activeSessionId: sessionId,
+        sessionFocusRequest: state.sessionFocusRequest + 1,
+        activeProjectId: projectId ?? state.appState.sessions.find((session) => session.id === sessionId)?.projectId ?? state.activeProjectId
+      })),
 
     restoreSession: async (sessionId) => {
       try {

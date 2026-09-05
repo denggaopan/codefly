@@ -1,5 +1,6 @@
 export const IPC = {
   snapshotGet: 'snapshot:get',
+  workspaceSave: 'workspace:save',
   projectAdd: 'project:add',
   projectReopen: 'project:reopen',
   projectCloneDirectory: 'project:clone-directory',

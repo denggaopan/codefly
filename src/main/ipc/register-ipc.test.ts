@@ -218,6 +218,7 @@ type Harness = {
   updaterService: FakeUpdaterService
   terminalService: FakeTerminalService
   getSnapshot: ReturnType<typeof vi.fn>
+  saveWorkspace: ReturnType<typeof vi.fn>
   applyTheme: ReturnType<typeof vi.fn>
   applyPinned: ReturnType<typeof vi.fn>
   dispose: () => void
@@ -251,6 +252,7 @@ const buildHarness = (options: {
   const terminalService = new FakeTerminalService(options.terminalCanReplay ?? true)
   const getSnapshot = vi.fn(async (): Promise<AppSnapshot> => ({ platform: 'win32', state: emptyState(), capabilities: capabilities() }))
   const applyTheme = vi.fn()
+  const saveWorkspace = vi.fn(async () => undefined)
   const applyPinned = vi.fn((pinned: boolean) => pinned)
 
   const dispose = registerIpc({
@@ -265,6 +267,7 @@ const buildHarness = (options: {
     terminalService: terminalService as unknown as TerminalService,
     getSnapshot,
     applyTheme,
+    saveWorkspace,
     applyPinned
   })
 
@@ -281,9 +284,22 @@ const buildHarness = (options: {
     getSnapshot,
     applyTheme,
     applyPinned,
+    saveWorkspace,
     dispose
   }
 }
+
+describe('registerIpc: workspace persistence', () => {
+  it('validates and forwards workspace preferences to durable storage', async () => {
+    const { ipcMain, saveWorkspace } = buildHarness()
+    const workspace = { activeProjectId: 'p1', activeSessionId: 's1', collapsedProjectIds: ['p1'] }
+    await ipcMain.invoke(IPC.workspaceSave, workspace)
+    expect(saveWorkspace).toHaveBeenCalledWith(workspace)
+    await expect(ipcMain.invoke(IPC.workspaceSave, { ...workspace, path: 'arbitrary.json' })).rejects.toThrow(z.ZodError)
+    await expect(ipcMain.invokeFrom({}, IPC.workspaceSave, workspace)).rejects.toThrow(/unauthorized ipc sender/i)
+    expect(saveWorkspace).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('registerIpc: sender ownership', () => {
   it('rejects invoke requests from webContents other than the owning window', async () => {

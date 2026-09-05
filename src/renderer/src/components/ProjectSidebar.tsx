@@ -112,6 +112,8 @@ export default function ProjectSidebar() {
   const capabilities = useAppStore((state) => state.capabilities)
   const activeProjectId = useAppStore((state) => state.activeProjectId)
   const activeSessionId = useAppStore((state) => state.activeSessionId)
+  const collapsedProjectIds = useAppStore((state) => state.collapsedProjectIds)
+  const toggleProjectCollapsed = useAppStore((state) => state.toggleProjectCollapsed)
   const searchQuery = useAppStore((state) => state.searchQuery)
   const notice = useAppStore((state) => state.notice)
   const setSearchQuery = useAppStore((state) => state.setSearchQuery)
@@ -134,7 +136,6 @@ export default function ProjectSidebar() {
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
   const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [pendingRemove, setPendingRemove] = useState<ProjectRecord | null>(null)
-  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set())
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
   const [optionsMenuLayout, setOptionsMenuLayout] = useState<ProjectOptionsLayout>({ placement: 'below', maxHeight: null })
   const [launcherFocusRequest, setLauncherFocusRequest] = useState(0)
@@ -484,7 +485,7 @@ export default function ProjectSidebar() {
       <div className="project-groups" ref={projectGroupsRef}>
         {appState.projects.map((project) => {
           // Search reveals matches without changing each project's saved collapse state.
-          const expanded = !collapsedProjectIds.has(project.id) || normalizedQuery !== ''
+          const expanded = !collapsedProjectIds.includes(project.id) || normalizedQuery !== ''
           const sessions = appState.sessions.filter((session) => session.projectId === project.id)
           const visibleSessions = normalizedQuery
             ? sessions.filter((session) => session.title.toLowerCase().includes(normalizedQuery))
@@ -519,14 +520,7 @@ export default function ProjectSidebar() {
                   className="project-row-label"
                   aria-expanded={expanded}
                   aria-controls={`project-sessions-${project.id}`}
-                  onClick={() => {
-                    setCollapsedProjectIds((current) => {
-                      const next = new Set(current)
-                      if (next.has(project.id)) next.delete(project.id)
-                      else next.add(project.id)
-                      return next
-                    })
-                  }}
+                  onClick={() => toggleProjectCollapsed(project.id)}
                 >
                   <span className="project-name" title={project.name}>
                     {project.name}

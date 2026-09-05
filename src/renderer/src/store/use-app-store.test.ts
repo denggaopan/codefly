@@ -12,7 +12,8 @@ import type {
   UpdateCheckResult,
   UpdateDownloadProgress,
   UpdateDownloadResult,
-  UpdateInstallResult
+  UpdateInstallResult,
+  WorkspaceState
 } from '../../../shared/contracts'
 import { EXTERNAL_LINKS } from '../../../shared/links'
 import type { TerminalReplay } from '../../../shared/pty-protocol'
@@ -60,6 +61,7 @@ const createFakeApi = () => {
   const progressListeners = new Set<(progress: UpdateDownloadProgress) => void>()
   return {
     setTheme: vi.fn(async (): Promise<void> => undefined),
+    saveWorkspace: vi.fn(async (_workspace: WorkspaceState): Promise<void> => undefined),
     setWindowPinned: vi.fn(async (pinned: boolean): Promise<boolean> => pinned),
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ platform: 'win32', state: seededState, capabilities: defaultCapabilities() })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
@@ -86,7 +88,7 @@ const createFakeApi = () => {
     writeTerminal: vi.fn(),
     resizeTerminal: vi.fn(),
     replayTerminal: vi.fn(async (_sessionId: string): Promise<TerminalReplay | undefined> => undefined),
-    onStateChanged: vi.fn(() => () => undefined),
+    onStateChanged: vi.fn((_listener: (state: AppState) => void) => () => undefined),
     onTerminalData: vi.fn((listener: (payload: { sessionId: string; data: string }) => void) => {
       dataListeners.add(listener)
       return () => {
@@ -139,6 +141,143 @@ beforeEach(async () => {
 afterEach(() => {
   dispose()
   vi.useRealTimers()
+})
+
+describe('workspace persistence', () => {
+  const project: ProjectRecord = {
+    id: 'project-1', name: 'Project', path: 'C:\\project', createdAt: '2026-08-20T00:00:00.000Z'
+  }
+  const secondProject = { ...project, id: 'project-2' }
+  const snapshot: AppSnapshot = {
+    platform: 'win32', capabilities: defaultCapabilities(),
+    state: { ...seededState, projects: [secondProject, project] }
+  }
+  const stored = () => api.saveWorkspace.mock.calls.at(-1)![0]
+  const restart = async () => {
+    dispose()
+    useAppStore.getState().reset()
+    const workspace = stored()
+    api.getSnapshot.mockResolvedValue({ ...snapshot, state: { ...snapshot.state, workspace } })
+    dispose = useAppStore.getState().initialize()
+    await vi.advanceTimersByTimeAsync(0)
+  }
+
+  it('saves selection and independent folds before shutdown and restores the active terminal inside a folded project', async () => {
+    await restart()
+    useAppStore.getState().setActiveSession(powershellSession.id)
+    useAppStore.getState().toggleProjectCollapsed(project.id)
+    expect(stored()).toEqual({
+      activeProjectId: project.id, activeSessionId: powershellSession.id, collapsedProjectIds: [project.id]
+    })
+
+    await restart()
+    expect(useAppStore.getState()).toMatchObject(stored())
+    expect(useAppStore.getState().activeSessionId).toBe(powershellSession.id)
+    expect(useAppStore.getState().collapsedProjectIds).toEqual([project.id])
+    expect(api.restoreSession).not.toHaveBeenCalled()
+    useAppStore.getState().toggleProjectCollapsed(secondProject.id)
+    useAppStore.getState().toggleProjectCollapsed(project.id)
+    await restart()
+    expect(useAppStore.getState().collapsedProjectIds).toEqual([secondProject.id])
+  })
+
+  it('persists sessions selected through creation and restoration, and clears a deleted selection', async () => {
+    await restart()
+    await useAppStore.getState().createSession(project.id, 'claude', false)
+    expect(stored().activeSessionId).toBe(claudeSession.id)
+    api.restoreSession.mockResolvedValue(powershellSession)
+    await useAppStore.getState().restoreSession(powershellSession.id)
+    expect(stored().activeSessionId).toBe(powershellSession.id)
+    await useAppStore.getState().deleteSession(powershellSession.id)
+    expect(stored().activeSessionId).toBeNull()
+  })
+
+  it('opens a saved stopped session without restarting its process', async () => {
+    dispose()
+    useAppStore.getState().reset()
+    const workspace = { activeProjectId: project.id, activeSessionId: claudeSession.id, collapsedProjectIds: [project.id] }
+    api.getSnapshot.mockResolvedValue({
+      ...snapshot, state: { ...snapshot.state, workspace, sessions: [{ ...claudeSession, status: 'stopped' }] }
+    })
+    dispose = useAppStore.getState().initialize()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useAppStore.getState()).toMatchObject(workspace)
+    expect(api.restoreSession).not.toHaveBeenCalled()
+  })
+
+  it('remembers an empty selection after adding a project and removes forgotten project folds', async () => {
+    await restart()
+    useAppStore.getState().setActiveSession(claudeSession.id)
+    api.addProject.mockResolvedValue(secondProject)
+    await useAppStore.getState().addProject()
+    expect(stored()).toMatchObject({ activeProjectId: secondProject.id, activeSessionId: null })
+    useAppStore.getState().toggleProjectCollapsed(secondProject.id)
+    await useAppStore.getState().removeProject(secondProject.id)
+    expect(stored().collapsedProjectIds).toEqual([])
+  })
+
+  it('ignores deleted records on startup without choosing an unrelated session', async () => {
+    await api.saveWorkspace({
+      activeProjectId: 'deleted', activeSessionId: 'deleted', collapsedProjectIds: ['deleted', project.id, project.id]
+    })
+    await restart()
+    expect(stored()).toEqual({
+      activeProjectId: secondProject.id, activeSessionId: null, collapsedProjectIds: [project.id]
+    })
+  })
+
+  it('clears references when a state broadcast removes the active project', async () => {
+    await restart()
+    useAppStore.getState().setActiveSession(claudeSession.id)
+    useAppStore.getState().toggleProjectCollapsed(project.id)
+    const listener = api.onStateChanged.mock.calls.at(-1)![0] as (state: AppState) => void
+    listener({ version: 1, projects: [secondProject], sessions: [] })
+    expect(stored()).toEqual({ activeProjectId: secondProject.id, activeSessionId: null, collapsedProjectIds: [] })
+  })
+
+  it('does not overwrite preferences while the snapshot is pending or restore a disposed initialization', async () => {
+    dispose()
+    useAppStore.getState().reset()
+    const preferences = { activeProjectId: project.id, activeSessionId: claudeSession.id, collapsedProjectIds: [project.id] }
+    await api.saveWorkspace(preferences)
+    let resolveSnapshot!: (value: AppSnapshot) => void
+    api.getSnapshot.mockReturnValueOnce(new Promise((resolve) => { resolveSnapshot = resolve }))
+    dispose = useAppStore.getState().initialize()
+    expect(stored()).toEqual(preferences)
+    dispose()
+    useAppStore.getState().reset()
+    resolveSnapshot(snapshot)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(stored()).toEqual(preferences)
+    expect(useAppStore.getState().appState.projects).toEqual([])
+  })
+
+  it('preserves a user selection made while loading and uses broadcasts newer than the snapshot', async () => {
+    dispose()
+    useAppStore.getState().reset()
+    let resolveSnapshot!: (value: AppSnapshot) => void
+    api.getSnapshot.mockReturnValueOnce(new Promise((resolve) => { resolveSnapshot = resolve }))
+    dispose = useAppStore.getState().initialize()
+    const listener = api.onStateChanged.mock.calls.at(-1)![0] as (state: AppState) => void
+    listener(snapshot.state)
+    useAppStore.getState().setActiveSession(powershellSession.id)
+    resolveSnapshot({ ...snapshot, state: { version: 1, projects: [], sessions: [] } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useAppStore.getState().activeSessionId).toBe(powershellSession.id)
+    expect(useAppStore.getState().appState).toEqual(snapshot.state)
+    expect(stored().activeSessionId).toBe(powershellSession.id)
+  })
+
+  it('keeps navigation usable and reports a failed workspace save', async () => {
+    await restart()
+    api.saveWorkspace.mockRejectedValue(new Error('storage unavailable'))
+    useAppStore.getState().setActiveSession(claudeSession.id)
+    useAppStore.getState().toggleProjectCollapsed(project.id)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useAppStore.getState().activeSessionId).toBe(claudeSession.id)
+    expect(useAppStore.getState().collapsedProjectIds).toEqual([project.id])
+    expect(useAppStore.getState().notice).toEqual({ message: 'storage unavailable', tone: 'error' })
+  })
 })
 
 // The launcher reads availability by kind with no fallback, and it can be opened before the

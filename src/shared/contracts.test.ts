@@ -268,6 +268,7 @@ describe('shared contracts', () => {
   it('defines every IPC channel once', () => {
     expect(IPC).toEqual({
       snapshotGet: 'snapshot:get',
+      workspaceSave: 'workspace:save',
       projectAdd: 'project:add',
       projectReopen: 'project:reopen',
       projectCloneDirectory: 'project:clone-directory',

@@ -4,7 +4,8 @@ import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
 
 import { appStateSchema } from '../../shared/contracts'
-import type { AppState } from '../../shared/contracts'
+import type { AppState, WorkspaceState } from '../../shared/contracts'
+import { reconcileWorkspace } from '../../shared/workspace-state'
 
 type WriteFileAtomic = (filePath: string, contents: string, options: { encoding: 'utf8' }) => Promise<void>
 
@@ -87,6 +88,10 @@ export class SessionStore {
 
   recoveryWarning(): string | undefined {
     return this.startupRecoveryWarning
+  }
+
+  async saveWorkspace(workspace: WorkspaceState): Promise<void> {
+    await this.update((state) => ({ ...state, workspace: reconcileWorkspace(workspace, state) }))
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
