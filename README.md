@@ -28,7 +28,7 @@ Built with Electron, React, TypeScript, xterm.js, and node-pty.
   and `gemini`, `copilot`, `agent`, `comatecli`, or `qwen` for the opt-in kinds.
   CodeFly detects them on `PATH` on Windows and through the login shell on macOS; a missing or
   unauthenticated CLI leaves its launcher entry visible but disabled, with an installation
-  hint. Finder-launched macOS apps do not inherit Terminal's `PATH`, so ensure
+  hint on hover. Finder-launched macOS apps do not inherit Terminal's `PATH`, so ensure
   `command -v claude` (or whichever CLI you use) succeeds from a login shell.
 - Optional: [Visual Studio Code](https://code.visualstudio.com/) (or its `code` command on
   `PATH`) to use “Open project in VS Code” from a project's options menu.
@@ -56,6 +56,15 @@ npm run dev
 | `npm run package:mac`    | Build the app, then produce unsigned macOS x64 and arm64 app bundles (`.zip`) under `release/` by running `electron-builder` in a Linux container (needs Docker). |
 
 ## Session kinds and the New session menu
+
+Projects start expanded and each project name toggles only its own session list. Switching
+sessions does not change these collapse states, and project rows have no current-project
+highlight. Searching temporarily reveals matching sessions; clearing the search restores
+each project's collapse state.
+
+Open **New session** from a project's options menu. Click outside the launcher, press Escape,
+or use its close button to dismiss it. Installation hints for unavailable entries appear on
+hover, including their worktree variants.
 
 Each session kind shown for the host platform has two switches under **Session kinds** in
 Settings. Windows shows PowerShell, Command Prompt, Claude, and Codex; macOS shows Shell,
@@ -224,7 +233,8 @@ they are. Re-adding the directory later starts with an empty session list.
 
 The pin button next to the gear keeps CodeFly above every other window, which is what you want
 while an agent works in the background and you follow it from another app. Click it again to
-release; the pressed state, the accent colour and the filled pin all say the window is on top.
+release; the pressed state and the pin filled with its normal icon colour show that the
+window is on top.
 
 The renderer owns the preference (`localStorage`, like the theme and language — it never enters
 the state file) and the main process owns the effect: all that crosses IPC is the boolean, and

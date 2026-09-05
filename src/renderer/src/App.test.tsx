@@ -510,7 +510,7 @@ describe('App', () => {
     expect(api.createSession).not.toHaveBeenCalled()
   })
 
-  it('disables Claude and Codex when unavailable and shows the capability detail as visible help text', async () => {
+  it('keeps unavailable session entries disabled with capability details only in hover hints', async () => {
     const user = userEvent.setup()
     api = createFakeApi(stateWith(), claudeDisabledCapabilities)
     window.codefly = api
@@ -521,10 +521,17 @@ describe('App', () => {
 
     const claudeButton = await screen.findByRole('button', { name: 'Claude' })
     expect(claudeButton).toBeDisabled()
-    expect(await screen.findByText('Claude CLI not found. Install claude and sign in.')).toBeVisible()
+    const detail = 'Claude CLI not found. Install claude and sign in.'
+    expect(screen.queryByText(detail)).not.toBeInTheDocument()
+    expect(claudeButton.closest('li')).toHaveAttribute('title', detail)
+    expect(claudeButton).toHaveAttribute('aria-description', detail)
+    const worktreeButton = screen.getByRole('button', { name: 'Claude (new worktree)' })
+    expect(worktreeButton).toBeDisabled()
+    expect(worktreeButton.closest('li')).toHaveAttribute('title', detail)
 
     await user.click(claudeButton)
     expect(api.createSession).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Create session')).toBeInTheDocument()
   })
 
   // An opt-in agent behaves exactly like Claude once its switch is on: present, and disabled
@@ -541,7 +548,9 @@ describe('App', () => {
 
     const cursorButton = await screen.findByRole('button', { name: /^Cursor$/ })
     expect(cursorButton).toBeDisabled()
-    expect(await screen.findByText('Install the Cursor CLI (agent) and sign in.')).toBeVisible()
+    const detail = 'Install the Cursor CLI (agent) and sign in.'
+    expect(screen.queryByText(detail)).not.toBeInTheDocument()
+    expect(cursorButton.closest('li')).toHaveAttribute('title', detail)
 
     await user.click(cursorButton)
     expect(api.createSession).not.toHaveBeenCalled()

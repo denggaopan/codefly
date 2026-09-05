@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { isAgentKind } from '../../../shared/agent-kinds'
 import type { SessionKind } from '../../../shared/contracts'
@@ -21,9 +21,8 @@ type SessionLauncherProps = {
 
 /**
  * Popover for choosing which session kind to create in the currently active project.
- * Agent kinds are disabled from CapabilityState with their lookup detail shown as
- * visible help text (not just a tooltip) so an unauthenticated/missing CLI is discoverable
- * without hovering. The platform's native shell entries are always available.
+ * Agent kinds are disabled from CapabilityState with their lookup detail available on
+ * hover. The platform's native shell entries are always available.
  *
  * Which kinds appear at all, and which of them offer a worktree, comes from the per-kind
  * Settings switches: an enabled kind always has a plain entry that launches in the project
@@ -41,9 +40,9 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   const createSession = useAppStore((state) => state.createSession)
   const closeLauncher = useAppStore((state) => state.closeLauncher)
   const [pending, setPending] = useState(false)
+  const launcherRef = useRef<HTMLDivElement | null>(null)
 
-  // Escape closes the launcher from the keyboard; ProjectSidebar's focus-restoration effect
-  // (watching launcherOpen) then returns focus to the project options trigger.
+  // Escape and outside clicks dismiss the popover; ProjectSidebar restores trigger focus.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -51,8 +50,17 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
         closeLauncher()
       }
     }
+    const handlePointerDown = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !launcherRef.current?.contains(event.target)) {
+        closeLauncher()
+      }
+    }
     document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    document.addEventListener('pointerdown', handlePointerDown, true)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('pointerdown', handlePointerDown, true)
+    }
   }, [closeLauncher])
 
   // Only the agent CLIs can be missing: the platform's native shells always exist, and every
@@ -81,7 +89,7 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
   }
 
   return (
-    <div className="session-launcher" aria-label={t('launcher.createSession')}>
+    <div className="session-launcher" aria-label={t('launcher.createSession')} ref={launcherRef}>
       <div className="session-launcher-header">
         <span>{t('launcher.newSession')}</span>
         <button type="button" className="session-launcher-close" aria-label={t('launcher.close')} onClick={closeLauncher}>
@@ -94,13 +102,15 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
       <ul className="session-launcher-list">
         {entries.map((entry) => {
           const info = availability(entry.kind)
+          const detail = !info.available ? info.detail : undefined
           return (
-            <li key={entry.id} className="session-launcher-item" data-launcher-item>
+            <li key={entry.id} className="session-launcher-item" data-launcher-item title={detail}>
               <button
                 type="button"
                 data-kind={entry.kind}
                 data-worktree={entry.worktree ? 'true' : 'false'}
                 disabled={!info.available || pending}
+                aria-description={detail}
                 onClick={() => handleSelect(entry.kind, entry.worktree)}
               >
                 <img src={sessionKindIconUrl(entry.kind)} alt="" width={16} height={16} className="session-launcher-icon" />
@@ -112,9 +122,6 @@ export default function SessionLauncher({ projectId }: SessionLauncherProps) {
                   </span>
                 )}
               </button>
-              {/* The unavailability detail belongs to the kind, not the entry: showing it once
-                  per entry would repeat the same CLI-lookup sentence twice for one tool. */}
-              {!info.available && info.detail && !entry.worktree && <p className="session-launcher-detail">{info.detail}</p>}
             </li>
           )
         })}

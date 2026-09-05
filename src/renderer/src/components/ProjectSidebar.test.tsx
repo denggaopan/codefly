@@ -785,6 +785,35 @@ describe('ProjectSidebar', () => {
     expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument()
   })
 
+  it('keeps the launcher open for inside clicks and dismisses it on outside blank space', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await user.click(within(await openProjectOptions(user)).getByRole('menuitem', { name: 'New session' }))
+    const launcher = screen.getByLabelText('Create session')
+    await user.click(within(launcher).getByText('New session'))
+    expect(launcher).toBeInTheDocument()
+
+    await user.click(document.body)
+    expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument()
+    expect(useAppStore.getState().launcherOpen).toBe(false)
+    expect(api.createSession).not.toHaveBeenCalled()
+  })
+
+  it('dismisses the launcher without taking focus from the clicked search input', async () => {
+    const user = userEvent.setup()
+    seedStore({ version: 1, projects: [project1], sessions: [] })
+    render(<ProjectSidebar />)
+
+    await user.click(within(await openProjectOptions(user)).getByRole('menuitem', { name: 'New session' }))
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    await user.click(search)
+
+    expect(screen.queryByLabelText('Create session')).not.toBeInTheDocument()
+    expect(search).toHaveFocus()
+  })
+
   it('moves keyboard focus into the launcher and restores it after launcher Escape', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
@@ -853,16 +882,20 @@ describe('ProjectSidebar', () => {
     expect(sessionLabel.closest('[role="button"]')).toBeNull()
   })
 
-  it('activates the project row label with the keyboard (native button, no role="button")', async () => {
+  it('toggles the project with Enter and Space without changing the active project', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [project1], sessions: [] })
     render(<ProjectSidebar />)
 
     const label = screen.getByText(project1.name).closest('button') as HTMLButtonElement
+    expect(label).toHaveAttribute('aria-expanded', 'true')
     label.focus()
     await user.keyboard('{Enter}')
 
-    expect(useAppStore.getState().activeProjectId).toBe('project-1')
+    expect(label).toHaveAttribute('aria-expanded', 'false')
+    await user.keyboard(' ')
+    expect(label).toHaveAttribute('aria-expanded', 'true')
+    expect(useAppStore.getState().activeProjectId).toBeNull()
   })
 
   it('restores a stopped session when its row label is activated with the keyboard', async () => {
@@ -936,45 +969,84 @@ describe('ProjectSidebar', () => {
     expect(transfer.setData).not.toHaveBeenCalled()
   })
 
-  it('sets the active project when the project row itself is clicked', async () => {
+  it('does not mark any project as current when sessions are selected or project labels are clicked', async () => {
     const user = userEvent.setup()
-    seedStore({ version: 1, projects: [project1], sessions: [] })
+    seedStore({ version: 1, projects: [project1], sessions: [runningWorktreeSession] })
     render(<ProjectSidebar />)
 
+    await user.click(screen.getByText(runningWorktreeSession.title))
+    expect(screen.getByText(runningWorktreeSession.title).closest('button')).toHaveAttribute('aria-current', 'true')
+    const row = screen.getByText(project1.name).closest('[data-project-row]')
+    expect(row).not.toHaveAttribute('aria-current')
     await user.click(screen.getByText(project1.name))
 
-    expect(useAppStore.getState().activeProjectId).toBe('project-1')
+    expect(row).not.toHaveAttribute('aria-current')
+    expect(useAppStore.getState().activeSessionId).toBe(runningWorktreeSession.id)
   })
 
-  it('expands the clicked project and collapses the others (accordion), with no expand control', async () => {
+  it('collapses and expands each project independently', async () => {
     const user = userEvent.setup()
     const project2: ProjectRecord = { id: 'project-2', name: 'second-project', path: 'C:\\work\\second', createdAt: '2026-08-21T00:00:00.000Z' }
     const sessionInP2: SessionRecord = { ...stoppedSession, id: 'session-p2', projectId: 'project-2', title: 'P2 session' }
     seedStore({ version: 1, projects: [project1, project2], sessions: [stoppedSession, sessionInP2] })
     render(<ProjectSidebar />)
 
-    // No active project yet: every group is expanded, and there is no expand/collapse control.
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
     expect(screen.getByText('P2 session')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /collapse sessions|expand sessions/i })).not.toBeInTheDocument()
 
     await user.click(screen.getByText(project2.name))
+    expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+    expect(screen.queryByText('P2 session')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText(project1.name))
     expect(screen.queryByText(stoppedSession.title)).not.toBeInTheDocument()
-    expect(screen.getByText('P2 session')).toBeInTheDocument()
+    expect(screen.queryByText('P2 session')).not.toBeInTheDocument()
 
     await user.click(screen.getByText(project1.name))
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
     expect(screen.queryByText('P2 session')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText(project2.name))
+    expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+    expect(screen.getByText('P2 session')).toBeInTheDocument()
   })
 
-  it('shows matching sessions in every project while searching, regardless of the active project', async () => {
+  it('preserves each project collapse state when switching sessions or opening the launcher', async () => {
+    const user = userEvent.setup()
+    const project2: ProjectRecord = { ...project1, id: 'project-2', name: 'second-project' }
+    seedStore({ version: 1, projects: [project1, project2], sessions: [runningWorktreeSession] })
+    useAppStore.setState({ activeProjectId: project2.id })
+    render(<ProjectSidebar />)
+
+    await user.click(screen.getByText(project2.name))
+    await user.click(screen.getByText(runningWorktreeSession.title))
+    expect(screen.getByText(project1.name).closest('button')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText(project2.name).closest('button')).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(within(await openProjectOptions(user, project2.name)).getByRole('menuitem', { name: 'New session' }))
+    expect(screen.getByLabelText('Create session')).toBeInTheDocument()
+    expect(screen.getByText(project1.name).closest('button')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText(project2.name).closest('button')).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('reveals matching sessions while searching and restores collapse state after clearing search', async () => {
+    const user = userEvent.setup()
     const project2: ProjectRecord = { id: 'project-2', name: 'second-project', path: 'C:\\work\\second', createdAt: '2026-08-21T00:00:00.000Z' }
     const sessionInP2: SessionRecord = { ...stoppedSession, id: 'session-p2', projectId: 'project-2', title: 'Special P2 session' }
     seedStore({ version: 1, projects: [project1, project2], sessions: [stoppedSession, sessionInP2] })
-    useAppStore.setState({ activeProjectId: project1.id, searchQuery: 'special' })
     render(<ProjectSidebar />)
 
+    await user.click(screen.getByText(project2.name))
+    expect(screen.queryByText('Special P2 session')).not.toBeInTheDocument()
+    const search = screen.getByRole('searchbox', { name: 'Search sessions' })
+    await user.type(search, 'special')
     expect(screen.getByText('Special P2 session')).toBeInTheDocument()
+    expect(screen.getByText(project2.name).closest('button')).toHaveAttribute('aria-expanded', 'true')
+
+    await user.clear(search)
+    expect(screen.queryByText('Special P2 session')).not.toBeInTheDocument()
+    expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
+    expect(screen.getByText(project2.name).closest('button')).toHaveAttribute('aria-expanded', 'false')
   })
 
   describe('project drag reordering', () => {

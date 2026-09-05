@@ -133,6 +133,7 @@ export default function ProjectSidebar() {
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
   const [pendingRemove, setPendingRemove] = useState<ProjectRecord | null>(null)
+  const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set())
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
   const [optionsMenuLayout, setOptionsMenuLayout] = useState<ProjectOptionsLayout>({ placement: 'below', maxHeight: null })
   const [launcherFocusRequest, setLauncherFocusRequest] = useState(0)
@@ -481,11 +482,8 @@ export default function ProjectSidebar() {
 
       <div className="project-groups" ref={projectGroupsRef}>
         {appState.projects.map((project) => {
-          // Accordion: activating a project (clicking its row, creating a session, or one of
-          // its sessions) expands it and collapses every other project. Before anything is
-          // active, every group shows. An active search overrides collapse so matches in
-          // every project stay discoverable.
-          const expanded = activeProjectId === null || project.id === activeProjectId || normalizedQuery !== ''
+          // Search reveals matches without changing each project's saved collapse state.
+          const expanded = !collapsedProjectIds.has(project.id) || normalizedQuery !== ''
           const sessions = appState.sessions.filter((session) => session.projectId === project.id)
           const visibleSessions = normalizedQuery
             ? sessions.filter((session) => session.title.toLowerCase().includes(normalizedQuery))
@@ -494,7 +492,7 @@ export default function ProjectSidebar() {
           return (
             <section key={project.id} className="project-group">
               {/*
-                Plain container: the selectable label and options trigger are SIBLING
+                Plain container: the collapse toggle and options trigger are SIBLING
                 <button> elements rather than real buttons nested inside a
                 role="button" div. A role="button" element must not have focusable
                 descendants (screen readers flatten/misreport that, and it produces two tab
@@ -504,7 +502,6 @@ export default function ProjectSidebar() {
               <div
                 className="project-row"
                 data-project-row
-                aria-current={project.id === activeProjectId ? 'true' : undefined}
                 draggable={dragEnabled}
                 data-dragging={draggingProjectId === project.id ? 'true' : undefined}
                 data-drop={dropTarget?.projectId === project.id ? dropTarget.position : undefined}
@@ -516,7 +513,20 @@ export default function ProjectSidebar() {
                 onPointerUp={clearDragOrigin}
                 onPointerCancel={clearDragOrigin}
               >
-                <button type="button" className="project-row-label" onClick={() => setActiveProject(project.id)}>
+                <button
+                  type="button"
+                  className="project-row-label"
+                  aria-expanded={expanded}
+                  aria-controls={`project-sessions-${project.id}`}
+                  onClick={() => {
+                    setCollapsedProjectIds((current) => {
+                      const next = new Set(current)
+                      if (next.has(project.id)) next.delete(project.id)
+                      else next.add(project.id)
+                      return next
+                    })
+                  }}
+                >
                   <span className="project-name" title={project.name}>
                     {project.name}
                   </span>
@@ -666,7 +676,7 @@ export default function ProjectSidebar() {
               </div>
 
               {expanded && (
-                <ul className="session-list">
+                <ul className="session-list" id={`project-sessions-${project.id}`}>
                   {visibleSessions.map((session) => (
                     <SessionRow
                       key={session.id}

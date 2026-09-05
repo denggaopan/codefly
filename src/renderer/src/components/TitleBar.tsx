@@ -83,8 +83,6 @@ export default function TitleBar() {
           aria-pressed={pinned}
           onClick={() => setWindowPinned(!pinned)}
         >
-          {/* The same pin, filled once it is stuck: a shape change reads faster than a colour
-              change alone, and the accent colour in styles.css carries the rest. */}
           <svg
             className="icon"
             width="16"

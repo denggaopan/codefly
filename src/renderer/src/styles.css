@@ -289,13 +289,6 @@ html[data-platform='darwin'] .title-bar {
   color: var(--color-text);
 }
 
-/* Pinned is a sticky state, not a hover: it keeps the accent colour and the raised
-   background for as long as the window stays on top. */
-.title-bar-pin[aria-pressed='true'] {
-  background: var(--color-panel-elevated);
-  color: var(--color-accent);
-}
-
 /* Rocket easter egg (see RocketFlight.tsx). Portalled to document.body and anchored at the
    launch point with left/top, because `transform` belongs entirely to the flight animation;
    the body's negative margins are what put the rocket's centre on that anchor. Above every
@@ -572,11 +565,6 @@ body[data-sidebar-resizing='true'] .app-main {
   gap: 4px;
   padding: 8px 8px 8px 10px;
   border-left: 3px solid transparent;
-}
-
-.project-row[aria-current='true'] {
-  background: var(--color-panel-elevated);
-  border-left-color: var(--color-accent);
 }
 
 .project-row-label {
@@ -973,16 +961,6 @@ body[data-sidebar-resizing='true'] .app-main {
   color: var(--color-text-muted);
   font-size: 0.78rem;
   line-height: 1.4;
-}
-
-.session-launcher-detail {
-  margin: 0 10px 6px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(224, 169, 64, 0.12);
-  color: var(--color-state-warning);
-  font-size: 0.7rem;
-  line-height: 1.3;
 }
 
 /* ==========================================================================
