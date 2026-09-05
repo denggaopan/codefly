@@ -411,6 +411,12 @@ install), none of this test-mode wiring is active.
 
 ## Packaging
 
+After either `npm run package:win` or `npm run package:mac` succeeds, `release/` keeps
+only the three newest versions, ordered by semantic version. Older installers,
+macOS archives, blockmaps, release notes and versioned release/validation records
+are removed together. Unpacked apps, caches, `latest*.yml` and unrelated files are
+left in place. To apply the same cleanup without building, run `npm run release:prune`.
+
 ### Windows
 
 ```bash

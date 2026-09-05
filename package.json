@@ -16,8 +16,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test",
-    "package:win": "npm run build && electron-builder --win nsis --x64",
-    "package:mac": "npm run build && node scripts/package-mac.mjs"
+    "package:win": "npm run build && electron-builder --win nsis --x64 && npm run release:prune",
+    "package:mac": "npm run build && node scripts/package-mac.mjs && npm run release:prune",
+    "release:prune": "node scripts/prune-releases.mjs"
   },
   "build": {
     "extends": "./electron-builder.yml"
@@ -49,6 +50,7 @@
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "jsdom": "29.1.1",
+    "semver": "7.7.4",
     "typescript": "7.0.2",
     "vite": "7.3.6",
     "vitest": "4.1.11"
