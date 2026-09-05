@@ -1,5 +1,7 @@
 # CodeFly
 
+English | [简体中文](README.zh-CN.md)
+
 CodeFly is a Windows and macOS desktop application for running local shell and coding-agent
 sessions against local projects. Windows provides PowerShell and Command Prompt; macOS
 provides the user's login Shell. Claude Code and Codex are offered by default, with Gemini,
@@ -565,3 +567,12 @@ Silicon Mac with `mac-arm64.zip`; a Rosetta-only run does not cover both archite
 - Verify **Cmd+V** pastes into Claude and Codex, **Shift+Enter** inserts a newline without
   submitting, and `Cmd+T` creates an ordinary Shell session.
 - Switch between English and Simplified Chinese and confirm the choice survives a restart.
+
+## License
+
+CodeFly is licensed under the [MIT License](LICENSE).
+You may use, copy, modify, and distribute it for any purpose, including commercial
+and closed-source use. Copies or substantial portions of the software must retain
+the copyright notice and license text; you do not have to disclose source code.
+
+Third-party dependencies remain subject to their own licenses.
