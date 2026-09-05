@@ -946,6 +946,7 @@ describe('SessionCoordinator.removeProject', () => {
 
     const persisted = await store.load()
     expect(persisted.projects).toEqual([otherProject])
+    expect(persisted.recentProjects).toEqual([project])
     expect(persisted.sessions).toEqual([foreign])
     expect(seen).toEqual([persisted])
   })
@@ -971,6 +972,6 @@ describe('SessionCoordinator.removeProject', () => {
     } finally {
       errorSpy.mockRestore()
     }
-    await expect(store.load()).resolves.toEqual(emptyState())
+    await expect(store.load()).resolves.toEqual({ ...emptyState(), recentProjects: [project] })
   })
 })

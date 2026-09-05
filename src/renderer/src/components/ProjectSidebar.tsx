@@ -12,6 +12,7 @@ import { isAgentDone, isSessionRestartable, sessionStatusLabel } from '../sessio
 import { sessionKindIconUrl } from '../session-kind-icons'
 import { useAppStore } from '../store/use-app-store'
 import ConfirmDialog from './ConfirmDialog'
+import AddProjectDialog from './AddProjectDialog'
 import SessionLauncher from './SessionLauncher'
 
 const PROJECT_OPTIONS_GAP = 6
@@ -114,7 +115,6 @@ export default function ProjectSidebar() {
   const searchQuery = useAppStore((state) => state.searchQuery)
   const notice = useAppStore((state) => state.notice)
   const setSearchQuery = useAppStore((state) => state.setSearchQuery)
-  const addProject = useAppStore((state) => state.addProject)
   const setActiveProject = useAppStore((state) => state.setActiveProject)
   const reorderProjects = useAppStore((state) => state.reorderProjects)
   const setActiveSession = useAppStore((state) => state.setActiveSession)
@@ -132,6 +132,7 @@ export default function ProjectSidebar() {
   const closeLauncher = useAppStore((state) => state.closeLauncher)
 
   const [pendingDelete, setPendingDelete] = useState<SessionRecord | null>(null)
+  const [addProjectOpen, setAddProjectOpen] = useState(false)
   const [pendingRemove, setPendingRemove] = useState<ProjectRecord | null>(null)
   const [collapsedProjectIds, setCollapsedProjectIds] = useState<Set<string>>(() => new Set())
   const [openOptionsProjectId, setOpenOptionsProjectId] = useState<string | null>(null)
@@ -699,11 +700,18 @@ export default function ProjectSidebar() {
           className="add-project-fab"
           aria-label={t('sidebar.addProject')}
           title={t('sidebar.addProject')}
-          onClick={() => void addProject()}
+          aria-haspopup="dialog"
+          onClick={() => {
+            closeProjectOptions()
+            closeLauncher()
+            setAddProjectOpen(true)
+          }}
         >
           +
         </button>
       </div>
+
+      {addProjectOpen && <AddProjectDialog onClose={() => setAddProjectOpen(false)} />}
 
       <ConfirmDialog
         open={pendingDelete !== null}

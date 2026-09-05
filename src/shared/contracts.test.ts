@@ -269,6 +269,9 @@ describe('shared contracts', () => {
     expect(IPC).toEqual({
       snapshotGet: 'snapshot:get',
       projectAdd: 'project:add',
+      projectReopen: 'project:reopen',
+      projectCloneDirectory: 'project:clone-directory',
+      projectClone: 'project:clone',
       projectOpenVSCode: 'project:open-vscode',
       projectOpenFolder: 'project:open-folder',
       projectOpenRepository: 'project:open-repository',

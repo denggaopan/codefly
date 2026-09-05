@@ -334,8 +334,64 @@ test('exposes the startup toggle, version check, About links, and language switc
 })
 
 
+test('offers local folders, recent projects and a Git clone form in Add Project', async ({}, testInfo) => {
+  const trigger = window.getByRole('button', { name: 'Add Project', exact: true })
+  await trigger.click()
+  const dialog = window.getByRole('dialog', { name: 'Add Project' })
+  await expect(dialog).toBeVisible()
+  await window.getByRole('button', { name: 'Recent projects', exact: true }).click()
+  await expect(dialog.getByText('No recent projects outside your project list.')).toBeVisible()
+  await window.getByRole('button', { name: 'Clone Git repository', exact: true }).click()
+  const cloneButton = dialog.getByRole('button', { name: 'Clone and open' })
+  await expect(cloneButton).toBeDisabled()
+  await dialog.getByLabel('Git repository URL').fill('git@github.com:team/repository.git')
+  await expect(cloneButton).toBeDisabled()
+  await dialog.getByRole('button', { name: 'Browse...' }).click()
+  await expect(dialog.getByLabel('Target directory')).toHaveValue(repoPath)
+  await expect(dialog.getByText(`Save to: ${join(repoPath, 'repository')}`)).toBeVisible()
+  await expect(cloneButton).toBeEnabled()
+  const originalWindow = await electronApp.evaluate(({ BrowserWindow }) => {
+    const browser = BrowserWindow.getAllWindows()[0]!
+    const original = { size: browser.getSize(), maximized: browser.isMaximized() }
+    if (original.maximized) browser.unmaximize()
+    browser.setSize(900, 600)
+    return original
+  })
+  await expect.poll(() => window.evaluate(() => innerWidth)).toBeLessThanOrEqual(900)
+  await expect(cloneButton).toBeInViewport()
+  await testInfo.attach('add-project-clone', { body: await window.screenshot(), contentType: 'image/png' })
+  await electronApp.evaluate(({ BrowserWindow }, original) => {
+    const browser = BrowserWindow.getAllWindows()[0]!
+    browser.setSize(original.size[0]!, original.size[1]!)
+    if (original.maximized) browser.maximize()
+  }, originalWindow)
+  await window.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+
+  await trigger.click()
+  await window.getByRole('button', { name: 'Choose project directory' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(window.locator('[data-project-row]')).toHaveCount(1)
+  const snapshot = await window.evaluate(() => window.codefly.getSnapshot())
+  const project = snapshot.state.projects[0]!
+  const menu = await openProjectOptions()
+  await menu.getByRole('menuitem', { name: 'Remove from list' }).click()
+  await window.getByRole('alertdialog').getByRole('button', { name: 'Remove', exact: true }).click()
+  await expect(window.locator('[data-project-row]')).toHaveCount(0)
+  await trigger.click()
+  await window.getByRole('button', { name: 'Recent projects', exact: true }).click()
+  await dialog.getByRole('button', { name: `${project.name} ${project.path}` }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(window.locator('[data-project-row]')).toHaveCount(1)
+  const reopened = await window.evaluate(() => window.codefly.getSnapshot())
+  expect(reopened.state.projects[0]!.id).toBe(project.id)
+  expect(reopened.state.recentProjects).toEqual([])
+})
+
 test('adds the fixture project and creates a Claude session as the first worktree', async () => {
   await window.getByRole('button', { name: 'Add Project' }).click()
+  await window.getByRole('button', { name: 'Choose project directory' }).click()
   await expect(window.locator('[data-project-row]')).toHaveCount(1, { timeout: 20_000 })
 
   const launcher = await openNewSessionLauncher()

@@ -55,6 +55,20 @@ npm run dev
 | `npm run package:win`    | Build the app, then produce a Windows x64 NSIS installer under `release/` via `electron-builder`.            |
 | `npm run package:mac`    | Build the app, then produce unsigned macOS x64 and arm64 app bundles (`.zip`) under `release/` by running `electron-builder` in a Linux container (needs Docker). |
 
+## Adding projects
+
+Use the **Add Project** button at the bottom of the sidebar to choose a local project
+directory, reopen a recent project, or clone a Git repository. Recent projects contains up
+to 50 projects removed from the list, survives app restarts, and excludes projects already
+in the list. Reopening adds the folder back; removed sessions are not restored.
+
+To clone, enter an HTTPS or SSH repository address and choose a target directory. CodeFly
+shows the full destination, creates a new subdirectory named after the repository, and adds
+the project after Git finishes. Existing destination folders are never overwritten. Private
+repositories use your existing Git credentials or SSH configuration; configure authentication
+before cloning. History starts being retained with this version; previously removed records
+cannot be recovered automatically.
+
 ## Session kinds and the New session menu
 
 Projects start expanded and each project name toggles only its own session list. Switching

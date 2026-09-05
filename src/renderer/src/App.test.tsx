@@ -65,6 +65,9 @@ const createFakeApi = (state: AppState, capabilities: CapabilityState, platform:
   return {
     getSnapshot: vi.fn(async (): Promise<AppSnapshot> => ({ platform, state, capabilities })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
+    reopenProject: vi.fn(async (): Promise<ProjectRecord> => { throw new Error('reopenProject not stubbed') }),
+    selectCloneDirectory: vi.fn(async (): Promise<string | null> => null),
+    cloneProject: vi.fn(async (): Promise<ProjectRecord> => { throw new Error('cloneProject not stubbed') }),
     reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
     openProjectInVSCode: vi.fn(async (_projectId: string): Promise<void> => undefined),
     openProjectFolder: vi.fn(async (_projectId: string): Promise<void> => undefined),
@@ -249,6 +252,8 @@ describe('App', () => {
     render(<App />)
 
     await user.click(await screen.findByRole('button', { name: 'Add Project' }))
+
+    await user.click(screen.getByRole('button', { name: 'Choose project directory' }))
 
     expect(api.addProject).toHaveBeenCalledTimes(1)
     expect(await screen.findByText('other-project')).toBeInTheDocument()

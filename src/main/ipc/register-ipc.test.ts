@@ -205,7 +205,7 @@ type Harness = {
   ipcMain: FakeIpcMain
   window: ReturnType<typeof fakeWindow>
   dialog: ReturnType<typeof fakeDialog>
-  projectService: { register: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; reorder: ReturnType<typeof vi.fn> }
+  projectService: { register: ReturnType<typeof vi.fn>; get: ReturnType<typeof vi.fn>; reorder: ReturnType<typeof vi.fn>; reopen: ReturnType<typeof vi.fn>; clone: ReturnType<typeof vi.fn> }
   coordinator: FakeCoordinator
   externalAppService: { openInVSCode: ReturnType<typeof vi.fn>; openInExplorer: ReturnType<typeof vi.fn>; openRepository: ReturnType<typeof vi.fn> }
   appInfoService: {
@@ -233,7 +233,7 @@ const buildHarness = (options: {
   const window = fakeWindow(options.windowDestroyed ?? false)
   const ipcMain = new FakeIpcMain(window.webContents)
   const dialog = fakeDialog(options.dialogResult ?? { canceled: true, filePaths: [] })
-  const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project), reorder: vi.fn(async () => [project]) }
+  const projectService = { register: vi.fn(async () => project), get: vi.fn(async () => project), reorder: vi.fn(async () => [project]), reopen: vi.fn(async () => project), clone: vi.fn(async () => project) }
   const coordinator = new FakeCoordinator()
   const externalAppService = {
     openInVSCode: vi.fn(async () => undefined),
@@ -337,6 +337,39 @@ describe('registerIpc: project:add', () => {
     await expect(ipcMain.invoke(IPC.projectAdd)).resolves.toEqual(project)
     expect(dialog.showOpenDialog).toHaveBeenCalledWith({ properties: ['openDirectory'] })
     expect(projectService.register).toHaveBeenCalledWith('C:\\Projects\\App')
+  })
+})
+
+describe('registerIpc: recent projects and clone', () => {
+  it('reopens a known history record by id and validates the request', async () => {
+    const { ipcMain, projectService } = buildHarness()
+    await expect(ipcMain.invoke(IPC.projectReopen, { projectId: project.id })).resolves.toEqual(project)
+    expect(projectService.reopen).toHaveBeenCalledWith(project.id)
+    await expect(ipcMain.invoke(IPC.projectReopen, { projectId: '' })).rejects.toBeInstanceOf(z.ZodError)
+    expect(projectService.reopen).toHaveBeenCalledTimes(1)
+  })
+
+  it('selects a clone parent without registering it as a project', async () => {
+    const { ipcMain, projectService, dialog, window } = buildHarness({ dialogResult: { canceled: false, filePaths: ['C:\\Projects'] } })
+    await expect(ipcMain.invoke(IPC.projectCloneDirectory)).resolves.toBe('C:\\Projects')
+    expect(dialog.showOpenDialog).toHaveBeenCalledWith(window, { properties: ['openDirectory', 'createDirectory'] })
+    expect(projectService.register).not.toHaveBeenCalled()
+  })
+
+  it.each([{ canceled: true, filePaths: ['C:\\Projects'] }, { canceled: false, filePaths: [] }])('returns null for an unselected clone directory', async (dialogResult) => {
+    const { ipcMain } = buildHarness({ dialogResult })
+    await expect(ipcMain.invoke(IPC.projectCloneDirectory)).resolves.toBeNull()
+  })
+
+  it('validates clone input before starting Git', async () => {
+    const { ipcMain, projectService } = buildHarness()
+    const request = { repositoryUrl: 'https://example.com/repo.git', targetDirectory: 'C:\\Projects' }
+    await expect(ipcMain.invoke(IPC.projectClone, request)).resolves.toEqual(project)
+    expect(projectService.clone).toHaveBeenCalledWith(request)
+    for (const invalid of [{}, { ...request, targetDirectory: '' }, { ...request, repositoryUrl: '--help' }, { ...request, extra: true }]) {
+      await expect(ipcMain.invoke(IPC.projectClone, invalid)).rejects.toBeInstanceOf(z.ZodError)
+    }
+    expect(projectService.clone).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -874,6 +907,9 @@ describe('registerIpc: disposer', () => {
     for (const channel of [
       IPC.snapshotGet,
       IPC.projectAdd,
+      IPC.projectReopen,
+      IPC.projectCloneDirectory,
+      IPC.projectClone,
       IPC.projectReorder,
       IPC.projectOpenVSCode,
       IPC.projectOpenFolder,

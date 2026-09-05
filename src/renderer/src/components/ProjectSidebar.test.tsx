@@ -37,6 +37,9 @@ const createFakeApi = (): FakeApi => ({
     capabilities: defaultCapabilities()
   })),
   addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
+  reopenProject: vi.fn(async (): Promise<ProjectRecord> => { throw new Error('reopenProject not stubbed') }),
+  selectCloneDirectory: vi.fn(async (): Promise<string | null> => null),
+  cloneProject: vi.fn(async (): Promise<ProjectRecord> => { throw new Error('cloneProject not stubbed') }),
   reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
   openProjectInVSCode: vi.fn(async (_projectId: string): Promise<void> => undefined),
   openProjectFolder: vi.fn(async (_projectId: string): Promise<void> => undefined),
@@ -212,14 +215,105 @@ describe('ProjectSidebar', () => {
     expect(screen.getByText(stoppedSession.title)).toBeInTheDocument()
   })
 
-  it('calls addProject when Add Project is clicked', async () => {
+  it('opens the source dialog, then adds the selected project directory', async () => {
     const user = userEvent.setup()
     seedStore({ version: 1, projects: [], sessions: [] })
     render(<ProjectSidebar />)
 
     await user.click(screen.getByRole('button', { name: 'Add Project' }))
 
+    expect(screen.getByRole('dialog', { name: 'Add Project' })).toBeInTheDocument()
+    expect(api.addProject).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Choose project directory' }))
+
     expect(api.addProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the dialog open when directory selection is cancelled and restores focus on Escape', async () => {
+    const user = userEvent.setup()
+    render(<ProjectSidebar />)
+    const trigger = screen.getByRole('button', { name: 'Add Project' })
+    await user.click(trigger)
+    await user.click(screen.getByRole('button', { name: 'Choose project directory' }))
+    expect(screen.getByRole('dialog', { name: 'Add Project' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('lists only historical projects outside the current list and reopens the chosen record', async () => {
+    const user = userEvent.setup()
+    const recent = { ...project1, id: 'recent', name: 'Historical project', path: 'C:\\history' }
+    const duplicate = { ...project1, id: 'alias', path: 'c:/work/demo-project/' }
+    seedStore({ version: 1, projects: [project1], recentProjects: [project1, duplicate, recent], sessions: [] })
+    vi.mocked(api.reopenProject).mockResolvedValue(recent)
+    render(<ProjectSidebar />)
+    await user.click(screen.getByRole('button', { name: 'Add Project' }))
+    await user.click(screen.getByRole('button', { name: 'Recent projects' }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).queryByText(project1.name)).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: /Historical project/ }))
+    expect(api.reopenProject).toHaveBeenCalledWith('recent')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(useAppStore.getState().activeProjectId).toBe('recent')
+    expect(useAppStore.getState().appState.recentProjects).not.toContainEqual(recent)
+  })
+
+  it('shows an empty history and keeps a missing-project error inside the dialog', async () => {
+    const user = userEvent.setup()
+    render(<ProjectSidebar />)
+    await user.click(screen.getByRole('button', { name: 'Add Project' }))
+    await user.click(screen.getByRole('button', { name: 'Recent projects' }))
+    expect(screen.getByText('No recent projects outside your project list.')).toBeInTheDocument()
+    act(() => useAppStore.setState({ appState: { version: 1, projects: [], recentProjects: [project1], sessions: [] } }))
+    vi.mocked(api.reopenProject).mockRejectedValue(new Error('Project folder is missing'))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /demo-project/ }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Project folder is missing')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('requires a repository URL and chosen directory, previews the destination, and blocks duplicate cloning', async () => {
+    const user = userEvent.setup()
+    let resolveClone!: (project: ProjectRecord) => void
+    vi.mocked(api.cloneProject).mockImplementation(() => new Promise((resolve) => { resolveClone = resolve }))
+    vi.mocked(api.selectCloneDirectory).mockResolvedValue('C:\\Projects')
+    render(<ProjectSidebar />)
+    await user.click(screen.getByRole('button', { name: 'Add Project' }))
+    await user.click(screen.getByRole('button', { name: 'Clone Git repository' }))
+    const submit = screen.getByRole('button', { name: 'Clone and open' })
+    expect(submit).toBeDisabled()
+    await user.type(screen.getByLabelText('Git repository URL'), 'git@github.com:team/repo.git')
+    expect(submit).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Browse...' }))
+    expect(screen.getByLabelText('Target directory')).toHaveValue('C:\\Projects')
+    expect(screen.getByText('Save to: C:\\Projects\\repo')).toBeInTheDocument()
+    await user.dblClick(submit)
+    expect(api.cloneProject).toHaveBeenCalledTimes(1)
+    expect(api.cloneProject).toHaveBeenCalledWith({ repositoryUrl: 'git@github.com:team/repo.git', targetDirectory: 'C:\\Projects' })
+    expect(screen.getByRole('status')).toHaveTextContent('Cloning repository')
+    expect(submit).toBeDisabled()
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await act(async () => resolveClone(project1))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(useAppStore.getState().activeProjectId).toBe(project1.id)
+  })
+
+  it('retains clone form values on failure and preserves a chosen directory when browsing is cancelled', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.selectCloneDirectory).mockResolvedValueOnce('C:\\Projects').mockResolvedValueOnce(null)
+    vi.mocked(api.cloneProject).mockRejectedValue(new Error('Authentication failed'))
+    render(<ProjectSidebar />)
+    await user.click(screen.getByRole('button', { name: 'Add Project' }))
+    await user.click(screen.getByRole('button', { name: 'Clone Git repository' }))
+    await user.type(screen.getByLabelText('Git repository URL'), 'https://example.com/repo.git')
+    await user.click(screen.getByRole('button', { name: 'Browse...' }))
+    await user.click(screen.getByRole('button', { name: 'Browse...' }))
+    expect(screen.getByLabelText('Target directory')).toHaveValue('C:\\Projects')
+    await user.click(screen.getByRole('button', { name: 'Clone and open' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Authentication failed')
+    expect(screen.getByLabelText('Git repository URL')).toHaveValue('https://example.com/repo.git')
+    expect(screen.getByRole('button', { name: 'Clone and open' })).toBeEnabled()
   })
 
   it('renders Add Project as a round icon button docked in the sidebar footer, not in the header', () => {

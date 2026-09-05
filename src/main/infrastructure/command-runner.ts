@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 
 export type CommandResult = { stdout: string; stderr: string; exitCode: number }
-export type CommandOptions = { timeoutMs?: number }
+export type CommandOptions = { timeoutMs?: number; env?: NodeJS.ProcessEnv }
 export const COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024
 
 export class CommandError extends Error {
@@ -46,6 +46,7 @@ export const commandRunner: CommandRunner = {
           windowsHide: true,
           encoding: 'utf8',
           maxBuffer: COMMAND_MAX_BUFFER_BYTES,
+          ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
           ...(options?.timeoutMs === undefined ? {} : { timeout: options.timeoutMs })
         },
         (error, stdout, stderr) => {

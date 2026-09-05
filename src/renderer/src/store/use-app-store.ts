@@ -4,6 +4,7 @@ import { AGENT_KINDS, type AgentKind } from '../../../shared/agent-kinds'
 import type {
   AppState,
   CapabilityState,
+  CloneProjectRequest,
   DeleteSessionResult,
   HostPlatform,
   ProjectRecord,
@@ -79,7 +80,7 @@ export type AppStore = {
   setSidebarWidth: (width: number) => void
   resetSidebarWidth: () => void
 
-  addProject: () => Promise<void>
+  addProject: (source?: { recentProjectId: string } | CloneProjectRequest) => Promise<boolean>
   reorderProjects: (orderedProjectIds: readonly string[]) => Promise<void>
   openProjectInVSCode: (projectId: string) => Promise<void>
   openProjectFolder: (projectId: string) => Promise<void>
@@ -272,7 +273,11 @@ const clearAllIdleTimers = (): void => {
 const upsertProject = (state: AppState, project: ProjectRecord): AppState => {
   const index = state.projects.findIndex((candidate) => candidate.id === project.id)
   const projects = index === -1 ? [...state.projects, project] : state.projects.map((candidate, i) => (i === index ? project : candidate))
-  return { ...state, projects }
+  return {
+    ...state,
+    projects,
+    ...(state.recentProjects ? { recentProjects: state.recentProjects.filter((entry) => entry.id !== project.id) } : {})
+  }
 }
 
 const upsertSession = (state: AppState, session: SessionRecord): AppState => {
@@ -547,14 +552,21 @@ export const useAppStore = create<AppStore>()((set, get) => {
       persistSidebarWidth(DEFAULT_SIDEBAR_WIDTH)
     },
 
-    addProject: async () => {
-      try {
-        const project = await window.codefly.addProject()
-        if (!project) return
-        set((state) => ({ appState: upsertProject(state.appState, project), activeProjectId: project.id }))
-      } catch (error) {
-        set({ notice: { message: errorMessage(error, get().locale), tone: 'error' } })
-      }
+    addProject: async (source) => {
+      const project = !source
+        ? await window.codefly.addProject()
+        : 'recentProjectId' in source
+          ? await window.codefly.reopenProject(source.recentProjectId)
+          : await window.codefly.cloneProject(source)
+      if (!project) return false
+      set((state) => ({
+        appState: upsertProject(state.appState, project),
+        activeProjectId: project.id,
+        activeSessionId: null,
+        searchQuery: '',
+        launcherOpen: false
+      }))
+      return true
     },
 
     reorderProjects: async (orderedProjectIds) => {

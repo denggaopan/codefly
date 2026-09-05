@@ -27,6 +27,13 @@ describe('commandRunner', () => {
     expect(result.stdout).toBe(literal)
   })
 
+  it('overrides a child environment variable without dropping inherited variables', async () => {
+    const result = await commandRunner.run(process.execPath, ['-e', "process.stdout.write(JSON.stringify({ prompt: process.env.GIT_TERMINAL_PROMPT, inherited: !!(process.env.PATH || process.env.Path) }))"], undefined, {
+      env: { GIT_TERMINAL_PROMPT: '0' }
+    })
+    expect(JSON.parse(result.stdout)).toEqual({ prompt: '0', inherited: true })
+  })
+
   it('retains spawn diagnostics for a missing executable', async () => {
     const file = `codefly-missing-${process.pid}.exe`
 

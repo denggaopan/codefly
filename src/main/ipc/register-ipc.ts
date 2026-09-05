@@ -12,6 +12,7 @@ import type {
   UpdateInstallResult
 } from '../../shared/contracts'
 import {
+  cloneProjectRequestSchema,
   createSessionRequestSchema,
   firstInputRequestSchema,
   openExternalLinkRequestSchema,
@@ -105,6 +106,27 @@ export function registerIpc(deps: RegisterIpcDependencies): () => void {
         if (result.canceled || !selectedPath) return null
         return projectService.register(selectedPath)
       }
+    ],
+
+    [
+      IPC.projectReopen,
+      async (_event, payload): Promise<ProjectRecord> => {
+        const { projectId } = projectIdRequestSchema.parse(payload)
+        return projectService.reopen(projectId)
+      }
+    ],
+
+    [
+      IPC.projectCloneDirectory,
+      async (): Promise<string | null> => {
+        const result = await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })
+        return result.canceled ? null : result.filePaths[0] ?? null
+      }
+    ],
+
+    [
+      IPC.projectClone,
+      async (_event, payload): Promise<ProjectRecord> => projectService.clone(cloneProjectRequestSchema.parse(payload))
     ],
 
     [

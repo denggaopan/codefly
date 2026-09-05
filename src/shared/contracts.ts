@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { ExternalLinkTarget } from './links'
+import { cloneDirectoryName } from './git-clone'
 
 export const hostPlatformSchema = z.enum(['win32', 'darwin'])
 // Native shells first, then the agent CLIs in the order `AGENT_KINDS` lists them. The two
@@ -74,6 +75,7 @@ export const sessionRecordSchema = z.discriminatedUnion('mode', [
 export const appStateSchema = z.strictObject({
   version: z.literal(1),
   projects: z.array(projectRecordSchema),
+  recentProjects: z.array(projectRecordSchema).optional(),
   sessions: z.array(sessionRecordSchema)
 })
 
@@ -113,6 +115,13 @@ export const sessionIdRequestSchema = z.strictObject({
 export const projectIdRequestSchema = z.strictObject({
   projectId: z.string().min(1)
 })
+
+export const cloneProjectRequestSchema = z.strictObject({
+  repositoryUrl: z.string().trim().max(4096).refine((value) => cloneDirectoryName(value) !== undefined, 'Invalid Git repository URL.'),
+  targetDirectory: z.string().min(1).max(32768).refine((value) => !value.includes('\0'), 'Invalid target directory.')
+})
+
+export type CloneProjectRequest = z.infer<typeof cloneProjectRequestSchema>
 
 // The full ordered id list (not a moved-id/index pair) so the request is idempotent and the
 // service can verify it is an exact permutation of the currently persisted projects.

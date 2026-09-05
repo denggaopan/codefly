@@ -1,6 +1,9 @@
 export const IPC = {
   snapshotGet: 'snapshot:get',
   projectAdd: 'project:add',
+  projectReopen: 'project:reopen',
+  projectCloneDirectory: 'project:clone-directory',
+  projectClone: 'project:clone',
   projectReorder: 'project:reorder',
   projectOpenVSCode: 'project:open-vscode',
   projectOpenFolder: 'project:open-folder',

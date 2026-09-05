@@ -184,6 +184,9 @@ const createFakeApi = () => {
       capabilities: defaultCapabilities()
     })),
     addProject: vi.fn(async (): Promise<ProjectRecord | null> => null),
+    reopenProject: vi.fn(async (): Promise<ProjectRecord> => { throw new Error('reopenProject not stubbed') }),
+    selectCloneDirectory: vi.fn(async (): Promise<string | null> => null),
+    cloneProject: vi.fn(async (): Promise<ProjectRecord> => { throw new Error('cloneProject not stubbed') }),
     reorderProjects: vi.fn(async (): Promise<ProjectRecord[]> => []),
     openProjectInVSCode: vi.fn(async (): Promise<void> => undefined),
     openProjectFolder: vi.fn(async (): Promise<void> => undefined),

@@ -4,6 +4,7 @@ import type {
   AppInfo,
   AppSnapshot,
   AppState,
+  CloneProjectRequest,
   DeleteSessionResult,
   ProjectRecord,
   SessionKind,
@@ -21,6 +22,9 @@ import type { TerminalDataEvent, TerminalReplay } from '../shared/pty-protocol'
 export type CodeFlyApi = {
   getSnapshot(): Promise<AppSnapshot>
   addProject(): Promise<ProjectRecord | null>
+  reopenProject(projectId: string): Promise<ProjectRecord>
+  selectCloneDirectory(): Promise<string | null>
+  cloneProject(request: CloneProjectRequest): Promise<ProjectRecord>
   reorderProjects(orderedProjectIds: readonly string[]): Promise<ProjectRecord[]>
   openProjectInVSCode(projectId: string): Promise<void>
   openProjectFolder(projectId: string): Promise<void>
@@ -64,6 +68,9 @@ export type CodeFlyApi = {
 const api: CodeFlyApi = {
   getSnapshot: () => ipcRenderer.invoke(IPC.snapshotGet),
   addProject: () => ipcRenderer.invoke(IPC.projectAdd),
+  reopenProject: (projectId) => ipcRenderer.invoke(IPC.projectReopen, { projectId }),
+  selectCloneDirectory: () => ipcRenderer.invoke(IPC.projectCloneDirectory),
+  cloneProject: (request) => ipcRenderer.invoke(IPC.projectClone, request),
   reorderProjects: (orderedProjectIds) => ipcRenderer.invoke(IPC.projectReorder, { orderedProjectIds: [...orderedProjectIds] }),
   openProjectInVSCode: (projectId) => ipcRenderer.invoke(IPC.projectOpenVSCode, { projectId }),
   openProjectFolder: (projectId) => ipcRenderer.invoke(IPC.projectOpenFolder, { projectId }),

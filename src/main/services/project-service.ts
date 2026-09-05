@@ -1,8 +1,11 @@
-import { realpath, stat } from 'node:fs/promises'
+import { mkdir, realpath, rmdir, stat } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import type { ProjectRecord, RepoRemote } from '../../shared/contracts'
+import { cloneProjectRequestSchema, type CloneProjectRequest } from '../../shared/contracts'
+import { cloneDirectoryName } from '../../shared/git-clone'
+import { normalizeProjectPath } from '../../shared/project-path'
 import { commandRunner } from '../infrastructure/command-runner'
 import type { CommandRunner } from '../infrastructure/command-runner'
 import { parseRemoteWebUrl } from './git-remote'
@@ -42,16 +45,6 @@ export class InvalidProjectPathError extends Error {
 
 const productionFileSystem: ProjectFileSystem = { realpath, stat }
 
-const normalizeProjectPath = (value: string, platform: NodeJS.Platform): string => {
-  if (platform !== 'win32') {
-    const withoutTrailingSeparators = value.replace(/\/+$/u, '')
-    return withoutTrailingSeparators || '/'
-  }
-  const withWindowsSeparators = value.replace(/\//g, '\\')
-  const withoutTrailingSeparators = withWindowsSeparators.replace(/\\+$/u, '')
-  return (withoutTrailingSeparators || withWindowsSeparators).toLocaleLowerCase('en-US')
-}
-
 const sameRemote = (left: RepoRemote | undefined, right: RepoRemote | undefined): boolean =>
   left === right || (left !== undefined && right !== undefined && left.host === right.host && left.webUrl === right.webUrl)
 
@@ -61,6 +54,8 @@ const projectWithPath = (projects: readonly ProjectRecord[], candidatePath: stri
 }
 
 export class ProjectService {
+  private cloning = false
+
   constructor(
     private readonly store: SessionStore,
     private readonly runner: CommandRunner = commandRunner,
@@ -94,13 +89,14 @@ export class ProjectService {
     const repoRoot = await this.findRepoRoot(realPath)
     const repoRemote = repoRoot ? await this.findRepoRemote(realPath).catch(() => undefined) : undefined
     const name = (this.platform === 'win32' ? win32 : posix).basename(realPath) || realPath
+    const recent = projectWithPath(current.recentProjects ?? [], realPath, this.platform)
     const project: ProjectRecord = {
-      id: this.createId(),
+      id: recent?.id ?? this.createId(),
       name,
       path: realPath,
       ...(repoRoot ? { repoRoot } : {}),
       ...(repoRemote ? { repoRemote } : {}),
-      createdAt: this.clock().toISOString()
+      createdAt: recent?.createdAt ?? this.clock().toISOString()
     }
 
     let persisted = project
@@ -110,9 +106,56 @@ export class ProjectService {
         persisted = concurrentExisting
         return latest
       }
-      return { ...latest, projects: [...latest.projects, project] }
+      return {
+        ...latest,
+        projects: [...latest.projects, project],
+        ...(latest.recentProjects ? {
+          recentProjects: latest.recentProjects.filter((entry) =>
+            entry.id !== project.id && normalizeProjectPath(entry.path, this.platform) !== normalizeProjectPath(realPath, this.platform))
+        } : {})
+      }
     })
     return persisted
+  }
+
+  async reopen(projectId: string): Promise<ProjectRecord> {
+    const state = await this.store.load()
+    const project = [...state.projects, ...(state.recentProjects ?? [])].find((entry) => entry.id === projectId)
+    if (!project) throw new ProjectNotFoundError(projectId)
+    return this.register(project.path)
+  }
+
+  async clone(request: CloneProjectRequest): Promise<ProjectRecord> {
+    const { repositoryUrl, targetDirectory } = cloneProjectRequestSchema.parse(request)
+    if (this.cloning) throw new Error('A Git clone is already in progress.')
+    this.cloning = true
+    try {
+      const paths = this.platform === 'win32' ? win32 : posix
+      if (!paths.isAbsolute(targetDirectory)) throw new InvalidProjectPathError(targetDirectory)
+      const parent = await this.fileSystem.realpath(targetDirectory)
+      if (!(await this.fileSystem.stat(parent)).isDirectory()) throw new InvalidProjectPathError(targetDirectory)
+      const destination = paths.join(parent, cloneDirectoryName(repositoryUrl)!)
+      // Reserve a new directory exclusively; an existing folder is never a clone target.
+      try {
+        await mkdir(destination)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error(`The destination already exists: ${destination}`)
+        throw error
+      }
+      try {
+        await this.runner.run('git', ['-c', 'credential.interactive=false', 'clone', '--', repositoryUrl, destination], parent, {
+          timeoutMs: 10 * 60 * 1000,
+          env: { GIT_TERMINAL_PROMPT: '0' }
+        })
+      } catch (error) {
+        // Remove only an empty reservation. Partial repository data is kept for inspection.
+        await rmdir(destination).catch(() => undefined)
+        throw error
+      }
+      return await this.register(destination)
+    } finally {
+      this.cloning = false
+    }
   }
 
   /**

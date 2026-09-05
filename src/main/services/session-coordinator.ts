@@ -309,7 +309,7 @@ export class SessionCoordinator {
    */
   async removeProject(projectId: string): Promise<void> {
     return this.withLock(`project:${projectId}`, async () => {
-      await this.projectService.get(projectId)
+      const removedProject = await this.projectService.get(projectId)
       const current = await this.store.load()
       const sessions = current.sessions.filter((session) => session.projectId === projectId)
 
@@ -326,6 +326,7 @@ export class SessionCoordinator {
       const next = await this.store.update((state) => ({
         ...state,
         projects: state.projects.filter((project) => project.id !== projectId),
+        recentProjects: [removedProject, ...(state.recentProjects ?? []).filter((project) => project.id !== projectId)].slice(0, 50),
         sessions: state.sessions.filter((session) => session.projectId !== projectId)
       }))
       this.emit(next)

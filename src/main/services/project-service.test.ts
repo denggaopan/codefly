@@ -138,6 +138,43 @@ describe('ProjectService', () => {
   })
 })
 
+describe('ProjectService.reopen', () => {
+  it('persists history across restarts, revalidates the folder, and keeps its identity when reopening', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'codefly-history-'))
+    const file = join(directory, 'state.json')
+    const recent: ProjectRecord = { id: 'recent', name: 'Old name', path: 'C:\\Projects\\My App', createdAt: '2026-08-26T00:00:00.000Z' }
+    try {
+      const originalStore = new SessionStore(file)
+      await originalStore.save({ ...emptyState(), recentProjects: [recent] })
+      const restartedStore = new SessionStore(file)
+      const run = vi.fn().mockRejectedValue(new Error('not git'))
+      const service = new ProjectService(restartedStore, { run }, fsFor(), clock, () => 'new-id', 'win32')
+
+      await expect(service.reopen(recent.id)).resolves.toEqual({ ...recent, name: 'My App' })
+      const state = await new SessionStore(file).load()
+      expect(state.projects).toEqual([{ ...recent, name: 'My App' }])
+      expect(state.recentProjects).toEqual([])
+      expect(state.sessions).toEqual([])
+      await expect(service.reopen(recent.id)).resolves.toMatchObject({ id: recent.id })
+      expect((await restartedStore.load()).projects).toHaveLength(1)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps missing historical folders in history and rejects unknown ids', async () => {
+    const recent: ProjectRecord = { id: 'recent', name: 'Gone', path: 'C:\\Gone', createdAt: '2026-08-26T00:00:00.000Z' }
+    const store = { load: vi.fn(async () => ({ ...emptyState(), recentProjects: [recent] })), update: vi.fn() } as unknown as SessionStore
+    const fileSystem = { realpath: vi.fn().mockRejectedValue(new Error('missing')), stat: vi.fn() }
+    const service = new ProjectService(store, undefined, fileSystem)
+
+    await expect(service.reopen('unknown')).rejects.toBeInstanceOf(ProjectNotFoundError)
+    expect(fileSystem.realpath).not.toHaveBeenCalled()
+    await expect(service.reopen('recent')).rejects.toBeInstanceOf(InvalidProjectPathError)
+    expect(store.update).not.toHaveBeenCalled()
+  })
+})
+
 describe('ProjectService.reorder', () => {
   const projectAt = (id: string): ProjectRecord => ({ id, name: id, path: `C:\\${id}`, createdAt: '2026-08-26T00:00:00.000Z' })
 
